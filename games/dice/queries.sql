@@ -15,3 +15,11 @@ SELECT * FROM dice_bets
 WHERE status = 'pending' AND created_at < now() - interval '10 seconds'
 ORDER BY id
 LIMIT 100;
+
+-- name: ListDiceBetsByUser :many
+-- user_id NULL lists every user's bets (app.BetSource: userID 0); a user's page uses dice_bets_user.
+SELECT * FROM dice_bets
+WHERE (sqlc.narg(user_id)::bigint IS NULL OR user_id = sqlc.narg(user_id))
+  AND (sqlc.narg(before_id)::bigint IS NULL OR id < sqlc.narg(before_id))
+ORDER BY id DESC
+LIMIT sqlc.arg(max_rows);

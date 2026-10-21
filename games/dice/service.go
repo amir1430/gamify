@@ -2,9 +2,11 @@ package dice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 
+	"github.com/amir1430/gamify/app"
 	"github.com/amir1430/gamify/fairness"
 	"github.com/amir1430/gamify/gameconfig"
 	"github.com/amir1430/gamify/games/dice/internal/store"
@@ -174,4 +176,34 @@ func (s *Service) Reconcile(ctx context.Context) {
 			slog.ErrorContext(ctx, "dice reconcile: settle", "bet", b.ID, "err", err)
 		}
 	}
+}
+
+// History lists bets newest first for the admin (an app.BetSource): userID 0 means every user.
+// Detail holds the bet's public fields only, never seed data.
+func (s *Service) History(ctx context.Context, userID, beforeID int64, limit int32) ([]app.Bet, error) {
+	arg := store.ListDiceBetsByUserParams{MaxRows: limit}
+	if userID > 0 {
+		arg.UserID = &userID
+	}
+	if beforeID > 0 {
+		arg.BeforeID = &beforeID
+	}
+	rows, err := s.q.ListDiceBetsByUser(ctx, arg)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]app.Bet, 0, len(rows))
+	for _, r := range rows {
+		detail, err := json.Marshal(struct {
+			Target int32 `json:"target"`
+			Over   bool  `json:"over"`
+			Roll   int32 `json:"roll"`
+		}{r.Target, r.Over, r.Roll})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, app.Bet{Game: "dice", ID: r.ID, UserID: r.UserID, Currency: ledger.Currency(r.Currency),
+			Amount: r.Amount, Payout: r.Payout, Status: r.Status, Detail: detail, At: r.CreatedAt.Time})
+	}
+	return out, nil
 }

@@ -19,7 +19,7 @@ type Bet struct {
 	Amount   int64           `json:"amount"`
 	Payout   int64           `json:"payout"`
 	Status   string          `json:"status"`
-	Detail   json.RawMessage `json:"detail,omitempty"` // the game's own fields
+	Detail   json.RawMessage `json:"detail,omitempty"` // the game's own fields; never an unrevealed server seed
 	At       time.Time       `json:"at"`
 }
 

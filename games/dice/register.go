@@ -37,6 +37,7 @@ func Register(ctx context.Context, a *app.App, fair *fairness.Service) (*Service
 			Balances ledger.Balances `json:"balances"`
 		}{res, b}, nil
 	}))
+	a.Bets("dice", s.History)
 	a.Reconcile(s.Reconcile)
 	return s, nil
 }

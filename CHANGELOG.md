@@ -8,6 +8,8 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 First public version, extracted from the casino's core.
 
 ### Added
+- `fairness`: `Service.PairsOf` (a user's seed pairs for the admin; seeds only once revealed).
+- `games/dice`: bet history (`Service.History`, registered with `App.Bets`).
 - `auth`: `Users.UnlinkTx` (`Unlink` inside the caller's transaction) and `Users.Identities`
   (a user's linked logins with link time).
 - `gameconfig`: transactional writes for the admin (`SetGame`, `SetLimit`, `DeleteLimit` take a

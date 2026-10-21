@@ -35,3 +35,13 @@ WHERE user_id = $1 AND status IN ('active', 'next');
 
 -- name: GetSeedPairSecret :one
 SELECT server_seed_enc, key_id, client_seed FROM seed_pairs WHERE id = $1 AND user_id = $2;
+
+-- name: ListSeedPairs :many
+-- revealed_enc is NULL unless the pair is revealed: an unrevealed seed never leaves the database.
+SELECT id, status, server_seed_hash, client_seed, nonce, created_at, revealed_at, key_id,
+       CASE WHEN status = 'revealed' THEN server_seed_enc END::bytea AS revealed_enc
+FROM seed_pairs
+WHERE user_id = sqlc.arg(user_id)
+  AND (sqlc.narg(before_id)::bigint IS NULL OR id < sqlc.narg(before_id))
+ORDER BY id DESC
+LIMIT sqlc.arg(max_rows);

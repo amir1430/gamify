@@ -91,6 +91,55 @@ func (q *Queries) InsertDiceBet(ctx context.Context, arg InsertDiceBetParams) (D
 	return i, err
 }
 
+const listDiceBetsByUser = `-- name: ListDiceBetsByUser :many
+SELECT id, user_id, idempotency_key, seed_pair_id, nonce, amount, currency, target, over, roll, payout, status, created_at FROM dice_bets
+WHERE ($1::bigint IS NULL OR user_id = $1)
+  AND ($2::bigint IS NULL OR id < $2)
+ORDER BY id DESC
+LIMIT $3
+`
+
+type ListDiceBetsByUserParams struct {
+	UserID   *int64
+	BeforeID *int64
+	MaxRows  int32
+}
+
+// user_id NULL lists every user's bets (app.BetSource: userID 0); a user's page uses dice_bets_user.
+func (q *Queries) ListDiceBetsByUser(ctx context.Context, arg ListDiceBetsByUserParams) ([]DiceBet, error) {
+	rows, err := q.db.Query(ctx, listDiceBetsByUser, arg.UserID, arg.BeforeID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DiceBet
+	for rows.Next() {
+		var i DiceBet
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.IdempotencyKey,
+			&i.SeedPairID,
+			&i.Nonce,
+			&i.Amount,
+			&i.Currency,
+			&i.Target,
+			&i.Over,
+			&i.Roll,
+			&i.Payout,
+			&i.Status,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStalePendingDiceBets = `-- name: ListStalePendingDiceBets :many
 SELECT id, user_id, idempotency_key, seed_pair_id, nonce, amount, currency, target, over, roll, payout, status, created_at FROM dice_bets
 WHERE status = 'pending' AND created_at < now() - interval '10 seconds'

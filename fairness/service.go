@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/amir1430/gamify/fairness/internal/store"
 
@@ -240,4 +241,46 @@ func (s *Service) OpenPotSeed(enc []byte, keyID string) (string, error) {
 		return "", err
 	}
 	return string(Key(seed)), nil
+}
+
+// Pair is a seed pair as the admin lists it. ServerSeed is set only once the pair is revealed.
+type Pair struct {
+	ID             int64      `json:"id"`
+	Status         string     `json:"status"` // active, next, revealed
+	ServerSeedHash string     `json:"server_seed_hash"`
+	ClientSeed     string     `json:"client_seed"`
+	Nonce          int64      `json:"nonce"`
+	ServerSeed     string     `json:"server_seed,omitempty"` // revealed pairs only
+	CreatedAt      time.Time  `json:"created_at"`
+	RevealedAt     *time.Time `json:"revealed_at"`
+}
+
+// PairsOf lists the user's seed pairs, newest first; beforeID 0 starts at the newest. Unrevealed
+// seeds never leave the database: the query returns the sealed seed of revealed pairs only.
+func (s *Service) PairsOf(ctx context.Context, userID, beforeID int64, limit int32) ([]Pair, error) {
+	arg := store.ListSeedPairsParams{UserID: userID, MaxRows: limit}
+	if beforeID > 0 {
+		arg.BeforeID = &beforeID
+	}
+	rows, err := s.q.ListSeedPairs(ctx, arg)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Pair, 0, len(rows))
+	for _, r := range rows {
+		p := Pair{ID: r.ID, Status: r.Status, ServerSeedHash: hex.EncodeToString(r.ServerSeedHash),
+			ClientSeed: r.ClientSeed, Nonce: r.Nonce, CreatedAt: r.CreatedAt.Time}
+		if r.RevealedAt.Valid {
+			p.RevealedAt = &r.RevealedAt.Time
+		}
+		if r.RevealedEnc != nil {
+			seed, err := s.sealer.Open(userID, r.KeyID, r.RevealedEnc)
+			if err != nil {
+				return nil, err
+			}
+			p.ServerSeed = string(Key(seed))
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }

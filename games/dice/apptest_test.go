@@ -2,6 +2,7 @@ package dice_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/amir1430/gamify/apptest"
@@ -42,6 +43,26 @@ func TestRPC(t *testing.T) {
 	}
 	if got, want := a.Balance(alice, "usd"), 1_000-res.Amount+res.Payout; got != want {
 		t.Fatalf("usd after the retry = %d, want %d: charged twice", got, want)
+	}
+
+	// Bet history, newest first, for the admin.
+	bet.IdemKey = "third"
+	res2, cerr := apptest.Call[dice.BetResult](a, alice, "dice.bet", bet)
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	hist, err := a.BetSources()["dice"](ctx, alice, 0, 10)
+	if err != nil || len(hist) != 3 {
+		t.Fatalf("history = %+v, %v; want 3 bets (the unfunded try is a voided bet)", hist, err)
+	}
+	if hist[0].ID != res2.BetID || hist[1].ID != res.BetID || hist[0].Game != "dice" ||
+		hist[0].Amount != res2.Amount || hist[1].Amount != res.Amount || hist[0].UserID != alice || hist[2].Status != "voided" ||
+		!strings.Contains(string(hist[0].Detail), `"roll"`) {
+		t.Fatalf("history = %+v", hist)
+	}
+
+	if page, err := a.BetSources()["dice"](ctx, alice, hist[1].ID, 10); err != nil || len(page) != 1 || page[0].ID != hist[2].ID {
+		t.Fatalf("page after bet %d = %+v, %v", hist[1].ID, page, err)
 	}
 
 	// Provably fair: the revealed seed reproduces the roll.

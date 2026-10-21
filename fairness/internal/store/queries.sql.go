@@ -7,6 +7,8 @@ package store
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createActiveSeedPair = `-- name: CreateActiveSeedPair :exec
@@ -117,6 +119,65 @@ func (q *Queries) GetSeedPairSecret(ctx context.Context, arg GetSeedPairSecretPa
 	var i GetSeedPairSecretRow
 	err := row.Scan(&i.ServerSeedEnc, &i.KeyID, &i.ClientSeed)
 	return i, err
+}
+
+const listSeedPairs = `-- name: ListSeedPairs :many
+SELECT id, status, server_seed_hash, client_seed, nonce, created_at, revealed_at, key_id,
+       CASE WHEN status = 'revealed' THEN server_seed_enc END::bytea AS revealed_enc
+FROM seed_pairs
+WHERE user_id = $1
+  AND ($2::bigint IS NULL OR id < $2)
+ORDER BY id DESC
+LIMIT $3
+`
+
+type ListSeedPairsParams struct {
+	UserID   int64
+	BeforeID *int64
+	MaxRows  int32
+}
+
+type ListSeedPairsRow struct {
+	ID             int64
+	Status         string
+	ServerSeedHash []byte
+	ClientSeed     string
+	Nonce          int64
+	CreatedAt      pgtype.Timestamptz
+	RevealedAt     pgtype.Timestamptz
+	KeyID          string
+	RevealedEnc    []byte
+}
+
+// revealed_enc is NULL unless the pair is revealed: an unrevealed seed never leaves the database.
+func (q *Queries) ListSeedPairs(ctx context.Context, arg ListSeedPairsParams) ([]ListSeedPairsRow, error) {
+	rows, err := q.db.Query(ctx, listSeedPairs, arg.UserID, arg.BeforeID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSeedPairsRow
+	for rows.Next() {
+		var i ListSeedPairsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.ServerSeedHash,
+			&i.ClientSeed,
+			&i.Nonce,
+			&i.CreatedAt,
+			&i.RevealedAt,
+			&i.KeyID,
+			&i.RevealedEnc,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockActiveSeedPair = `-- name: LockActiveSeedPair :one

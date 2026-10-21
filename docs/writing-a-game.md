@@ -74,6 +74,13 @@ void it at the end (`SettleHeld`, `SettleHolds`). PvP games use pots (`HoldPot`,
 - A multi-step game registers `fair.Guard(...)` so the seed can't rotate (and reveal the outcome)
   while a game is live.
 
+## Bet history
+
+Register `a.Bets("crash", s.History)` so the admin can list your bets. The `app.BetSource` lists
+newest first (`beforeID` keyset, `userID` 0 = every user) and fills `app.Bet`: the row's amount,
+payout, status and a `Detail` JSON with your game's own fields. `Detail` never holds an unrevealed
+server seed or anything derived from one. See `games/dice/service.go`.
+
 ## 6. Limits and errors
 
 - Declare your limits with `a.Games.Game("crash", maxBet, maxPayout, variants)`; admins can lower
