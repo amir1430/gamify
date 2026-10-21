@@ -51,14 +51,15 @@ These would make it a failure even if it works:
 - Showing or returning an unrevealed server seed, anywhere (API, UI, audit `before`/`after`).
 - A change without its audit row, or an audit row for a change that rolled back.
 - The admin reachable on the players' port by default.
-- A brand needing Node, pnpm or a UI build step to compile their `main`.
+- A brand needing Node, npm or a UI build step to compile their `main`.
 
 ## Decided
 
 - Refine (MIT) + shadcn/ui, built with Vite, output embedded with `go:embed`. (The user's
   choice.)
-- The UI's layout and patterns follow Nakama's console (UI > "Look and layout"). (The user's
-  choice.)
+- The UI's design and shell follow the casino admin, with light and dark themes; page structure
+  follows Nakama's console where the casino has no equivalent (UI > "Look and layout"). (The
+  user's choices.)
 - UI code is built without test-first TDD; checked by building and running it. (The user's
   choice.)
 - Brand views declared in Go, in v1. (The user's choice, from: Go-declared views, JS plugins,
@@ -317,49 +318,65 @@ and `auth.Users.Identities(ctx, userID)` (provider, subject, linked_at).
 
 ## UI
 
-- `admin/ui`: Vite + React + TypeScript + Refine + shadcn/ui, pnpm. A custom Refine data provider
+- `admin/ui`: Vite + React + TypeScript + Refine + shadcn/ui, npm with a committed
+  `package-lock.json` (as the casino admin). A custom Refine data provider
   for the API above (keyset cursors, not offsets) and an auth provider for the cookie session and
   `/api/me`; Refine's access-control provider reads the permissions.
 - The build output `admin/ui/dist` is committed and embedded (`//go:embed ui/dist`), so `go get`
   works without Node. CI rebuilds it and fails if the committed copy differs.
 - White-label: `Config.Brand` (name, logo, accent colour) comes from `/api/me`; the accent becomes
-  CSS variables on shadcn's theme. Light and dark mode.
+  CSS variables on shadcn's theme. Light, dark and system themes.
 - Money is shown and entered in minor units converted with the currency's decimals: add
   `Decimals uint8` to `ledger.CurrencyConfig` (0 = show as an integer, today's behaviour). Entry is
   parsed as a decimal string to an `int64`; never a float.
 - Adjustments ask for a confirmation that repeats user, currency, signed amount and reason.
 
-### Look and layout: like Nakama's console
+### Look and layout: the casino admin's design, Nakama's page structure
 
-The UI follows the layout and interaction patterns of Nakama's console (the user's choice), built
-with Refine and shadcn/ui. We copy the structure, not the code, assets or branding: no Heroic
-Labs name, logo or icons, and the accent is the brand's.
+Two references, both the user's choice. The **visual design and shell** come from the casino's own
+admin (`~/Projects/telegram-miniapps/casino/admin`): same stack (Refine v5, shadcn new-york on
+zinc, Tailwind v4, lucide icons, sonner toasts), so its components, `ui.tsx` helpers and provider
+patterns are ported, not reinvented. The **page structure** comes from Nakama's console where the
+casino admin has no equivalent page. From Nakama we copy structure only: no Heroic Labs name, logo,
+icons or code.
 
-- **Shell:** a fixed dark sidebar on the left (brand logo and name at the top, icon + label nav
-  items, the current one highlighted in the accent colour, collapsible to icons only), and a light
-  content area with a slim top bar: page title / breadcrumbs on the left, the console user's email
-  and role with a menu (account, theme, log out) on the right. Dark mode darkens the content area
-  too. On phone width the sidebar becomes a drawer.
-- **Nav, mapped from Nakama's sections:** Status → *Dashboard*; Accounts → *Players*;
-  Configuration → *Games*; plus *Adjustments*, *Audit log*, brand views (grouped by their
-  `Group`), and at the bottom *Console users* (Nakama's "Users"). Items the user lacks the
+- **Themes: light, dark and system** (new; the casino admin is dark only). The casino's tokens
+  become the dark theme as they are (near-black neutrals, `--ok` green, `--warn` amber, `--danger`
+  red, no gradients); a light theme gets matching tokens (white/zinc-50 surfaces, zinc borders, the
+  same status hues tuned for contrast on white). Default follows `prefers-color-scheme`; the
+  account menu has System / Light / Dark, stored in `localStorage` and applied as `class="dark"`
+  on `<html>` by an inline script in `index.html` before first paint (no flash). Both themes meet
+  WCAG AA contrast for text.
+- **Brand accent:** the casino's cyan `--brand`/`--ring` becomes `Config.Brand.Accent` (fallback a
+  neutral cyan), set per theme from `/api/me`. The sidebar mark shows `Brand.Logo` when set, the
+  casino's ring mark otherwise; the title is `Brand.Name`.
+- **Shell (the casino's `layout.tsx`):** a 232 px sidebar on desktop with grouped nav (small
+  uppercase group labels: *Overview* → Dashboard; *Operations* → Games, Players, Adjustments, brand
+  views by `Group`; *Admin* → Audit log, Console users), icon + label items with the active one
+  on `bg-accent`, a count badge where useful (adjustments waiting for approval), and the account
+  menu at the bottom (email, role, theme, account, sign out). On narrow screens a sticky top bar
+  with the same links scrolling horizontally. Content max width 1400 px. Items the user lacks the
   permission for are hidden.
+- **Typography and numbers:** Inter for text, JetBrains Mono for IDs, amounts and hashes,
+  `tabular-nums` in tables and stats, amounts right-aligned.
+- **State in the URL** (the casino's `useParam`): filters, tabs and the selected currency are query
+  parameters, so every view is a link an admin can share.
 - **Dashboard (Nakama's Status page):** a row of stat cards (players online, and per currency the
   house, rewards and adjust balances), then a table per currency of all system balances.
-- **List pages (Nakama's Accounts list):** a search/filter bar above a dense table, row click
-  opens the detail page, "Load more" at the bottom (keyset), empty and loading states.
+- **List pages:** a search/filter bar above a dense table, row click opens the detail page, "Load
+  more" at the bottom (keyset), skeletons while loading, an empty state with an icon.
 - **Player detail (Nakama's account page):** a header with display name, ID, created and last
-  login, and actions (Disconnect, New adjustment); under it tabs: *Profile* (user fields),
-  *Authentication* (linked identities with Unlink), *Wallet* (balances per currency and this
-  player's adjustments), *Bets* (one sub-tab per game), *Seeds* (only with fairness), then one tab
-  per brand view with `user_filter`.
-- **Games (Nakama's Configuration page):** one card per game with its enabled switch; inside, a
-  table per currency of variant rows showing code cap, override and effective limit, with an Edit
-  dialog.
-- **Login:** a centred card with the brand logo, email, password and TOTP code; the TOTP enrol
-  step shows the `otpauth` URI as a QR code and the secret as text.
-- Dense, data-first styling like Nakama's: small type, compact rows, monospace for IDs, amounts and
-  hashes, amounts right-aligned.
+  login, and actions (Disconnect, New adjustment); tabs: *Profile*, *Authentication* (linked
+  identities with Unlink), *Wallet* (balances per currency and this player's adjustments), *Bets*
+  (one sub-tab per game), *Seeds* (only with fairness), then one tab per brand view with
+  `user_filter`.
+- **Games:** one card per game with its enabled switch; inside, a table per currency of variant rows
+  showing code cap, override and effective limit, with an Edit dialog.
+- **Login:** a centred card with the brand mark, email, password and TOTP code; the TOTP enrol step
+  shows the `otpauth` URI as a QR code (`qrcode-generator`, as the casino does) and the secret as
+  text. A 429 `busy` response is retried after `Retry-After`.
+- **Feedback:** sonner toasts for results and errors (the casino's `notificationProvider`); confirm
+  dialogs for destructive or money actions.
 
 ## Changes to existing code
 
