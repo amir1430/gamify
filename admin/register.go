@@ -110,5 +110,5 @@ func (adm *Admin) register() {
 	adm.registerAdmins()
 	adm.registerAdjustments()
 	adm.registerViews()
-	adm.mux.HandleFunc("GET /{$}", adm.serveUI)
+	adm.mux.HandleFunc("/", adm.serveUI) // the UI, and JSON 404s for unknown /api paths
 }

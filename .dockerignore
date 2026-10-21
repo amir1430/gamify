@@ -4,3 +4,4 @@
 gamify.yaml
 infra/centrifugo/config.json
 e2e
+admin/ui/node_modules

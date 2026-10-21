@@ -1,0 +1,117 @@
+@import "tailwindcss" source("."); /* scan src only, never the built dist */
+@import "tw-animate-css";
+
+/* shadcn's dark: variants apply under <html class="dark"> (set before first paint, src/lib/theme.ts) */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Two themes, the same roles: neutral surfaces, one brand accent (Brand.Accent from /api/me,
+ * replacing --brand and --ring; a neutral cyan otherwise), red only for "off", errors and
+ * destructive actions, green for on / money in, amber for waiting. No gradients. Text meets WCAG
+ * AA on its surfaces in both.
+ */
+
+/* light: white / zinc-50 surfaces, zinc borders, status hues darkened for white */
+:root {
+  color-scheme: light;
+  --radius: 0.5rem;
+
+  --background: #fafafa;
+  --foreground: #09090b;
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --popover: #ffffff;
+  --popover-foreground: #09090b;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --secondary: #f1f1f3;
+  --secondary-foreground: #18181b;
+  --muted: #f1f1f3;
+  --muted-foreground: #62626b;
+  --accent: #ececef;
+  --accent-foreground: #09090b;
+  --destructive: #dc2626;
+  --border: #e4e4e7;
+  --input: #d9d9de;
+  --ring: #0b6b85;
+
+  --brand: #0b6b85;
+  --ok: #12723a;
+  --warn: #9a4a07;
+  --danger: #c81e1e;
+}
+
+/* dark: the casino admin's tokens as they are */
+.dark {
+  color-scheme: dark;
+
+  --background: #08090b;
+  --foreground: #e8eaed;
+  --card: #0e1013;
+  --card-foreground: #e8eaed;
+  --popover: #111317;
+  --popover-foreground: #e8eaed;
+  --primary: #e8eaed;
+  --primary-foreground: #0b0c0e;
+  --secondary: #17191e;
+  --secondary-foreground: #e8eaed;
+  --muted: #15171b;
+  --muted-foreground: #8b919c;
+  --accent: #1a1d22;
+  --accent-foreground: #f2f3f5;
+  --destructive: #e5484d;
+  --border: #1d2026;
+  --input: #23262d;
+  --ring: #3cc8ff;
+
+  --brand: #3cc8ff;
+  --ok: #3dd68c;
+  --warn: #f5b83d;
+  --danger: #ff6369;
+}
+
+@theme inline {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  /* numbers line up in tables and stats */
+  td,
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+}

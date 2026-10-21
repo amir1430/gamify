@@ -4,3 +4,4 @@
 /.superpowers/
 /gamify.yaml
 /infra/centrifugo/config.json
+/admin/ui/node_modules/

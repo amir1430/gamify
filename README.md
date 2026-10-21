@@ -23,7 +23,7 @@ module github.com/amir1430/gamify
 | `auth/telegram/` | Provider: Mini App initData. Also Login Widget validation, Mini App links, Bot API helpers, `ChatID` |
 | `auth/custom/` | Provider: a brand-signed HS256 JWT (`sub`, `aud`, `exp` ≤ 15 min ahead), for brands with their own accounts |
 | `fairness/` | Opt-in module for games of chance (`Register`: `seed_pairs` table, `seed.info`, `seed.rotate`): seed pairs sealed with AES-256-GCM, nonces, verifier-compatible hashes and floats, pot seeds |
-| `admin/` | Opt-in back office (own migrations, goose table `goose_admin`): console users with roles and permissions, argon2id passwords, TOTP, audit log, balance adjustments; `CreateUser` for the first owner |
+| `admin/` | Opt-in back office (own migrations, goose table `goose_admin`): console users with roles and permissions, argon2id passwords, TOTP, audit log, balance adjustments, the console UI (`admin/ui`, embedded); `CreateUser` for the first owner |
 | `gameconfig/` | Admin-set limits per game × currency × variant (code defaults are hard caps) |
 | `metrics/` | Prometheus metrics and request logs |
 | `db/` | Platform migrations + `Migrate` (each module migrates with its own goose table) |
@@ -124,6 +124,14 @@ publishes it on `127.0.0.1:8081` only. Create the first owner, then log in and e
 docker compose exec app gamify admin add-user owner@example.com owner
 ```
 Roles: `owner`, `operator`, `support`, `viewer`.
+
+The console's UI is `admin/ui` (Vite, React, Refine, shadcn), built into `admin/ui/dist`, which is
+committed and embedded in the Go binary: Node is needed only to edit the UI. `make admin-ui`
+rebuilds it (`npm ci` + build); `make admin-ui-check` fails if the committed build is stale.
+While editing, run the Go server with `ADMIN_ORIGIN=http://localhost:5173`, then
+`ADMIN_ADDR=:8081 npm --prefix admin/ui run dev` serves the UI with hot reload on
+`http://localhost:5173` and proxies `/api` to `ADMIN_ADDR`. `npm --prefix admin/ui test` runs its
+unit tests (`node --test`), `npm --prefix admin/ui run check` type-checks.
 
 macOS: export `CGO_LDFLAGS=-Wl,-ld_classic` before building (TigerBeetle's static lib vs Apple's new linker).
 

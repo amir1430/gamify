@@ -19,7 +19,7 @@ First public version, extracted from the casino's core.
   login attempts in flight per process (then 429 `busy`, `Retry-After: 1`), cookie sessions (idle 30 min, absolute 12 h), CSRF (`X-Admin` header
   and `Origin`), `AllowIPs`, an audit row for every login, enrolment, logout and `CreateUser`;
   routes `/api/login`, `/api/login/telegram`, `/api/totp/enrol`, `/api/logout`, `/api/me`,
-  `/api/brand/logo`. `Admin.Handler` for tests. The UI at `/` is a placeholder for now.
+  `/api/brand/logo`. `Admin.Handler` for tests.
 - `admin`: read endpoints for `view` roles: `GET /api/dashboard`, `/api/users` (+ `/{id}`,
   `/{id}/bets`, `/{id}/seeds`), `/api/games`, `/api/audit`, `/api/adjustments`. Lists page with
   `?limit=` (default 50, max 100) and `?before=` and answer `{"items", "next"}`.
@@ -53,6 +53,11 @@ First public version, extracted from the casino's core.
   a built-in name or an unknown role. `Role.Can` still answers built-ins only.
 - `games/dice/diceadmin`: `Register(adm, s)` adds the "dice-bets" view (filters player and
   status, player tab). `games/dice`: `Service.ListBets` and `BetRow` for it.
+- `admin`: the console UI (React, Refine, shadcn; built into `admin/ui/dist` and embedded, so
+  brands need no Node): sign-in with TOTP and first-login enrolment (QR), the shell (grouped
+  sidebar, account menu), light, dark and system themes, `Brand.Accent` as its accent. Every
+  non-`/api` path serves the app (client-side routes); unknown `/api` paths answer a JSON 404
+  `not_found`. `Config.UI` replaces it whole and gets the same routing. Pages come next.
 - `admin`: `ErrEmailTaken`, returned (wrapped) by `CreateUser` for an email in use; it was a
   plain error before, so match it with `errors.Is`.
 - `ledger`: `Ledger.Decimals(c)` (a currency's display decimals).
