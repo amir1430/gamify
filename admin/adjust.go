@@ -88,7 +88,8 @@ func (adm *Admin) requestAdjustment(w http.ResponseWriter, r *http.Request, s *s
 			if row, err = q.GetAdjustmentByKey(ctx, b.IdempotencyKey); err != nil {
 				return err
 			}
-			if row.UserID != b.UserID || row.Currency != b.Currency || row.Amount != b.Amount || row.Reason != b.Reason {
+			if row.UserID != b.UserID || row.Currency != b.Currency || row.Amount != b.Amount || row.Reason != b.Reason ||
+				row.RequestedBy != s.AdminID {
 				return errIdemConflict
 			}
 			return nil
@@ -189,8 +190,9 @@ func (adm *Admin) applyAndAnswer(w http.ResponseWriter, r *http.Request, id int6
 }
 
 // apply moves an approved adjustment's money with Ledger.Adjust (its transfer ID is the row's, so
-// a repeat moves nothing) and marks it done, or failed when the ledger refuses it. Any other error
-// leaves it approved for the reconciler. Not audited: the row's status and done_at record it.
+// a repeat moves nothing), after making sure the user's accounts exist, and marks it done, or
+// failed when the ledger refuses it. Any other error leaves it approved for the reconciler. Not
+// audited: the row's status and done_at record it.
 func (adm *Admin) apply(ctx context.Context, id int64) error {
 	row, err := adm.q.GetAdjustment(ctx, id)
 	if err != nil {
@@ -202,6 +204,11 @@ func (adm *Admin) apply(ctx context.Context, id int64) error {
 func (adm *Admin) applyRow(ctx context.Context, row store.AdminAdjustment) error {
 	if row.Status != adjApproved {
 		return nil
+	}
+	// The user's accounts may be missing (their login's EnsureUser failed, or the currency is
+	// newer than their last login); login does the same, and it's idempotent.
+	if err := adm.a.Ledger.EnsureUser(ctx, row.UserID); err != nil {
+		return err
 	}
 	err := adm.a.Ledger.Adjust(ctx, ledger.Currency(row.Currency), row.ID, row.UserID, row.Amount)
 	switch {

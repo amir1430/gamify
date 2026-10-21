@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/amir1430/gamify/apptest"
+	"github.com/amir1430/gamify/auth"
 	"github.com/amir1430/gamify/ledger"
 )
 
@@ -254,5 +255,67 @@ func TestAdjustValidates(t *testing.T) {
 	}
 	if n := auditRows(t, a, "adjust.request"); n != 0 {
 		t.Fatalf("adjust.request rows = %d", n)
+	}
+}
+
+func TestAdjustUserWithoutAccounts(t *testing.T) {
+	a, _, srv := adjustEnv(t, nil)
+	op := loginAs(t, a, srv, "op", RoleOperator)
+	// A user row without ledger accounts (EnsureUser failed at login, say).
+	u, err := a.Users.Upsert(context.Background(), auth.Identity{Provider: "apptest", Subject: "bob", DisplayName: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, body := call(t, op, srv, "POST", "/api/adjustments", adjustBody(u.ID, 500, "k"))
+	if st != 200 || body["status"] != "done" {
+		t.Fatalf("credit: %d %v", st, body)
+	}
+	if b := a.Balance(u.ID, "usd"); b != 500 {
+		t.Fatalf("balance = %d, want 500", b)
+	}
+}
+
+func TestAdjustReplayOtherRequester(t *testing.T) {
+	a, _, srv := adjustEnv(t, nil)
+	ownerA := loginAs(t, a, srv, "ownera", RoleOwner)
+	ownerB := loginAs(t, a, srv, "ownerb", RoleOwner)
+	alice := a.User("alice")
+	if st, body := call(t, ownerA, srv, "POST", "/api/adjustments", adjustBody(alice, 500, "k")); st != 200 {
+		t.Fatalf("request: %d %v", st, body)
+	}
+	st, body := call(t, ownerB, srv, "POST", "/api/adjustments", adjustBody(alice, 500, "k"))
+	wantErr(t, "other requester", st, body, 409, "idempotency_conflict")
+	if b := a.Balance(alice, "usd"); b != 500 {
+		t.Fatalf("balance = %d, want 500", b)
+	}
+}
+
+func TestAdjustReconcileAlreadyFailed(t *testing.T) {
+	a, _, srv := adjustEnv(t, nil)
+	op := loginAs(t, a, srv, "op", RoleOperator)
+	alice := a.User("alice")
+	a.Fund(alice, "usd", 100)
+	st, body := call(t, op, srv, "POST", "/api/adjustments", adjustBody(alice, -600, "k"))
+	if st != 200 || body["status"] != "failed" {
+		t.Fatalf("debit: %d %v", st, body)
+	}
+	ctx := context.Background()
+	// A crash between the ledger's refusal and marking the row failed.
+	if _, err := a.Pool.Exec(ctx, `UPDATE admin_adjustments SET status = 'approved', error = NULL, done_at = NULL,
+		created_at = now() - interval '11 seconds' WHERE id = $1`, int64(body["id"].(float64))); err != nil {
+		t.Fatal(err)
+	}
+	a.Fund(alice, "usd", 1000) // enough now: the refused transfer ID stays refused
+	a.ReconcileNow()
+	var status string
+	var errMsg *string
+	if err := a.Pool.QueryRow(ctx, `SELECT status, error FROM admin_adjustments WHERE id = $1`, int64(body["id"].(float64))).Scan(&status, &errMsg); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || errMsg == nil || *errMsg == "" {
+		t.Fatalf("status = %s error = %v, want failed with error", status, errMsg)
+	}
+	if b := a.Balance(alice, "usd"); b != 1100 {
+		t.Fatalf("balance = %d, want 1100", b)
 	}
 }
