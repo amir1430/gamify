@@ -23,6 +23,7 @@ type Admin struct {
 	mux    *http.ServeMux
 	routes map[string]route // pattern → what it needs
 	h      http.Handler
+	logins chan struct{} // login attempts in flight, at most maxLogins
 }
 
 // Register migrates the module's tables and adds the console's server to a.Run. Call it after the
@@ -36,7 +37,7 @@ func Register(ctx context.Context, a *app.App, cfg Config) (*Admin, error) {
 		return nil, err
 	}
 	adm := &Admin{a: a, cfg: cfg, q: store.New(a.Pool), totp: totp{key: cfg.TOTPKey},
-		mux: http.NewServeMux(), routes: map[string]route{}}
+		mux: http.NewServeMux(), routes: map[string]route{}, logins: make(chan struct{}, maxLogins)}
 	adm.h = adm.guard(adm.mux)
 	adm.register()
 	a.Serve("admin", &http.Server{Addr: cfg.Addr, Handler: adm.Handler(), ReadHeaderTimeout: 5 * time.Second})
@@ -73,9 +74,9 @@ func (cfg Config) validate() (Config, error) {
 
 // register adds every route.
 func (adm *Admin) register() {
-	adm.public("POST /api/login", adm.login)
+	adm.public("POST /api/login", adm.limited(adm.login))
 	if adm.cfg.TelegramBotToken != "" {
-		adm.public("POST /api/login/telegram", adm.loginTelegram)
+		adm.public("POST /api/login/telegram", adm.limited(adm.loginTelegram))
 	}
 	adm.public("POST /api/logout", adm.logout)
 	adm.public("GET /api/brand/logo", adm.brandLogo)

@@ -14,8 +14,9 @@ First public version, extracted from the casino's core.
   `CreateUser(ctx, pool, email, role)` (returns a one-time random password).
 - `admin`: `Register(ctx, app, Config)` serves the console on its own listener (`Config.Addr`,
   through `App.Serve`; `Config.Origin` and a 32-byte `Config.TOTPKey` required): password + TOTP
-  login (enrolment on first login), optional Telegram Login Widget login, lockout after 5
-  failures in 15 minutes, cookie sessions (idle 30 min, absolute 12 h), CSRF (`X-Admin` header
+  login (enrolment on first login), optional Telegram Login Widget login, lockout (at most 5
+  failed logins per email or Telegram ID in any 15 minutes, then 429 `locked`) and at most 4
+  login attempts in flight per process (then 429 `busy`, `Retry-After: 1`), cookie sessions (idle 30 min, absolute 12 h), CSRF (`X-Admin` header
   and `Origin`), `AllowIPs`, an audit row for every login, enrolment, logout and `CreateUser`;
   routes `/api/login`, `/api/login/telegram`, `/api/totp/enrol`, `/api/logout`, `/api/me`,
   `/api/brand/logo`. `Admin.Handler` for tests. The UI at `/` is a placeholder for now.

@@ -20,6 +20,10 @@ import (
 // falls out of the window (CountLoginFails). A sliding window: refused attempts aren't counted.
 const maxLoginFails = 5
 
+// maxLogins caps login attempts in flight in this process (both routes): each runs argon2id and
+// briefly holds a connection of the app's shared pool, so a flood of logins can't drain it.
+const maxLogins = 4
+
 // dummyHash is checked for an unknown email so the response takes as long as a wrong password and
 // doesn't reveal which emails exist. Same parameters as hashPassword.
 const dummyHash = "$argon2id$v=19$m=19456,t=2,p=1$ZhL5ZOvjchM96r8hCa6bJQ$1byBCwfv2BUPUAAVVTxDAb/B7tXrdadf1Uv9BkwQYeo"
@@ -30,7 +34,23 @@ var (
 	errLocked       = &apiError{http.StatusTooManyRequests, "locked", "too many failed logins, try again in 15 minutes"}
 	errInvalidCode  = &apiError{http.StatusBadRequest, "invalid_code", "wrong code"}
 	errNotEnrolling = &apiError{http.StatusConflict, "not_enrolling", "no TOTP enrolment in progress, log in again"}
+	errBusy         = &apiError{http.StatusTooManyRequests, "busy", "too many logins at once, retry in a second"}
 )
+
+// limited runs h only if fewer than maxLogins attempts are in flight; otherwise 429 busy with
+// Retry-After (not audited: nothing was tried).
+func (adm *Admin) limited(h handlerFunc) handlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, s *session) error {
+		select {
+		case adm.logins <- struct{}{}:
+			defer func() { <-adm.logins }()
+			return h(w, r, s)
+		default:
+			w.Header().Set("Retry-After", "1")
+			return errBusy
+		}
+	}
+}
 
 // login: email and password, then TOTP (or enrolment on the first login).
 func (adm *Admin) login(w http.ResponseWriter, r *http.Request, _ *session) error {
@@ -57,8 +77,6 @@ func (adm *Admin) login(w http.ResponseWriter, r *http.Request, _ *session) erro
 				return "unknown"
 			case !checkPassword(u.PasswordHash, req.Password):
 				return "password"
-			case u.DisabledAt.Valid:
-				return "disabled"
 			}
 			return ""
 		})
@@ -89,11 +107,8 @@ func (adm *Admin) loginTelegram(w http.ResponseWriter, r *http.Request, _ *sessi
 			return q.GetUserByTelegramID(ctx, &tu.ID)
 		},
 		func(u store.AdminUser, found bool) string {
-			switch {
-			case !found:
+			if !found {
 				return "unknown"
-			case u.DisabledAt.Valid:
-				return "disabled"
 			}
 			return ""
 		})
@@ -109,17 +124,26 @@ type outcome struct {
 
 func failed(reason string, answer *apiError) outcome { return outcome{reason: reason, answer: answer} }
 
-// attempt runs one login attempt for target in a single transaction holding the target's advisory
-// lock: the lockout count, the first factor (first returns a failure reason or ""), the second
-// factor and the audit row, so parallel attempts can't each read a count below the limit. The
+// attempt runs one login attempt for target. The first factor (first returns a failure reason or
+// "", e.g. argon2id) runs before any transaction, on a user read without one. Then one short
+// transaction holding the target's advisory lock counts the failures, re-reads the user, checks
+// the second factor and writes the audit row (and session), so parallel attempts can't each read
+// a count below the limit. A locked target is refused whatever the first factor said. The
 // transaction commits failures too: their audit row is the count.
 func (adm *Admin) attempt(w http.ResponseWriter, r *http.Request, target, code string,
 	lookup func(context.Context, *store.Queries) (store.AdminUser, error),
 	first func(u store.AdminUser, found bool) string) error {
 	// Not cancelled with the request: hanging up mustn't skip writing a login.fail.
 	ctx := context.WithoutCancel(r.Context())
+	pre, err := lookup(ctx, adm.q)
+	preFound := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	reason := first(pre, preFound)
+
 	var out outcome
-	err := pgx.BeginFunc(ctx, adm.a.Pool, func(tx pgx.Tx) error {
+	err = pgx.BeginFunc(ctx, adm.a.Pool, func(tx pgx.Tx) error {
 		q := store.New(tx)
 		if err := q.LockLogin(ctx, target); err != nil {
 			return err
@@ -138,12 +162,20 @@ func (adm *Admin) attempt(w http.ResponseWriter, r *http.Request, target, code s
 		if err != nil {
 			return err
 		}
-		if n >= maxLoginFails {
+		switch {
+		case n >= maxLoginFails:
 			out = failed("locked", errLocked)
-		} else if reason := first(u, found); reason != "" {
+		case reason != "":
 			out = failed(reason, errInvalidLogin)
-		} else if out, err = adm.secondFactor(ctx, tx, r, u, code); err != nil {
-			return err
+		case !found || u.ID != pre.ID || u.PasswordHash != pre.PasswordHash:
+			// Changed between the check and the lock (deleted, or password reset): not counted.
+			out = failed("changed", errInvalidLogin)
+		case u.DisabledAt.Valid:
+			out = failed("disabled", errInvalidLogin)
+		default:
+			if out, err = adm.secondFactor(ctx, tx, r, u, code); err != nil {
+				return err
+			}
 		}
 		if out.reason != "" {
 			return adm.audit(ctx, tx, s, r, "login.fail", target, nil, nil, out.reason)

@@ -6,8 +6,10 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strconv"
@@ -405,17 +407,7 @@ func TestTOTPConcurrentReplay(t *testing.T) {
 	got := make(chan int, n)
 	for range n {
 		go func() {
-			req, _ := http.NewRequest("POST", srv.URL+"/api/login",
-				strings.NewReader(`{"email":"owner@brand.example","password":"`+pw+`","totp":"`+code+`"}`))
-			req.Header.Set("X-Admin", "1")
-			req.Header.Set("Origin", testOrigin)
-			resp, err := srv.Client().Do(req)
-			if err != nil {
-				got <- 0
-				return
-			}
-			resp.Body.Close()
-			got <- resp.StatusCode
+			got <- postLogin(srv, `{"email":"owner@brand.example","password":"`+pw+`","totp":"`+code+`"}`)
 		}()
 	}
 	ok := 0
@@ -435,19 +427,7 @@ func TestLockoutParallel(t *testing.T) {
 	const n = 20
 	got := make(chan int, n)
 	for range n {
-		go func() {
-			req, _ := http.NewRequest("POST", srv.URL+"/api/login",
-				strings.NewReader(`{"email":"owner@brand.example","password":"wrong"}`))
-			req.Header.Set("X-Admin", "1")
-			req.Header.Set("Origin", testOrigin)
-			resp, err := srv.Client().Do(req)
-			if err != nil {
-				got <- 0
-				return
-			}
-			resp.Body.Close()
-			got <- resp.StatusCode
-		}()
+		go func() { got <- postLogin(srv, `{"email":"owner@brand.example","password":"wrong"}`) }()
 	}
 	codes := map[int]int{}
 	for range n {
@@ -495,5 +475,63 @@ func TestEnrolRotatesSession(t *testing.T) {
 	var sessions int
 	if err := a.Pool.QueryRow(context.Background(), `SELECT count(*) FROM admin_sessions`).Scan(&sessions); err != nil || sessions != 1 {
 		t.Fatalf("%d sessions (%v)", sessions, err)
+	}
+}
+
+// postLogin posts a login from its own goroutine, retrying while the server is busy (the
+// concurrency cap), and returns the final status (0 on a transport error).
+func postLogin(srv *httptest.Server, body string) int {
+	for {
+		req, _ := http.NewRequest("POST", srv.URL+"/api/login", strings.NewReader(body))
+		req.Header.Set("X-Admin", "1")
+		req.Header.Set("Origin", testOrigin)
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			return 0
+		}
+		var e struct{ Code string }
+		json.NewDecoder(resp.Body).Decode(&e)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusTooManyRequests || e.Code != "busy" {
+			return resp.StatusCode
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestLoginBusy(t *testing.T) {
+	a, adm, srv := newAdmin(t, func(c *Config) { c.TelegramBotToken = "123:abc" })
+	pw := addUser(t, a, "owner@brand.example", RoleOwner)
+	for range cap(adm.logins) {
+		adm.logins <- struct{}{}
+	}
+	for _, path := range []string{"/api/login", "/api/login/telegram"} {
+		req, _ := http.NewRequest("POST", srv.URL+path,
+			strings.NewReader(`{"email":"owner@brand.example","password":"`+pw+`","fields":{}}`))
+		req.Header.Set("X-Admin", "1")
+		req.Header.Set("Origin", testOrigin)
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var e struct{ Code string }
+		json.NewDecoder(resp.Body).Decode(&e)
+		resp.Body.Close()
+		if resp.StatusCode != 429 || e.Code != "busy" || resp.Header.Get("Retry-After") != "1" {
+			t.Fatalf("%s while full: %d %q Retry-After %q", path, resp.StatusCode, e.Code, resp.Header.Get("Retry-After"))
+		}
+	}
+	var n int
+	if err := a.Pool.QueryRow(context.Background(), `SELECT count(*) FROM admin_audit WHERE action LIKE 'login.%'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("%d audit rows for busy refusals (%v)", n, err)
+	}
+	for range cap(adm.logins) {
+		<-adm.logins
+	}
+	if st, body := call(t, client(t, srv), srv, "POST", "/api/login", map[string]string{"email": "owner@brand.example", "password": pw}); st != 200 {
+		t.Fatalf("after release: %d %v", st, body)
+	}
+	if cap(adm.logins) != 4 {
+		t.Fatalf("cap %d", cap(adm.logins))
 	}
 }
