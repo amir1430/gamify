@@ -8,6 +8,8 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 First public version, extracted from the casino's core.
 
 ### Added
+- `auth`: `Users.UnlinkTx` (`Unlink` inside the caller's transaction) and `Users.Identities`
+  (a user's linked logins with link time).
 - `gameconfig`: transactional writes for the admin (`SetGame`, `SetLimit`, `DeleteLimit` take a
   `pgx.Tx` and refuse overrides above the code caps) and `Overrides` (cached view). Writes don't
   reload the cache: call `Load` after commit.

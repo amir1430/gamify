@@ -134,6 +134,15 @@ func (u *Users) Unlink(ctx context.Context, userID int64, provider string) error
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := u.UnlinkTx(ctx, tx, userID, provider); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// UnlinkTx is Unlink inside the caller's transaction (an admin writes its audit row in the same
+// one). It neither commits nor rolls back; the checks and errors are Unlink's.
+func (u *Users) UnlinkTx(ctx context.Context, tx pgx.Tx, userID int64, provider string) error {
 	q := u.q.WithTx(tx)
 	if _, err := q.LockUser(ctx, userID); errors.Is(err, pgx.ErrNoRows) {
 		return ErrNoIdentity
@@ -150,10 +159,25 @@ func (u *Users) Unlink(ctx context.Context, userID int64, provider string) error
 	} else if n <= 1 {
 		return ErrLastIdentity
 	}
-	if _, err := q.DeleteIdentity(ctx, store.DeleteIdentityParams{UserID: userID, Provider: provider}); err != nil {
-		return err
+	_, err := q.DeleteIdentity(ctx, store.DeleteIdentityParams{UserID: userID, Provider: provider})
+	return err
+}
+
+// LinkedIdentity is one login of a user.
+type LinkedIdentity struct {
+	Provider string    `json:"provider"`
+	Subject  string    `json:"subject"`
+	LinkedAt time.Time `json:"linked_at"`
+}
+
+// Identities lists the user's logins by provider; an unknown user has none.
+func (u *Users) Identities(ctx context.Context, userID int64) ([]LinkedIdentity, error) {
+	rows, err := u.q.ListIdentities(ctx, userID)
+	out := make([]LinkedIdentity, len(rows))
+	for i, r := range rows {
+		out[i] = LinkedIdentity{Provider: r.Provider, Subject: r.Subject, LinkedAt: r.CreatedAt.Time}
 	}
-	return tx.Commit(ctx)
+	return out, err
 }
 
 // Subject is the user's ID at provider (their Telegram ID, for the Bot API), or ErrNoIdentity.

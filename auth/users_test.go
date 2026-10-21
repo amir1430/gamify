@@ -177,3 +177,51 @@ func TestUnlinkConcurrentKeepsOne(t *testing.T) {
 		}
 	}
 }
+
+func TestIdentities(t *testing.T) {
+	u, ctx := users(t), context.Background()
+	custom, tg := subject(), subject()
+	alice, err := u.Upsert(ctx, Identity{Provider: "custom", Subject: custom})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Link(ctx, alice.ID, Identity{Provider: "telegram", Subject: tg}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := u.Identities(ctx, alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Provider != "custom" || got[0].Subject != custom ||
+		got[1].Provider != "telegram" || got[1].Subject != tg || got[0].LinkedAt.IsZero() || got[1].LinkedAt.IsZero() {
+		t.Fatalf("Identities = %+v, want custom and telegram in order with times", got)
+	}
+	if none, err := u.Identities(ctx, -1); err != nil || none == nil || len(none) != 0 {
+		t.Fatalf("unknown user = %v %v, want empty non-nil slice", none, err)
+	}
+}
+
+// UnlinkTx leaves the commit to the caller: a rollback keeps the identity.
+func TestUnlinkTxRollback(t *testing.T) {
+	u, ctx := users(t), context.Background()
+	alice, err := u.Upsert(ctx, Identity{Provider: "custom", Subject: subject()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Link(ctx, alice.ID, Identity{Provider: "telegram", Subject: subject()}); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := u.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.UnlinkTx(ctx, tx, alice.ID, "telegram"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ids, err := u.Identities(ctx, alice.ID); err != nil || len(ids) != 2 {
+		t.Fatalf("after rollback = %+v %v, want both identities", ids, err)
+	}
+}

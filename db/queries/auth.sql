@@ -52,3 +52,6 @@ SELECT count(*) FROM user_identities WHERE user_id = $1;
 
 -- name: DeleteIdentity :execrows
 DELETE FROM user_identities WHERE user_id = $1 AND provider = $2;
+
+-- name: ListIdentities :many
+SELECT provider, subject, created_at FROM user_identities WHERE user_id = $1 ORDER BY provider;

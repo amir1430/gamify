@@ -180,6 +180,36 @@ func (q *Queries) GetUsers(ctx context.Context, ids []int64) ([]GetUsersRow, err
 	return items, nil
 }
 
+const listIdentities = `-- name: ListIdentities :many
+SELECT provider, subject, created_at FROM user_identities WHERE user_id = $1 ORDER BY provider
+`
+
+type ListIdentitiesRow struct {
+	Provider  string
+	Subject   string
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListIdentities(ctx context.Context, userID int64) ([]ListIdentitiesRow, error) {
+	rows, err := q.db.Query(ctx, listIdentities, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListIdentitiesRow
+	for rows.Next() {
+		var i ListIdentitiesRow
+		if err := rows.Scan(&i.Provider, &i.Subject, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockUser = `-- name: LockUser :one
 SELECT id FROM users WHERE id = $1 FOR UPDATE
 `
