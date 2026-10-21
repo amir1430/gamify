@@ -23,6 +23,11 @@ UPDATE admin_users SET totp_last_step = @step WHERE id = @id AND totp_last_step 
 UPDATE admin_users SET totp_secret = totp_pending, totp_pending = NULL, totp_last_step = @step
 WHERE id = @id AND totp_pending = @pending;
 
+-- LockLogin serialises login attempts for one lockout target ("email:…", "telegram:…") until the
+-- transaction ends, so the count, the check and the audit row can't interleave.
+-- name: LockLogin :exec
+SELECT pg_advisory_xact_lock(hashtextextended(@target::text, 0));
+
 -- CountLoginFails counts failures that lock a login: since the later of 15 minutes ago and the
 -- user's last successful login. A missing TOTP (the UI's first step), a locked attempt and a bad
 -- Telegram signature don't count.
@@ -53,9 +58,6 @@ WHERE s.hash = $1;
 
 -- name: TouchSession :exec
 UPDATE admin_sessions SET seen_at = now() WHERE id = $1;
-
--- name: SetSessionMFA :exec
-UPDATE admin_sessions SET mfa = true WHERE id = $1;
 
 -- name: DeleteSession :exec
 DELETE FROM admin_sessions WHERE id = $1;

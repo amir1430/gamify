@@ -135,8 +135,9 @@ permissions from `GET /me` and hides what they can't do. The server enforces it 
   30 min, absolute 12 h. Disabling a user or changing their role deletes their sessions.
 - CSRF: SameSite=Strict, plus every write requires an `X-Admin` header and an `Origin` header
   equal to `Config.Origin`.
-- Rate limits: 5 failed logins per email per 15 min, then locked for 15 min. Every login attempt
-  (ok or not) goes in the audit log.
+- Rate limits: at most 5 failed logins per email in any 15 minutes; further attempts are refused
+  (429) until the oldest of those falls out of the window. Every login attempt (ok or not) goes in
+  the audit log.
 
 ## Audit log
 

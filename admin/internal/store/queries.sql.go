@@ -256,12 +256,14 @@ func (q *Queries) InsertAudit(ctx context.Context, arg InsertAuditParams) error 
 	return err
 }
 
-const setSessionMFA = `-- name: SetSessionMFA :exec
-UPDATE admin_sessions SET mfa = true WHERE id = $1
+const lockLogin = `-- name: LockLogin :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
 `
 
-func (q *Queries) SetSessionMFA(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, setSessionMFA, id)
+// LockLogin serialises login attempts for one lockout target ("email:…", "telegram:…") until the
+// transaction ends, so the count, the check and the audit row can't interleave.
+func (q *Queries) LockLogin(ctx context.Context, target string) error {
+	_, err := q.db.Exec(ctx, lockLogin, target)
 	return err
 }
 

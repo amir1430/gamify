@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -425,5 +426,74 @@ func TestTOTPConcurrentReplay(t *testing.T) {
 	}
 	if ok != 1 {
 		t.Fatalf("%d of %d concurrent logins with one code succeeded", ok, n)
+	}
+}
+
+func TestLockoutParallel(t *testing.T) {
+	a, _, srv := newAdmin(t)
+	addUser(t, a, "owner@brand.example", RoleOwner)
+	const n = 20
+	got := make(chan int, n)
+	for range n {
+		go func() {
+			req, _ := http.NewRequest("POST", srv.URL+"/api/login",
+				strings.NewReader(`{"email":"owner@brand.example","password":"wrong"}`))
+			req.Header.Set("X-Admin", "1")
+			req.Header.Set("Origin", testOrigin)
+			resp, err := srv.Client().Do(req)
+			if err != nil {
+				got <- 0
+				return
+			}
+			resp.Body.Close()
+			got <- resp.StatusCode
+		}()
+	}
+	codes := map[int]int{}
+	for range n {
+		codes[<-got]++
+	}
+	if codes[401] != maxLoginFails || codes[429] != n-maxLoginFails {
+		t.Fatalf("statuses %v: want %d × 401 and %d × 429", codes, maxLoginFails, n-maxLoginFails)
+	}
+	var evaluated, locked int
+	if err := a.Pool.QueryRow(context.Background(),
+		`SELECT count(*) FILTER (WHERE reason = 'password'), count(*) FILTER (WHERE reason = 'locked')
+		 FROM admin_audit WHERE action = 'login.fail' AND target = 'email:owner@brand.example'`).Scan(&evaluated, &locked); err != nil {
+		t.Fatal(err)
+	}
+	if evaluated != maxLoginFails || locked != n-maxLoginFails {
+		t.Fatalf("%d passwords checked, %d locked", evaluated, locked)
+	}
+}
+
+func TestEnrolRotatesSession(t *testing.T) {
+	a, _, srv := newAdmin(t)
+	pw := addUser(t, a, "owner@brand.example", RoleOwner)
+	c := client(t, srv)
+	st, body := call(t, c, srv, "POST", "/api/login", map[string]string{"email": "owner@brand.example", "password": pw})
+	if st != 200 || body["enrol"] != true {
+		t.Fatalf("login: %d %v", st, body)
+	}
+	u, _ := url.Parse(srv.URL)
+	before := c.Jar.Cookies(u)
+	e := enrolFrom(t, body["otpauth_uri"].(string))
+	if st, body := call(t, c, srv, "POST", "/api/totp/enrol", map[string]string{"code": e.nextCode(t)}); st != 200 {
+		t.Fatalf("enrol: %d %v", st, body)
+	}
+	after := c.Jar.Cookies(u)
+	if len(before) != 1 || len(after) != 1 || before[0].Value == after[0].Value {
+		t.Fatalf("cookie not rotated: %v → %v", before, after)
+	}
+	old := client(t, srv)
+	old.Jar.SetCookies(u, before)
+	st, body = call(t, old, srv, "GET", "/api/me", nil)
+	wantErr(t, "pre-enrol cookie", st, body, 401, "unauthorized")
+	if st, body := call(t, c, srv, "GET", "/api/me", nil); st != 200 {
+		t.Fatalf("new cookie: %d %v", st, body)
+	}
+	var sessions int
+	if err := a.Pool.QueryRow(context.Background(), `SELECT count(*) FROM admin_sessions`).Scan(&sessions); err != nil || sessions != 1 {
+		t.Fatalf("%d sessions (%v)", sessions, err)
 	}
 }
