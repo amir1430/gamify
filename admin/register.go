@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -40,6 +41,7 @@ func Register(ctx context.Context, a *app.App, cfg Config) (*Admin, error) {
 		mux: http.NewServeMux(), routes: map[string]route{}, logins: make(chan struct{}, maxLogins)}
 	adm.h = adm.guard(adm.mux)
 	adm.register()
+	a.Reconcile(adm.reconcile)
 	a.Serve("admin", &http.Server{Addr: cfg.Addr, Handler: adm.Handler(), ReadHeaderTimeout: 5 * time.Second})
 	return adm, nil
 }
@@ -69,6 +71,12 @@ func (cfg Config) validate() (Config, error) {
 		}
 	}
 	cfg.AllowIPs = append([]netip.Prefix(nil), cfg.AllowIPs...)
+	for c, n := range cfg.ApproveAbove {
+		if n < 0 {
+			return cfg, fmt.Errorf("admin: Config.ApproveAbove[%s] is %d, want >= 0", c, n)
+		}
+	}
+	cfg.ApproveAbove = maps.Clone(cfg.ApproveAbove)
 	return cfg, nil
 }
 
@@ -85,5 +93,6 @@ func (adm *Admin) register() {
 	adm.registerReads()
 	adm.registerWrites()
 	adm.registerAdmins()
+	adm.registerAdjustments()
 	adm.mux.HandleFunc("GET /{$}", adm.serveUI)
 }

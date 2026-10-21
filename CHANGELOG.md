@@ -30,6 +30,16 @@ First public version, extracted from the casino's core.
   /api/admins`, `PATCH /api/admins/{id}`: role, disable, reset TOTP, reset password; kills their
   sessions; the last enabled owner stays) and `POST /api/me/password`. A write that changes
   nothing writes no audit row.
+- `admin`: balance adjustments, the console's only way to move money: `POST /api/adjustments`
+  (`adjust`; `{user_id, currency, amount, reason, idempotency_key}`, amount in minor units, < 0
+  debits; a replay of the key returns the stored row, with different fields 409
+  `idempotency_conflict`), and `POST /api/adjustments/{id}/approve` / `reject` (`approve`; not
+  the requester's own, 403 `own_adjustment`; reject needs a `reason`). Above
+  `Config.ApproveAbove[currency]` an adjustment waits for approval, otherwise it is applied with
+  `Ledger.Adjust` straight away and marked `done`, or `failed` when the ledger refuses a debit
+  beyond the balance. A reconciler (`App.Reconcile`) re-applies `approved` rows older than 10 s.
+  Audited as `adjust.request`, `adjust.approve`, `adjust.reject`. `Register` refuses a negative
+  `ApproveAbove` threshold.
 - `admin`: `ErrEmailTaken`, returned (wrapped) by `CreateUser` for an email in use; it was a
   plain error before, so match it with `errors.Is`.
 - `ledger`: `Ledger.Decimals(c)` (a currency's display decimals).

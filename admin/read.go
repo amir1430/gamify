@@ -340,12 +340,17 @@ func (adm *Admin) adjustments(w http.ResponseWriter, r *http.Request, _ *session
 	}
 	out := make([]adjustmentRow, len(rows))
 	for i, x := range rows {
-		out[i] = adjustmentRow{x.ID, x.UserID, x.Currency, x.Amount, x.Reason, x.RequestedBy, x.ApprovedBy,
-			x.Status, x.Error, x.IdempotencyKey, x.CreatedAt.Time, nil}
-		if x.DoneAt.Valid {
-			out[i].DoneAt = &x.DoneAt.Time
-		}
+		out[i] = adjustmentView(x)
 	}
 	writePage(w, out, limit, func(a adjustmentRow) int64 { return a.ID })
 	return nil
+}
+
+func adjustmentView(x store.AdminAdjustment) adjustmentRow {
+	v := adjustmentRow{x.ID, x.UserID, x.Currency, x.Amount, x.Reason, x.RequestedBy, x.ApprovedBy,
+		x.Status, x.Error, x.IdempotencyKey, x.CreatedAt.Time, nil}
+	if x.DoneAt.Valid {
+		v.DoneAt = &x.DoneAt.Time
+	}
+	return v
 }

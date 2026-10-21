@@ -115,3 +115,37 @@ DELETE FROM admin_sessions WHERE admin_id = $1;
 
 -- name: DeleteOtherSessions :exec
 DELETE FROM admin_sessions WHERE admin_id = @admin_id AND id <> @keep;
+
+-- InsertAdjustment returns no row when the idempotency key is taken: the caller reads that one.
+-- name: InsertAdjustment :one
+INSERT INTO admin_adjustments (user_id, currency, amount, reason, requested_by, status, idempotency_key)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (idempotency_key) DO NOTHING
+RETURNING *;
+
+-- name: GetAdjustmentByKey :one
+SELECT * FROM admin_adjustments WHERE idempotency_key = $1;
+
+-- name: GetAdjustment :one
+SELECT * FROM admin_adjustments WHERE id = $1;
+
+-- name: LockAdjustment :one
+SELECT * FROM admin_adjustments WHERE id = $1 FOR UPDATE;
+
+-- DecideAdjustment records an approval or rejection of a pending adjustment.
+-- name: DecideAdjustment :one
+UPDATE admin_adjustments SET status = @status, approved_by = @approved_by
+WHERE id = @id AND status = 'pending_approval'
+RETURNING *;
+
+-- FinishAdjustment marks an applied (done) or refused (failed) adjustment: 0 rows means it isn't
+-- approved any more (another apply finished it).
+-- name: FinishAdjustment :execrows
+UPDATE admin_adjustments SET status = @status, error = sqlc.narg(error), done_at = now()
+WHERE id = @id AND status = 'approved';
+
+-- DueAdjustments are approved adjustments a crash may have left unapplied, oldest first.
+-- name: DueAdjustments :many
+SELECT * FROM admin_adjustments
+WHERE status = 'approved' AND created_at < now() - interval '10 seconds'
+ORDER BY created_at, id LIMIT 100;

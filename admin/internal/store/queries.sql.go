@@ -137,6 +137,39 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (int64, 
 	return id, err
 }
 
+const decideAdjustment = `-- name: DecideAdjustment :one
+UPDATE admin_adjustments SET status = $1, approved_by = $2
+WHERE id = $3 AND status = 'pending_approval'
+RETURNING id, user_id, currency, amount, reason, requested_by, approved_by, status, error, idempotency_key, created_at, done_at
+`
+
+type DecideAdjustmentParams struct {
+	Status     string
+	ApprovedBy *int64
+	ID         int64
+}
+
+// DecideAdjustment records an approval or rejection of a pending adjustment.
+func (q *Queries) DecideAdjustment(ctx context.Context, arg DecideAdjustmentParams) (AdminAdjustment, error) {
+	row := q.db.QueryRow(ctx, decideAdjustment, arg.Status, arg.ApprovedBy, arg.ID)
+	var i AdminAdjustment
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Amount,
+		&i.Reason,
+		&i.RequestedBy,
+		&i.ApprovedBy,
+		&i.Status,
+		&i.Error,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.DoneAt,
+	)
+	return i, err
+}
+
 const deleteOtherSessions = `-- name: DeleteOtherSessions :exec
 DELETE FROM admin_sessions WHERE admin_id = $1 AND id <> $2
 `
@@ -167,6 +200,115 @@ DELETE FROM admin_sessions WHERE admin_id = $1
 func (q *Queries) DeleteSessionsOf(ctx context.Context, adminID int64) error {
 	_, err := q.db.Exec(ctx, deleteSessionsOf, adminID)
 	return err
+}
+
+const dueAdjustments = `-- name: DueAdjustments :many
+SELECT id, user_id, currency, amount, reason, requested_by, approved_by, status, error, idempotency_key, created_at, done_at FROM admin_adjustments
+WHERE status = 'approved' AND created_at < now() - interval '10 seconds'
+ORDER BY created_at, id LIMIT 100
+`
+
+// DueAdjustments are approved adjustments a crash may have left unapplied, oldest first.
+func (q *Queries) DueAdjustments(ctx context.Context) ([]AdminAdjustment, error) {
+	rows, err := q.db.Query(ctx, dueAdjustments)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminAdjustment
+	for rows.Next() {
+		var i AdminAdjustment
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Currency,
+			&i.Amount,
+			&i.Reason,
+			&i.RequestedBy,
+			&i.ApprovedBy,
+			&i.Status,
+			&i.Error,
+			&i.IdempotencyKey,
+			&i.CreatedAt,
+			&i.DoneAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const finishAdjustment = `-- name: FinishAdjustment :execrows
+UPDATE admin_adjustments SET status = $1, error = $2, done_at = now()
+WHERE id = $3 AND status = 'approved'
+`
+
+type FinishAdjustmentParams struct {
+	Status string
+	Error  *string
+	ID     int64
+}
+
+// FinishAdjustment marks an applied (done) or refused (failed) adjustment: 0 rows means it isn't
+// approved any more (another apply finished it).
+func (q *Queries) FinishAdjustment(ctx context.Context, arg FinishAdjustmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finishAdjustment, arg.Status, arg.Error, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getAdjustment = `-- name: GetAdjustment :one
+SELECT id, user_id, currency, amount, reason, requested_by, approved_by, status, error, idempotency_key, created_at, done_at FROM admin_adjustments WHERE id = $1
+`
+
+func (q *Queries) GetAdjustment(ctx context.Context, id int64) (AdminAdjustment, error) {
+	row := q.db.QueryRow(ctx, getAdjustment, id)
+	var i AdminAdjustment
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Amount,
+		&i.Reason,
+		&i.RequestedBy,
+		&i.ApprovedBy,
+		&i.Status,
+		&i.Error,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.DoneAt,
+	)
+	return i, err
+}
+
+const getAdjustmentByKey = `-- name: GetAdjustmentByKey :one
+SELECT id, user_id, currency, amount, reason, requested_by, approved_by, status, error, idempotency_key, created_at, done_at FROM admin_adjustments WHERE idempotency_key = $1
+`
+
+func (q *Queries) GetAdjustmentByKey(ctx context.Context, idempotencyKey string) (AdminAdjustment, error) {
+	row := q.db.QueryRow(ctx, getAdjustmentByKey, idempotencyKey)
+	var i AdminAdjustment
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Amount,
+		&i.Reason,
+		&i.RequestedBy,
+		&i.ApprovedBy,
+		&i.Status,
+		&i.Error,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.DoneAt,
+	)
+	return i, err
 }
 
 const getSession = `-- name: GetSession :one
@@ -269,6 +411,52 @@ func (q *Queries) GetUserByTelegramID(ctx context.Context, telegramID *int64) (A
 		&i.CreatedAt,
 		&i.TotpPending,
 		&i.TotpLastStep,
+	)
+	return i, err
+}
+
+const insertAdjustment = `-- name: InsertAdjustment :one
+INSERT INTO admin_adjustments (user_id, currency, amount, reason, requested_by, status, idempotency_key)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (idempotency_key) DO NOTHING
+RETURNING id, user_id, currency, amount, reason, requested_by, approved_by, status, error, idempotency_key, created_at, done_at
+`
+
+type InsertAdjustmentParams struct {
+	UserID         int64
+	Currency       string
+	Amount         int64
+	Reason         string
+	RequestedBy    int64
+	Status         string
+	IdempotencyKey string
+}
+
+// InsertAdjustment returns no row when the idempotency key is taken: the caller reads that one.
+func (q *Queries) InsertAdjustment(ctx context.Context, arg InsertAdjustmentParams) (AdminAdjustment, error) {
+	row := q.db.QueryRow(ctx, insertAdjustment,
+		arg.UserID,
+		arg.Currency,
+		arg.Amount,
+		arg.Reason,
+		arg.RequestedBy,
+		arg.Status,
+		arg.IdempotencyKey,
+	)
+	var i AdminAdjustment
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Amount,
+		&i.Reason,
+		&i.RequestedBy,
+		&i.ApprovedBy,
+		&i.Status,
+		&i.Error,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.DoneAt,
 	)
 	return i, err
 }
@@ -452,6 +640,30 @@ func (q *Queries) ListAudit(ctx context.Context, arg ListAuditParams) ([]AdminAu
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAdjustment = `-- name: LockAdjustment :one
+SELECT id, user_id, currency, amount, reason, requested_by, approved_by, status, error, idempotency_key, created_at, done_at FROM admin_adjustments WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockAdjustment(ctx context.Context, id int64) (AdminAdjustment, error) {
+	row := q.db.QueryRow(ctx, lockAdjustment, id)
+	var i AdminAdjustment
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Amount,
+		&i.Reason,
+		&i.RequestedBy,
+		&i.ApprovedBy,
+		&i.Status,
+		&i.Error,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.DoneAt,
+	)
+	return i, err
 }
 
 const lockEnabledOwners = `-- name: LockEnabledOwners :many
