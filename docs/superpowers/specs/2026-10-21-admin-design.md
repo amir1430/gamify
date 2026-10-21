@@ -57,6 +57,10 @@ These would make it a failure even if it works:
 
 - Refine (MIT) + shadcn/ui, built with Vite, output embedded with `go:embed`. (The user's
   choice.)
+- The UI's layout and patterns follow Nakama's console (UI > "Look and layout"). (The user's
+  choice.)
+- UI code is built without test-first TDD; checked by building and running it. (The user's
+  choice.)
 - Brand views declared in Go, in v1. (The user's choice, from: Go-declared views, JS plugins,
   links out.)
 - Everything else in this document is my call; the user skipped the questions and asked for a
@@ -323,6 +327,38 @@ and `auth.Users.Identities(ctx, userID)` (provider, subject, linked_at).
   `Decimals uint8` to `ledger.CurrencyConfig` (0 = show as an integer, today's behaviour). Entry is
   parsed as a decimal string to an `int64`; never a float.
 - Adjustments ask for a confirmation that repeats user, currency, signed amount and reason.
+
+### Look and layout: like Nakama's console
+
+The UI follows the layout and interaction patterns of Nakama's console (the user's choice), built
+with Refine and shadcn/ui. We copy the structure, not the code, assets or branding: no Heroic
+Labs name, logo or icons, and the accent is the brand's.
+
+- **Shell:** a fixed dark sidebar on the left (brand logo and name at the top, icon + label nav
+  items, the current one highlighted in the accent colour, collapsible to icons only), and a light
+  content area with a slim top bar: page title / breadcrumbs on the left, the console user's email
+  and role with a menu (account, theme, log out) on the right. Dark mode darkens the content area
+  too. On phone width the sidebar becomes a drawer.
+- **Nav, mapped from Nakama's sections:** Status → *Dashboard*; Accounts → *Players*;
+  Configuration → *Games*; plus *Adjustments*, *Audit log*, brand views (grouped by their
+  `Group`), and at the bottom *Console users* (Nakama's "Users"). Items the user lacks the
+  permission for are hidden.
+- **Dashboard (Nakama's Status page):** a row of stat cards (players online, and per currency the
+  house, rewards and adjust balances), then a table per currency of all system balances.
+- **List pages (Nakama's Accounts list):** a search/filter bar above a dense table, row click
+  opens the detail page, "Load more" at the bottom (keyset), empty and loading states.
+- **Player detail (Nakama's account page):** a header with display name, ID, created and last
+  login, and actions (Disconnect, New adjustment); under it tabs: *Profile* (user fields),
+  *Authentication* (linked identities with Unlink), *Wallet* (balances per currency and this
+  player's adjustments), *Bets* (one sub-tab per game), *Seeds* (only with fairness), then one tab
+  per brand view with `user_filter`.
+- **Games (Nakama's Configuration page):** one card per game with its enabled switch; inside, a
+  table per currency of variant rows showing code cap, override and effective limit, with an Edit
+  dialog.
+- **Login:** a centred card with the brand logo, email, password and TOTP code; the TOTP enrol
+  step shows the `otpauth` URI as a QR code and the secret as text.
+- Dense, data-first styling like Nakama's: small type, compact rows, monospace for IDs, amounts and
+  hashes, amounts right-aligned.
 
 ## Changes to existing code
 
