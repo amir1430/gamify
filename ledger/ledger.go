@@ -23,6 +23,9 @@ type CurrencyConfig struct {
 	// Welcome is granted once per user on the first EnsureUser. It is play-only: a sale (Swap) or a
 	// PvP entry (HoldPot) can never take the balance below it, so the grant can't be cashed out.
 	Welcome int64
+	// Decimals is display only: 2 = cents (1234 shows as 12.34); 0 = whole units (the default).
+	// Every amount stays in minor units.
+	Decimals uint8
 }
 
 // Account codes.
@@ -32,21 +35,23 @@ const (
 	codeFaucet   uint16 = 3
 	codeInflow   uint16 = 4 // deposits enter the ledger from here
 	codeExchange uint16 = 5
-	codeGrant    uint16 = 6 // welcome grants come from here
-	codeFloor    uint16 = 7 // play-only check: welcome amounts pass through and straight back
-	codeRewards  uint16 = 8 // promotions are paid from here
-	codePot      uint16 = 9 // PvP pots: entries wait here until the winner is paid
+	codeGrant    uint16 = 6  // welcome grants come from here
+	codeFloor    uint16 = 7  // play-only check: welcome amounts pass through and straight back
+	codeRewards  uint16 = 8  // promotions are paid from here
+	codePot      uint16 = 9  // PvP pots: entries wait here until the winner is paid
+	codeAdjust   uint16 = 17 // admin balance adjustments come from and go to here
 )
 
 // Transfer codes.
 const (
-	codeStake   uint16 = 10
-	codePayout  uint16 = 11
-	codeTopUp   uint16 = 12
-	codeDeposit uint16 = 13
-	codeWelcome uint16 = 14
-	codeSwap    uint16 = 15
-	codeReward  uint16 = 16
+	codeStake      uint16 = 10
+	codePayout     uint16 = 11
+	codeTopUp      uint16 = 12
+	codeDeposit    uint16 = 13
+	codeWelcome    uint16 = 14
+	codeSwap       uint16 = 15
+	codeReward     uint16 = 16
+	codeAdjustment uint16 = 18
 )
 
 // Game namespaces the transfer ID, so bet IDs from different tables never collide. Each game picks
@@ -94,6 +99,7 @@ const (
 	nsSwap    uint64 = 3
 	nsReward  uint64 = 4
 	nsTopUp   uint64 = 5
+	nsAdjust  uint64 = 6
 )
 
 // System accounts, one of each per currency: ID (0, ledger<<8 | kind).
@@ -106,9 +112,19 @@ const (
 	kindGrant
 	kindFloor
 	kindRewards
+	kindAdjust
 )
 
+// systemKinds names each system account, as SystemBalances keys them.
+var systemKinds = map[uint64]string{kindHouse: "house", kindPot: "pot", kindExchange: "exchange",
+	kindInflow: "inflow", kindFaucet: "faucet", kindGrant: "grant", kindFloor: "floor", kindRewards: "rewards",
+	kindAdjust: "adjust"}
+
 var ErrInsufficientFunds = errors.New("ledger: insufficient funds")
+
+// ErrAlreadyFailed: a retry of a transfer ID the driver refused before (for the balance, say). The
+// ID stays refused for good, even once the reason is gone; a new attempt needs a new ID.
+var ErrAlreadyFailed = errors.New("ledger: transfer ID already failed")
 
 type Ledger struct {
 	d     Driver
@@ -209,7 +225,8 @@ func (l *Ledger) Init(ctx context.Context) error {
 	for _, code := range l.order {
 		c := l.cur[code]
 		for kind, acc := range map[uint64]uint16{kindHouse: codeHouse, kindPot: codePot, kindExchange: codeExchange,
-			kindInflow: codeInflow, kindFaucet: codeFaucet, kindGrant: codeGrant, kindFloor: codeFloor, kindRewards: codeRewards} {
+			kindInflow: codeInflow, kindFaucet: codeFaucet, kindGrant: codeGrant, kindFloor: codeFloor, kindRewards: codeRewards,
+			kindAdjust: codeAdjust} {
 			accounts = append(accounts, Account{ID: system(c, kind), Ledger: c.Ledger, Code: acc, NoOverdraft: kind == kindPot})
 		}
 	}
@@ -276,6 +293,35 @@ func (l *Ledger) RewardsPaid(ctx context.Context, c Currency) (int64, error) {
 		return 0, errors.New("ledger: no rewards account")
 	}
 	return accs[0].DebitsPosted - accs[0].CreditsPosted, nil
+}
+
+// SystemBalances is credits_posted - debits_posted of each of c's system accounts, keyed "house",
+// "pot", "exchange", "inflow", "faucet", "grant", "floor", "rewards" and "adjust". Accounts that pay
+// out (inflow, faucet, grant, rewards, adjust when it credits users) go negative.
+func (l *Ledger) SystemBalances(ctx context.Context, c Currency) (map[string]int64, error) {
+	cur, err := l.currency(c)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]ID, 0, len(systemKinds))
+	byID := map[ID]string{}
+	for kind, name := range systemKinds {
+		id := system(cur, kind)
+		ids = append(ids, id)
+		byID[id] = name
+	}
+	accs, err := l.d.LookupAccounts(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(accs) != len(ids) {
+		return nil, fmt.Errorf("ledger: %d of %d system accounts of %q found", len(accs), len(ids), c)
+	}
+	out := make(map[string]int64, len(accs))
+	for _, a := range accs {
+		out[byID[a.ID]] = a.CreditsPosted - a.DebitsPosted
+	}
+	return out, nil
 }
 
 // SettleInstant moves money for a bet whose outcome is already known (Dice):
@@ -480,6 +526,26 @@ func (l *Ledger) Reward(ctx context.Context, c Currency, claimID, userID, amount
 		Ledger: cur.Ledger, Code: codeReward}})
 }
 
+// Adjust credits (amount > 0) or debits (amount < 0) a user in c from/to c's adjust account. The
+// transfer ID comes from the adjustment row ID, so a retry can't move money twice. A debit can't
+// overdraw the user (ErrInsufficientFunds); its retry then returns ErrAlreadyFailed. amount 0 is
+// an error.
+func (l *Ledger) Adjust(ctx context.Context, c Currency, adjustmentID, userID, amount int64) error {
+	if amount == 0 {
+		return errors.New("ledger: zero adjustment")
+	}
+	cur, err := l.currency(c)
+	if err != nil {
+		return err
+	}
+	debit, credit := system(cur, kindAdjust), userAccountID(cur, userID)
+	if amount < 0 {
+		debit, credit, amount = credit, debit, -amount // -MinInt64 stays out of range: createTransfers refuses it
+	}
+	return l.createTransfers(ctx, []Transfer{{ID: ID{nsAdjust << 32, uint64(adjustmentID)},
+		Debit: debit, Credit: credit, Amount: uint64(amount), Ledger: cur.Ledger, Code: codeAdjustment}})
+}
+
 // Swap exchanges currencies for the user: `from` user -> exchange and exchange -> `to` user, linked,
 // so every leg happens or none (transfers stay within one ledger). The transfer IDs come from the
 // swap row ID, so retries can't swap twice.
@@ -537,7 +603,8 @@ func link(transfers []Transfer) {
 	}
 }
 
-// createTransfers treats "already exists" as success (idempotent retry) and maps overdraft to ErrInsufficientFunds.
+// createTransfers treats "already exists" as success (idempotent retry), maps overdraft to
+// ErrInsufficientFunds and a retry of a refused ID to ErrAlreadyFailed.
 func (l *Ledger) createTransfers(ctx context.Context, transfers []Transfer) error {
 	for _, t := range transfers {
 		if t.Amount > math.MaxInt64 && t.Amount != AmountMax {
@@ -554,6 +621,8 @@ func (l *Ledger) createTransfers(ctx context.Context, transfers []Transfer) erro
 			// Exists: an earlier attempt already applied it. LinkedEventFailed: see the failing event.
 		case ResultExceedsCredits:
 			return ErrInsufficientFunds
+		case ResultIDAlreadyFailed:
+			return fmt.Errorf("ledger: transfer %d: %w (%s)", r.Index, ErrAlreadyFailed, r.Result)
 		default:
 			return fmt.Errorf("ledger: transfer %d: %s", r.Index, r.Result)
 		}

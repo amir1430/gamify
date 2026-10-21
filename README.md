@@ -83,10 +83,11 @@ with upgrade notes.
 
 ## Currencies
 
-Configured per brand: `ledger.CurrencyConfig{Code, Ledger, MinBet, Welcome}`. The first currency
-is the default. `Welcome` > 0 grants that much once per user and keeps it play-only: sales and PvP
+Configured per brand: `ledger.CurrencyConfig{Code, Ledger, MinBet, Welcome, Decimals}`. The first
+currency is the default. `Welcome` > 0 grants that much once per user and keeps it play-only: sales and PvP
 entries can't take the balance below it. The sample binary reads
-`CURRENCIES=usd:1:1,tickets:2:10:1000` (code:ledger:minbet[:welcome]).
+`CURRENCIES=usd:1:1,tickets:2:10:1000` (code:ledger:minbet[:welcome[:decimals]]; `Decimals` is
+display only, ≤ 18).
 
 ID layout, the same on every driver: user account `(ledger, user)`, system account
 `(0, ledger<<8 | kind)`, bet transfer `(game<<8 | leg, bet)`, others `(ns<<32 …, row)`. The

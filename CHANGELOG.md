@@ -23,3 +23,15 @@ First public version, extracted from the casino's core.
 - `apptest`: a real App for brands' game tests (fresh database per test, in-memory transport,
   `User`, `Fund`, `Call`, `Pushes`, `ReconcileNow`); `App.RunReconcile`.
 - Local stack: `docker-compose.yml`, `make up`.
+- `ledger`: `Ledger.Adjust` credits or debits a user from/to the currency's new adjust account
+  (transfer ID from the adjustment row, so a retry moves money once; a debit can't overdraw);
+  `Ledger.SystemBalances` reads every system account of a currency; `CurrencyConfig.Decimals`
+  (display only, 0 = whole units); `ErrAlreadyFailed`. `cmd/gamify` reads `CURRENCIES` as
+  `code:ledger:minbet[:welcome[:decimals]]` (decimals ≤ 18).
+
+### Changed
+- `ledger`: a retried failed transfer now returns `ledger.ErrAlreadyFailed` (was an untyped error).
+
+### Upgrade notes
+- `ledger.Init` creates one new system account per currency (adjust, kind 9) on start; nothing
+  to run by hand.

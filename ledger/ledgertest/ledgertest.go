@@ -373,6 +373,40 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 		want(t, "forfeited", f.bal(u, "tickets"), 1000)
 		want(t, "usd end", f.bal(u, "usd"), 1050)
 	})
+
+	t.Run("adjust", func(t *testing.T) {
+		u := f.user()
+		sb0, err := f.l.SystemBalances(ctx, "usd")
+		must(t, err)
+		id := int64(rid())
+		for range 2 { // retry: no double credit
+			must(t, f.l.Adjust(ctx, "usd", id, u, 500))
+		}
+		want(t, "credited", f.bal(u, "usd"), 1500)
+		must(t, f.l.Adjust(ctx, "usd", id+1, u, -200))
+		want(t, "debited", f.bal(u, "usd"), 1300)
+		if err := f.l.Adjust(ctx, "usd", id+2, u, -1301); !errors.Is(err, ledger.ErrInsufficientFunds) {
+			t.Fatalf("overdraft: %v", err)
+		}
+		if err := f.l.Adjust(ctx, "usd", id+2, u, -1301); !errors.Is(err, ledger.ErrAlreadyFailed) {
+			t.Fatalf("retried overdraft: %v", err)
+		}
+		want(t, "refused", f.bal(u, "usd"), 1300)
+		sb, err := f.l.SystemBalances(ctx, "usd")
+		must(t, err)
+		want(t, "adjust account", sb["adjust"]-sb0["adjust"], -300)
+		for _, k := range []string{"house", "pot", "exchange", "inflow", "faucet", "grant", "floor", "rewards", "adjust"} {
+			if _, ok := sb[k]; !ok {
+				t.Fatalf("system balances: no %q in %v", k, sb)
+			}
+		}
+		if err := f.l.Adjust(ctx, "usd", id+3, u, 0); err == nil {
+			t.Fatal("zero adjust accepted")
+		}
+		if err := f.l.Adjust(ctx, "eur", id+4, u, 1); err == nil {
+			t.Fatal("unknown currency accepted")
+		}
+	})
 }
 
 // --- Pots (PvP) ---
