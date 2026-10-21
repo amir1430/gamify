@@ -23,6 +23,7 @@ module github.com/amir1430/gamify
 | `auth/telegram/` | Provider: Mini App initData. Also Login Widget validation, Mini App links, Bot API helpers, `ChatID` |
 | `auth/custom/` | Provider: a brand-signed HS256 JWT (`sub`, `aud`, `exp` ≤ 15 min ahead), for brands with their own accounts |
 | `fairness/` | Opt-in module for games of chance (`Register`: `seed_pairs` table, `seed.info`, `seed.rotate`): seed pairs sealed with AES-256-GCM, nonces, verifier-compatible hashes and floats, pot seeds |
+| `admin/` | Opt-in back office (own migrations, goose table `goose_admin`): console users with roles and permissions, argon2id passwords, TOTP, audit log, balance adjustments; `CreateUser` for the first owner |
 | `gameconfig/` | Admin-set limits per game × currency × variant (code defaults are hard caps) |
 | `metrics/` | Prometheus metrics and request logs |
 | `db/` | Platform migrations + `Migrate` (each module migrates with its own goose table) |

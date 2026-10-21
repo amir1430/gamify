@@ -1,0 +1,89 @@
+// Package admin is the opt-in back office: console users with roles, password + TOTP login, an
+// append-only audit log and balance adjustments. It has its own tables (goose table goose_admin)
+// and listener; a brand turns it on by registering it.
+package admin
+
+import (
+	"embed"
+	"io/fs"
+	"net/netip"
+
+	"github.com/amir1430/gamify/fairness"
+	"github.com/amir1430/gamify/ledger"
+)
+
+// Migrations are the module's tables: admin_users, admin_sessions, admin_audit,
+// admin_adjustments (goose table goose_admin).
+//
+//go:embed migrations/*.sql
+var Migrations embed.FS
+
+const gooseTable = "goose_admin"
+
+// Brand is how the console looks.
+type Brand struct {
+	Name   string
+	Logo   []byte // PNG or SVG bytes
+	Accent string // CSS color, e.g. "#7c3aed"
+}
+
+// Config turns the console on.
+type Config struct {
+	Addr     string         // its own listener, never App.HTTP; required
+	Origin   string         // the one origin allowed to call the API
+	AllowIPs []netip.Prefix // optional: only these clients
+
+	TOTPKey          []byte // 32 bytes, seals TOTP secrets (AES-256-GCM)
+	TelegramBotToken string // optional: Telegram Login Widget login
+
+	Brand    Brand
+	Fairness *fairness.Service // optional: shows seed pairs (revealed only)
+
+	ApproveAbove map[ledger.Currency]int64 // adjustments above need a second admin
+	UI           fs.FS                     // nil = embedded
+}
+
+// Role is a console user's role.
+type Role string
+
+const (
+	RoleOwner    Role = "owner"
+	RoleOperator Role = "operator"
+	RoleSupport  Role = "support"
+	RoleViewer   Role = "viewer"
+)
+
+// Perm is what a handler needs.
+type Perm string
+
+const (
+	PermView     Perm = "view"     // dashboard, players, bets, limits, audit
+	PermIdentity Perm = "identity" // unlink an identity, kick a session
+	PermLimits   Perm = "limits"   // change game limits, turn games off
+	PermAdjust   Perm = "adjust"   // request a balance adjustment
+	PermApprove  Perm = "approve"  // approve an adjustment (not their own)
+	PermAdmins   Perm = "admins"   // manage console users, view their sessions
+)
+
+var rolePerms = map[Role][]Perm{
+	RoleOwner:    {PermView, PermIdentity, PermLimits, PermAdjust, PermApprove, PermAdmins},
+	RoleOperator: {PermView, PermIdentity, PermLimits, PermAdjust},
+	RoleSupport:  {PermView, PermIdentity},
+	RoleViewer:   {PermView},
+}
+
+// Valid reports whether r is one of the four roles.
+func (r Role) Valid() bool {
+	_, ok := rolePerms[r]
+	return ok
+}
+
+// Can reports whether r has p. An unknown role has nothing.
+func (r Role) Can(p Perm) bool {
+	for _, q := range rolePerms[r] {
+		if q == p {
+			return true
+		}
+	}
+	return false
+}

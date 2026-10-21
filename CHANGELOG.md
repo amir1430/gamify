@@ -8,6 +8,10 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 First public version, extracted from the casino's core.
 
 ### Added
+- `admin`: new opt-in module, started: its tables (`admin_users`, `admin_sessions`,
+  `admin_audit`, `admin_adjustments`), roles and permissions (`Role`, `Perm`, `Role.Can`,
+  `Role.Valid`), `Config` and `Brand` types, argon2id passwords, TOTP (RFC 6238), and
+  `CreateUser(ctx, pool, email, role)` (returns a one-time random password).
 - `fairness`: `Service.PairsOf` (a user's seed pairs for the admin; seeds only once revealed).
 - `games/dice`: bet history (`Service.History`, registered with `App.Bets`).
 - `auth`: `Users.UnlinkTx` (`Unlink` inside the caller's transaction) and `Users.Identities`
@@ -40,5 +44,8 @@ First public version, extracted from the casino's core.
 - `ledger`: a retried failed transfer now returns `ledger.ErrAlreadyFailed` (was an untyped error).
 
 ### Upgrade notes
+- `admin` has its own migrations (`admin.Migrations`, goose table `goose_admin`). They run only
+  when a brand uses the module (`admin.CreateUser` now, `admin.Register` later); brands that
+  don't import it get no new tables.
 - `ledger.Init` creates one new system account per currency (adjust, kind 9) on start; nothing
   to run by hand.
