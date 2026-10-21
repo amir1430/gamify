@@ -83,6 +83,7 @@ First public version, extracted from the casino's core.
   `Ledger.SystemBalances` reads every system account of a currency; `CurrencyConfig.Decimals`
   (display only, 0 = whole units); `ErrAlreadyFailed`. `cmd/gamify` reads `CURRENCIES` as
   `code:ledger:minbet[:welcome[:decimals]]` (decimals ≤ 18).
+- `cmd/gamify` (the sample): opt-in admin console via env `ADMIN_ADDR`, `ADMIN_ORIGIN`, `ADMIN_TOTP_KEY` (64 hex chars), `ADMIN_ALLOW_IPS`, `ADMIN_APPROVE_ABOVE` (`usd:10000,…`; `TG_BOT_TOKEN` also enables Telegram console login), and `gamify admin add-user <email> <role>` to create console users. Compose publishes the console on `127.0.0.1:8081` only.
 
 ### Changed
 - `ledger`: a retried failed transfer now returns `ledger.ErrAlreadyFailed` (was an untyped error).

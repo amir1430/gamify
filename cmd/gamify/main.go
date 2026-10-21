@@ -9,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
 
+	"github.com/amir1430/gamify/admin"
 	"github.com/amir1430/gamify/app"
 	"github.com/amir1430/gamify/auth/custom"
 	"github.com/amir1430/gamify/auth/telegram"
@@ -22,7 +24,10 @@ import (
 	"github.com/amir1430/gamify/config/drivers"
 	"github.com/amir1430/gamify/fairness"
 	"github.com/amir1430/gamify/games/dice"
+	"github.com/amir1430/gamify/games/dice/diceadmin"
 	"github.com/amir1430/gamify/ledger"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -33,6 +38,9 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "admin" {
+		return adminCmd(os.Args[2:])
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -84,10 +92,97 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if _, err := dice.Register(ctx, a, fair); err != nil {
+	diceSvc, err := dice.Register(ctx, a, fair)
+	if err != nil {
 		return err
 	}
+	acfg, adminOn, err := adminConfig(os.Getenv)
+	if err != nil {
+		return err
+	}
+	if adminOn {
+		acfg.Fairness = fair
+		adm, err := admin.Register(ctx, a, acfg)
+		if err != nil {
+			return err
+		}
+		if err := diceadmin.Register(adm, diceSvc); err != nil {
+			return err
+		}
+	}
 	return a.Run(ctx)
+}
+
+// adminCmd runs `gamify admin add-user <email> <role>`: it opens only the Postgres pool.
+func adminCmd(args []string) error {
+	if len(args) != 3 || args[0] != "add-user" {
+		return errors.New("usage: gamify admin add-user <email> <owner|operator|support|viewer>")
+	}
+	role, err := parseRole(args[2])
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(envOr("GAMIFY_CONFIG", "gamify.yaml"))
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, cfg.Postgres.DSN)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	pw, err := admin.CreateUser(ctx, pool, args[1], role)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("created %s (%s)\npassword: %s\nlog in to enrol TOTP\n", strings.ToLower(strings.TrimSpace(args[1])), role, pw)
+	return nil
+}
+
+func parseRole(s string) (admin.Role, error) {
+	r := admin.Role(s)
+	if !r.Valid() {
+		return "", fmt.Errorf("role %q: want owner, operator, support or viewer", s)
+	}
+	return r, nil
+}
+
+// adminConfig reads the console's settings: off (false) unless ADMIN_ADDR is set. Also
+// ADMIN_ORIGIN, ADMIN_TOTP_KEY (64 hex chars), ADMIN_ALLOW_IPS (CIDRs) and
+// ADMIN_APPROVE_ABOVE ("code:minor-units,…"); TG_BOT_TOKEN enables Telegram login to the console.
+func adminConfig(getenv func(string) string) (admin.Config, bool, error) {
+	addr := getenv("ADMIN_ADDR")
+	if addr == "" {
+		return admin.Config{}, false, nil
+	}
+	cfg := admin.Config{Addr: addr, Origin: getenv("ADMIN_ORIGIN"), TelegramBotToken: getenv("TG_BOT_TOKEN")}
+	key, err := hex.DecodeString(getenv("ADMIN_TOTP_KEY"))
+	if err != nil || len(key) != 32 {
+		return cfg, false, errors.New("ADMIN_TOTP_KEY: want 64 hex chars (openssl rand -hex 32)")
+	}
+	cfg.TOTPKey = key
+	if v := getenv("ADMIN_ALLOW_IPS"); v != "" {
+		for _, part := range strings.Split(v, ",") {
+			p, err := netip.ParsePrefix(strings.TrimSpace(part))
+			if err != nil {
+				return cfg, false, fmt.Errorf("ADMIN_ALLOW_IPS: %w", err)
+			}
+			cfg.AllowIPs = append(cfg.AllowIPs, p)
+		}
+	}
+	if v := getenv("ADMIN_APPROVE_ABOVE"); v != "" {
+		cfg.ApproveAbove = map[ledger.Currency]int64{}
+		for _, part := range strings.Split(v, ",") {
+			code, amt, ok := strings.Cut(strings.TrimSpace(part), ":")
+			n, err := strconv.ParseInt(amt, 10, 64)
+			if !ok || code == "" || err != nil || n < 0 {
+				return cfg, false, fmt.Errorf("ADMIN_APPROVE_ABOVE: %q: want code:minor-units (>= 0)", part)
+			}
+			cfg.ApproveAbove[ledger.Currency(code)] = n
+		}
+	}
+	return cfg, true, nil
 }
 
 // parseCurrencies reads "code:ledger:minbet[:welcome[:decimals]],…", the first being the default.

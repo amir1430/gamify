@@ -116,6 +116,15 @@ env: `SEED_KEY` (`openssl rand -hex 32`), login providers `TG_BOT_TOKEN` (Telegr
 the proxy (`without_namespace`) and never holds a secret: Centrifugo reads `CENTRIFUGO_GRPC_API_KEY`
 and `CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY` from its env.
 
+Admin console (off by default): set `ADMIN_ADDR=:8081`, `ADMIN_ORIGIN` (the URL you browse to, e.g.
+`http://localhost:8081`) and `ADMIN_TOTP_KEY` (`openssl rand -hex 32`) in `.env`; optional
+`ADMIN_ALLOW_IPS` (CIDRs) and `ADMIN_APPROVE_ABOVE` (`usd:10000,eur:5000`, minor units). Compose
+publishes it on `127.0.0.1:8081` only. Create the first owner, then log in and enrol TOTP:
+```sh
+docker compose exec app gamify admin add-user owner@example.com owner
+```
+Roles: `owner`, `operator`, `support`, `viewer`.
+
 macOS: export `CGO_LDFLAGS=-Wl,-ld_classic` before building (TigerBeetle's static lib vs Apple's new linker).
 
 Regenerate the Centrifugo protos (only when bumping Centrifugo):

@@ -47,7 +47,13 @@ services:
       AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:-}
       SEED_KEY: ${SEED_KEY:?set SEED_KEY in .env}
       DEV_FAUCET: ${DEV_FAUCET:-false}
-    ports: ["8080:8080"]
+      ADMIN_ADDR: ${ADMIN_ADDR:-}
+      ADMIN_ORIGIN: ${ADMIN_ORIGIN:-}
+      ADMIN_TOTP_KEY: ${ADMIN_TOTP_KEY:-}
+      ADMIN_ALLOW_IPS: ${ADMIN_ALLOW_IPS:-}
+      ADMIN_APPROVE_ABOVE: ${ADMIN_APPROVE_ABOVE:-}
+    # The admin console (ADMIN_ADDR=:8081) is published on loopback only.
+    ports: ["8080:8080", "127.0.0.1:8081:8081"]
     depends_on:
       postgres: {condition: service_healthy}
       centrifugo: {condition: service_healthy}
