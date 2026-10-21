@@ -7,7 +7,96 @@ package store
 
 import (
 	"context"
+	"net/netip"
 )
+
+const acceptTOTPStep = `-- name: AcceptTOTPStep :execrows
+UPDATE admin_users SET totp_last_step = $1 WHERE id = $2 AND totp_last_step < $1
+`
+
+type AcceptTOTPStepParams struct {
+	Step int64
+	ID   int64
+}
+
+// AcceptTOTPStep spends a step: 0 rows means it (or a later one) was used already.
+func (q *Queries) AcceptTOTPStep(ctx context.Context, arg AcceptTOTPStepParams) (int64, error) {
+	result, err := q.db.Exec(ctx, acceptTOTPStep, arg.Step, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const confirmTOTP = `-- name: ConfirmTOTP :execrows
+UPDATE admin_users SET totp_secret = totp_pending, totp_pending = NULL, totp_last_step = $1
+WHERE id = $2 AND totp_pending = $3
+`
+
+type ConfirmTOTPParams struct {
+	Step    int64
+	ID      int64
+	Pending []byte
+}
+
+// ConfirmTOTP moves the pending secret the code was checked against into place: 0 rows means it
+// changed meanwhile (a second login started another enrolment).
+func (q *Queries) ConfirmTOTP(ctx context.Context, arg ConfirmTOTPParams) (int64, error) {
+	result, err := q.db.Exec(ctx, confirmTOTP, arg.Step, arg.ID, arg.Pending)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const countLoginFails = `-- name: CountLoginFails :one
+SELECT count(*) FROM admin_audit f
+WHERE f.action = 'login.fail' AND f.target = $1
+  AND f.reason IN ('unknown', 'password', 'disabled', 'totp')
+  AND f.created_at > greatest(now() - interval '15 minutes',
+      coalesce((SELECT max(o.created_at) FROM admin_audit o
+                WHERE o.action = 'login.ok' AND o.admin_id = $2), '-infinity'))
+`
+
+type CountLoginFailsParams struct {
+	Target  string
+	AdminID *int64
+}
+
+// CountLoginFails counts failures that lock a login: since the later of 15 minutes ago and the
+// user's last successful login. A missing TOTP (the UI's first step), a locked attempt and a bad
+// Telegram signature don't count.
+func (q *Queries) CountLoginFails(ctx context.Context, arg CountLoginFailsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countLoginFails, arg.Target, arg.AdminID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createSession = `-- name: CreateSession :one
+INSERT INTO admin_sessions (admin_id, hash, mfa, ip, user_agent) VALUES ($1, $2, $3, $4, $5) RETURNING id
+`
+
+type CreateSessionParams struct {
+	AdminID   int64
+	Hash      []byte
+	Mfa       bool
+	Ip        *netip.Addr
+	UserAgent *string
+}
+
+func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (int64, error) {
+	row := q.db.QueryRow(ctx, createSession,
+		arg.AdminID,
+		arg.Hash,
+		arg.Mfa,
+		arg.Ip,
+		arg.UserAgent,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
 
 const createUser = `-- name: CreateUser :one
 INSERT INTO admin_users (email, role, password_hash) VALUES ($1, $2, $3) RETURNING id
@@ -24,6 +113,75 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (int64, 
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const deleteSession = `-- name: DeleteSession :exec
+DELETE FROM admin_sessions WHERE id = $1
+`
+
+func (q *Queries) DeleteSession(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deleteSession, id)
+	return err
+}
+
+const getSession = `-- name: GetSession :one
+SELECT s.id, s.admin_id, s.mfa, u.email, u.role,
+       (u.disabled_at IS NOT NULL)::bool AS disabled,
+       (s.seen_at < now() - interval '30 minutes' OR s.created_at < now() - interval '12 hours')::bool AS expired,
+       (s.seen_at < now() - interval '1 minute')::bool AS stale
+FROM admin_sessions s JOIN admin_users u ON u.id = s.admin_id
+WHERE s.hash = $1
+`
+
+type GetSessionRow struct {
+	ID       int64
+	AdminID  int64
+	Mfa      bool
+	Email    string
+	Role     string
+	Disabled bool
+	Expired  bool
+	Stale    bool
+}
+
+// GetSession reads a session by its cookie's hash with its user, and whether it timed out
+// (idle 30 min, absolute 12 h) or its seen_at is due a refresh (older than a minute).
+func (q *Queries) GetSession(ctx context.Context, hash []byte) (GetSessionRow, error) {
+	row := q.db.QueryRow(ctx, getSession, hash)
+	var i GetSessionRow
+	err := row.Scan(
+		&i.ID,
+		&i.AdminID,
+		&i.Mfa,
+		&i.Email,
+		&i.Role,
+		&i.Disabled,
+		&i.Expired,
+		&i.Stale,
+	)
+	return i, err
+}
+
+const getUser = `-- name: GetUser :one
+SELECT id, email, role, password_hash, totp_secret, telegram_id, disabled_at, created_at, totp_pending, totp_last_step FROM admin_users WHERE id = $1
+`
+
+func (q *Queries) GetUser(ctx context.Context, id int64) (AdminUser, error) {
+	row := q.db.QueryRow(ctx, getUser, id)
+	var i AdminUser
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Role,
+		&i.PasswordHash,
+		&i.TotpSecret,
+		&i.TelegramID,
+		&i.DisabledAt,
+		&i.CreatedAt,
+		&i.TotpPending,
+		&i.TotpLastStep,
+	)
+	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
@@ -46,4 +204,86 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (AdminUser, 
 		&i.TotpLastStep,
 	)
 	return i, err
+}
+
+const getUserByTelegramID = `-- name: GetUserByTelegramID :one
+SELECT id, email, role, password_hash, totp_secret, telegram_id, disabled_at, created_at, totp_pending, totp_last_step FROM admin_users WHERE telegram_id = $1
+`
+
+func (q *Queries) GetUserByTelegramID(ctx context.Context, telegramID *int64) (AdminUser, error) {
+	row := q.db.QueryRow(ctx, getUserByTelegramID, telegramID)
+	var i AdminUser
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Role,
+		&i.PasswordHash,
+		&i.TotpSecret,
+		&i.TelegramID,
+		&i.DisabledAt,
+		&i.CreatedAt,
+		&i.TotpPending,
+		&i.TotpLastStep,
+	)
+	return i, err
+}
+
+const insertAudit = `-- name: InsertAudit :exec
+INSERT INTO admin_audit (admin_id, action, target, before, after, reason, ip)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`
+
+type InsertAuditParams struct {
+	AdminID *int64
+	Action  string
+	Target  string
+	Before  []byte
+	After   []byte
+	Reason  *string
+	Ip      *netip.Addr
+}
+
+func (q *Queries) InsertAudit(ctx context.Context, arg InsertAuditParams) error {
+	_, err := q.db.Exec(ctx, insertAudit,
+		arg.AdminID,
+		arg.Action,
+		arg.Target,
+		arg.Before,
+		arg.After,
+		arg.Reason,
+		arg.Ip,
+	)
+	return err
+}
+
+const setSessionMFA = `-- name: SetSessionMFA :exec
+UPDATE admin_sessions SET mfa = true WHERE id = $1
+`
+
+func (q *Queries) SetSessionMFA(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, setSessionMFA, id)
+	return err
+}
+
+const setTOTPPending = `-- name: SetTOTPPending :exec
+UPDATE admin_users SET totp_pending = $2 WHERE id = $1
+`
+
+type SetTOTPPendingParams struct {
+	ID          int64
+	TotpPending []byte
+}
+
+func (q *Queries) SetTOTPPending(ctx context.Context, arg SetTOTPPendingParams) error {
+	_, err := q.db.Exec(ctx, setTOTPPending, arg.ID, arg.TotpPending)
+	return err
+}
+
+const touchSession = `-- name: TouchSession :exec
+UPDATE admin_sessions SET seen_at = now() WHERE id = $1
+`
+
+func (q *Queries) TouchSession(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, touchSession, id)
+	return err
 }

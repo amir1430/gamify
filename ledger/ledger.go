@@ -195,6 +195,9 @@ func (l *Ledger) Default() Currency { return l.order[0] }
 // Valid reports whether c is a configured currency.
 func (l *Ledger) Valid(c Currency) bool { _, ok := l.cur[c]; return ok }
 
+// Decimals is how many decimals c is shown with (display only), 0 for an unknown currency.
+func (l *Ledger) Decimals(c Currency) uint8 { return l.cur[c].Decimals }
+
 // MinBet is the smallest real-money stake in c, 0 for an unknown currency.
 func (l *Ledger) MinBet(c Currency) int64 { return l.cur[c].MinBet }
 

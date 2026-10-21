@@ -11,6 +11,7 @@ import (
 	"github.com/amir1430/gamify/admin/internal/store"
 	"github.com/amir1430/gamify/db"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,7 +23,7 @@ const passwordLen = 20
 
 // CreateUser adds a console user with a random 20-char password and returns it (migrates first).
 // The email is stored trimmed and lowercased; an email taken in any case is an error. The user
-// enrols TOTP on first login.
+// enrols TOTP on first login. It writes an admin.create audit row in the same transaction.
 func CreateUser(ctx context.Context, pool *pgxpool.Pool, email string, role Role) (password string, err error) {
 	if !role.Valid() {
 		return "", fmt.Errorf("admin: unknown role %q", role)
@@ -42,7 +43,16 @@ func CreateUser(ctx context.Context, pool *pgxpool.Pool, email string, role Role
 	if err != nil {
 		return "", err
 	}
-	_, err = store.New(pool).CreateUser(ctx, store.CreateUserParams{Email: email, Role: string(role), PasswordHash: hash})
+	// The audit row has no acting admin: this runs from the command line, before any exists.
+	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		q := store.New(tx)
+		id, err := q.CreateUser(ctx, store.CreateUserParams{Email: email, Role: string(role), PasswordHash: hash})
+		if err != nil {
+			return err
+		}
+		return insertAudit(ctx, q, nil, nil, "admin.create", adminTarget(id), nil,
+			map[string]string{"email": email, "role": string(role)}, "")
+	})
 	if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return "", fmt.Errorf("admin: %s already exists", email)
 	}

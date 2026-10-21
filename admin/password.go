@@ -19,6 +19,9 @@ const (
 	argonThreads = 1
 	argonSaltLen = 16
 	argonKeyLen  = 32
+
+	maxArgonMemory = 1 << 21 // KiB
+	maxArgonTime   = 16
 )
 
 var b64 = base64.RawStdEncoding
@@ -47,7 +50,8 @@ func checkPassword(hash, pw string) bool {
 	m, okM := param(params[0], "m=", 32)
 	t, okT := param(params[1], "t=", 32)
 	p, okP := param(params[2], "p=", 8)
-	if !okM || !okT || !okP || t == 0 || p == 0 {
+	// Caps: a stored hash can't make one login burn more than 2 GiB or 16 passes.
+	if !okM || !okT || !okP || t == 0 || p == 0 || m > maxArgonMemory || t > maxArgonTime {
 		return false
 	}
 	salt, err := b64.DecodeString(parts[4])

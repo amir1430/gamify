@@ -12,6 +12,14 @@ First public version, extracted from the casino's core.
   `admin_audit`, `admin_adjustments`), roles and permissions (`Role`, `Perm`, `Role.Can`,
   `Role.Valid`), `Config` and `Brand` types, argon2id passwords, TOTP (RFC 6238), and
   `CreateUser(ctx, pool, email, role)` (returns a one-time random password).
+- `admin`: `Register(ctx, app, Config)` serves the console on its own listener (`Config.Addr`,
+  through `App.Serve`; `Config.Origin` and a 32-byte `Config.TOTPKey` required): password + TOTP
+  login (enrolment on first login), optional Telegram Login Widget login, lockout after 5
+  failures in 15 minutes, cookie sessions (idle 30 min, absolute 12 h), CSRF (`X-Admin` header
+  and `Origin`), `AllowIPs`, an audit row for every login, enrolment, logout and `CreateUser`;
+  routes `/api/login`, `/api/login/telegram`, `/api/totp/enrol`, `/api/logout`, `/api/me`,
+  `/api/brand/logo`. `Admin.Handler` for tests. The UI at `/` is a placeholder for now.
+- `ledger`: `Ledger.Decimals(c)` (a currency's display decimals).
 - `fairness`: `Service.PairsOf` (a user's seed pairs for the admin; seeds only once revealed).
 - `games/dice`: bet history (`Service.History`, registered with `App.Bets`).
 - `auth`: `Users.UnlinkTx` (`Unlink` inside the caller's transaction) and `Users.Identities`
