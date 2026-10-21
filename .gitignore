@@ -1,0 +1,6 @@
+.DS_Store
+/gamify
+.env
+/.superpowers/
+/gamify.yaml
+/infra/centrifugo/config.json

@@ -1,0 +1,38 @@
+{
+  "health": {
+    "enabled": true
+  },
+  "client": {
+    "allowed_origins": [
+      "https://mini.example"
+    ]
+  },
+  "grpc_api": {
+    "enabled": true,
+    "port": 10000
+  },
+  "channel": {
+    "namespaces": [
+      {
+        "name": "user"
+      },
+      {
+        "name": "online",
+        "presence": true
+      },
+      {
+        "name": "feed",
+        "allow_subscribe_for_client": true
+      }
+    ]
+  },
+  "rpc": {
+    "proxy": {
+      "endpoint": "grpc://api:10001",
+      "timeout": "5s"
+    },
+    "without_namespace": {
+      "proxy_enabled": true
+    }
+  }
+}

@@ -1,0 +1,28 @@
+postgres:
+  dsn: ${DATABASE_URL}
+  max_conns: 50
+
+ledger:
+  driver: tigerbeetle
+  tigerbeetle:
+    cluster_id: 7
+    addresses: [tb-0:3000, tb-1:3000, tb-2:3000]
+
+centrifugo:
+  api_addr: centrifugo:10000
+  api_key: ${CENTRIFUGO_API_KEY}
+  token_secret: ${CENTRIFUGO_TOKEN_SECRET}
+  token_ttl: 1h
+  proxy_listen: :10001
+  proxy_endpoint: grpc://api:10001
+  proxy_timeout: 5s
+
+http:
+  addr: :8081
+  allowed_origins: [https://mini.example]
+
+metrics:
+  addr: off
+
+log:
+  level: info

@@ -1,0 +1,6 @@
+.env
+.git
+.superpowers
+gamify.yaml
+infra/centrifugo/config.json
+e2e

@@ -1,0 +1,32 @@
+# gamify infra config. Copy to gamify.yaml (make up does it once). Secrets are never written here:
+# ${VAR} reads the environment (see .env.example); $$ is a literal $.
+# Generate Centrifugo's config from it: go run ./cmd/gamify-config -o infra/centrifugo/config.json
+
+postgres:
+  dsn: ${DATABASE_URL}          # required
+  max_conns: 30                 # a pool_max_conns in the DSN wins
+
+ledger:
+  driver: postgres              # postgres | tigerbeetle
+  # tigerbeetle:                # only with driver: tigerbeetle
+  #   cluster_id: 0
+  #   addresses: [tigerbeetle:3000]
+
+centrifugo:
+  api_addr: centrifugo:10000    # the app dials it; its port is Centrifugo's grpc_api.port
+  api_key: ${CENTRIFUGO_API_KEY}
+  token_secret: ${CENTRIFUGO_TOKEN_SECRET}
+  token_ttl: 1h
+  proxy_listen: :10001          # where the app serves Centrifugo's RPC proxy
+  proxy_endpoint: grpc://app:10001   # how Centrifugo reaches it
+  proxy_timeout: 5s
+
+http:
+  addr: :8080
+  allowed_origins: [http://localhost:5173]   # the Mini App's origins; "*" is refused
+
+metrics:
+  addr: :9090                   # keep it private; "off" disables
+
+log:
+  level: info                   # debug | info | warn | error

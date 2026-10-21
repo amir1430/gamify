@@ -1,0 +1,57 @@
+# Local stack: Postgres, Centrifugo and the sample app (+ TigerBeetle with --profile tigerbeetle).
+# Start it with `make up`: Compose can't generate Centrifugo's config.json before starting it.
+# Secrets come from .env (cp .env.example .env); gamify.yaml references them as ${VAR}.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: gamify
+    volumes: [pg:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres]
+      interval: 2s
+      retries: 30
+
+  centrifugo:
+    build: infra/centrifugo
+    volumes: [./infra/centrifugo/config.json:/centrifugo/config.json:ro]
+    environment:
+      CENTRIFUGO_GRPC_API_KEY: ${CENTRIFUGO_API_KEY:?set CENTRIFUGO_API_KEY in .env}
+      CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY: ${CENTRIFUGO_TOKEN_SECRET:?set CENTRIFUGO_TOKEN_SECRET in .env}
+    ports: ["8000:8000"]
+
+  tigerbeetle:
+    profiles: [tigerbeetle]
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.16.46
+    security_opt: [seccomp=unconfined]
+    cap_add: [IPC_LOCK]
+    volumes: [tb:/data]
+    entrypoint: [sh, -c]
+    command:
+      - >-
+        [ -f /data/0_0.tigerbeetle ] || /tigerbeetle format --cluster=0 --replica=0 --replica-count=1 /data/0_0.tigerbeetle;
+        exec /tigerbeetle start --addresses=0.0.0.0:3000 --cache-grid=256MiB /data/0_0.tigerbeetle
+
+  app:
+    build: .
+    # The TigerBeetle client uses io_uring, which Docker's default seccomp profile blocks.
+    security_opt: [seccomp=unconfined]
+    volumes: [./gamify.yaml:/app/gamify.yaml:ro]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      CENTRIFUGO_API_KEY: ${CENTRIFUGO_API_KEY:?set CENTRIFUGO_API_KEY in .env}
+      CENTRIFUGO_TOKEN_SECRET: ${CENTRIFUGO_TOKEN_SECRET:?set CENTRIFUGO_TOKEN_SECRET in .env}
+      TG_BOT_TOKEN: ${TG_BOT_TOKEN:?set TG_BOT_TOKEN in .env}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
+      AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:-}
+      SEED_KEY: ${SEED_KEY:?set SEED_KEY in .env}
+      DEV_FAUCET: ${DEV_FAUCET:-false}
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      centrifugo: {condition: service_healthy}
+
+volumes:
+  pg:
+  tb:

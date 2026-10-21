@@ -1,0 +1,47 @@
+version: "2"
+sql:
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/auth.sql
+    gen:
+      go:
+        package: store
+        out: auth/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: [db/migrations, fairness/migrations]
+    queries: fairness/queries.sql
+    gen:
+      go:
+        package: store
+        out: fairness/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: db/migrations
+    queries: db/queries/gameconfig.sql
+    gen:
+      go:
+        package: store
+        out: gameconfig/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: ledger/postgres/migrations
+    queries: ledger/postgres/queries.sql
+    gen:
+      go:
+        package: store
+        out: ledger/postgres/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: [db/migrations, fairness/migrations, games/dice/migrations]
+    queries: games/dice/queries.sql
+    gen:
+      go:
+        package: store
+        out: games/dice/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
