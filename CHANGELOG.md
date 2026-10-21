@@ -8,6 +8,7 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 First public version, extracted from the casino's core.
 
 ### Added
+- `app`: `App.Serve` for extra listeners; `App.Bets` registry of games' bet history (`app.Bet`).
 - `app`: wiring (migrations, ledger init, login, health, core RPCs `wallet.*`, `games.config`,
   `auth.link`, reconcile loop) on `net/http` (`App.HTTP` is a `*http.ServeMux`).
 - `auth`: login through `auth.Provider` drivers; users with linked identities (one per

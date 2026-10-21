@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/amir1430/gamify/auth"
@@ -54,6 +55,11 @@ var (
 	ErrProviderLinked    = &realtime.ClientError{Code: 1012, Message: "this account already has a login of this kind"}
 )
 
+type namedServer struct {
+	name string
+	*http.Server
+}
+
 type App struct {
 	Pool     *pgxpool.Pool
 	Ledger   *ledger.Ledger
@@ -66,6 +72,9 @@ type App struct {
 	cfg       Config
 	providers map[string]auth.Provider
 	reconcile []func(context.Context)
+	extra     []namedServer
+	betsMu    sync.Mutex
+	bets      map[string]BetSource
 }
 
 // New migrates the platform's tables, readies the ledger and loads the game limits.
@@ -108,6 +117,12 @@ func New(ctx context.Context, cfg Config, d Drivers) (*App, error) {
 // Migrate runs a module's own migrations ("migrations/*.sql" in fsys), versioned in table.
 func (a *App) Migrate(ctx context.Context, fsys fs.FS, table string) error {
 	return db.Migrate(ctx, a.Pool, fsys, table)
+}
+
+// Serve adds a server that Run starts and shuts down with the others (the admin's own listener).
+// Call it before Run: Run reads the list without a lock.
+func (a *App) Serve(name string, srv *http.Server) {
+	a.extra = append(a.extra, namedServer{name, srv})
 }
 
 // Reconcile registers a job run every ReconcileEvery (a game finishing its pending bets).
@@ -251,6 +266,9 @@ func (a *App) Run(ctx context.Context) error {
 	if addr := cmp.Or(a.cfg.MetricsAddr, ":9090"); addr != "off" {
 		servers = append(servers, &http.Server{Addr: addr, Handler: metrics.Handler(metrics.Pool(a.Pool)), ReadHeaderTimeout: 5 * time.Second})
 	}
+	for _, e := range a.extra {
+		servers = append(servers, e.Server)
+	}
 	errc := make(chan error, 1+len(servers))
 	go func() { errc <- a.Realtime.Serve(ctx, a.Router) }()
 	for _, srv := range servers {
@@ -270,6 +288,9 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}()
 	slog.Info("started", "http", servers[0].Addr, "methods", len(a.Router.Methods()))
+	for _, e := range a.extra {
+		slog.Info("listening", "server", e.name, "addr", e.Addr)
+	}
 
 	var err error
 	select {
