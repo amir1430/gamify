@@ -23,6 +23,15 @@ First public version, extracted from the casino's core.
 - `admin`: read endpoints for `view` roles: `GET /api/dashboard`, `/api/users` (+ `/{id}`,
   `/{id}/bets`, `/{id}/seeds`), `/api/games`, `/api/audit`, `/api/adjustments`. Lists page with
   `?limit=` (default 50, max 100) and `?before=` and answer `{"items", "next"}`.
+- `admin`: write endpoints, all audited in the change's transaction: `PUT /api/games/{game}`,
+  `PUT`/`DELETE /api/games/{game}/limits/{currency}/{variant}` (`_` = whole game; reloads the
+  config and publishes it on `feed:config`), `DELETE /api/users/{id}/identities/{provider}` and
+  `POST /api/users/{id}/disconnect` (both need a `reason`), console users (`GET`/`POST
+  /api/admins`, `PATCH /api/admins/{id}`: role, disable, reset TOTP, reset password; kills their
+  sessions; the last enabled owner stays) and `POST /api/me/password`. A write that changes
+  nothing writes no audit row.
+- `admin`: `ErrEmailTaken`, returned (wrapped) by `CreateUser` for an email in use; it was a
+  plain error before, so match it with `errors.Is`.
 - `ledger`: `Ledger.Decimals(c)` (a currency's display decimals).
 - `fairness`: `Service.PairsOf` (a user's seed pairs for the admin; seeds only once revealed).
 - `games/dice`: bet history (`Service.History`, registered with `App.Bets`).

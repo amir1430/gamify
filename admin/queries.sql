@@ -78,3 +78,40 @@ WHERE (sqlc.narg(before_id)::bigint IS NULL OR id < sqlc.narg(before_id))
   AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status))
   AND (sqlc.narg(user_id)::bigint IS NULL OR user_id = sqlc.narg(user_id))
 ORDER BY id DESC LIMIT @max_rows;
+
+-- ListAdmins lists the console users with only what the console shows: no hashes, no secrets.
+-- name: ListAdmins :many
+SELECT id, email, role, telegram_id, (disabled_at IS NOT NULL)::bool AS disabled,
+       (totp_secret IS NOT NULL)::bool AS totp_enrolled, created_at
+FROM admin_users ORDER BY id;
+
+-- LockEnabledOwners locks every enabled owner (in id order) while a change is checked against
+-- the last-owner rule.
+-- name: LockEnabledOwners :many
+SELECT id FROM admin_users WHERE role = 'owner' AND disabled_at IS NULL ORDER BY id FOR UPDATE;
+
+-- name: LockUser :one
+SELECT * FROM admin_users WHERE id = $1 FOR UPDATE;
+
+-- name: SetUserAccess :exec
+UPDATE admin_users SET role = @role,
+    disabled_at = CASE WHEN @disabled::bool THEN coalesce(disabled_at, now()) ELSE NULL END
+WHERE id = @id;
+
+-- ResetTOTP makes the next login enrol again.
+-- name: ResetTOTP :exec
+UPDATE admin_users SET totp_secret = NULL, totp_pending = NULL, totp_last_step = 0 WHERE id = $1;
+
+-- name: SetPasswordHash :exec
+UPDATE admin_users SET password_hash = $2 WHERE id = $1;
+
+-- ChangePasswordHash replaces the hash only if it is still the one the old password was checked
+-- against: 0 rows means it changed meanwhile.
+-- name: ChangePasswordHash :execrows
+UPDATE admin_users SET password_hash = @new_hash WHERE id = @id AND password_hash = @old_hash;
+
+-- name: DeleteSessionsOf :exec
+DELETE FROM admin_sessions WHERE admin_id = $1;
+
+-- name: DeleteOtherSessions :exec
+DELETE FROM admin_sessions WHERE admin_id = @admin_id AND id <> @keep;

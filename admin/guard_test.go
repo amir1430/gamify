@@ -80,6 +80,7 @@ func TestEveryRouteHasPerm(t *testing.T) {
 		"POST /api/login/telegram": true,
 		"POST /api/totp/enrol":     true,
 		"POST /api/logout":         true,
+		"POST /api/me/password":    true,
 		"GET /api/me":              true,
 		"GET /api/brand/logo":      true,
 	}

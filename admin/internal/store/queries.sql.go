@@ -8,6 +8,8 @@ package store
 import (
 	"context"
 	"net/netip"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const acceptTOTPStep = `-- name: AcceptTOTPStep :execrows
@@ -22,6 +24,26 @@ type AcceptTOTPStepParams struct {
 // AcceptTOTPStep spends a step: 0 rows means it (or a later one) was used already.
 func (q *Queries) AcceptTOTPStep(ctx context.Context, arg AcceptTOTPStepParams) (int64, error) {
 	result, err := q.db.Exec(ctx, acceptTOTPStep, arg.Step, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const changePasswordHash = `-- name: ChangePasswordHash :execrows
+UPDATE admin_users SET password_hash = $1 WHERE id = $2 AND password_hash = $3
+`
+
+type ChangePasswordHashParams struct {
+	NewHash string
+	ID      int64
+	OldHash string
+}
+
+// ChangePasswordHash replaces the hash only if it is still the one the old password was checked
+// against: 0 rows means it changed meanwhile.
+func (q *Queries) ChangePasswordHash(ctx context.Context, arg ChangePasswordHashParams) (int64, error) {
+	result, err := q.db.Exec(ctx, changePasswordHash, arg.NewHash, arg.ID, arg.OldHash)
 	if err != nil {
 		return 0, err
 	}
@@ -115,12 +137,35 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (int64, 
 	return id, err
 }
 
+const deleteOtherSessions = `-- name: DeleteOtherSessions :exec
+DELETE FROM admin_sessions WHERE admin_id = $1 AND id <> $2
+`
+
+type DeleteOtherSessionsParams struct {
+	AdminID int64
+	Keep    int64
+}
+
+func (q *Queries) DeleteOtherSessions(ctx context.Context, arg DeleteOtherSessionsParams) error {
+	_, err := q.db.Exec(ctx, deleteOtherSessions, arg.AdminID, arg.Keep)
+	return err
+}
+
 const deleteSession = `-- name: DeleteSession :exec
 DELETE FROM admin_sessions WHERE id = $1
 `
 
 func (q *Queries) DeleteSession(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, deleteSession, id)
+	return err
+}
+
+const deleteSessionsOf = `-- name: DeleteSessionsOf :exec
+DELETE FROM admin_sessions WHERE admin_id = $1
+`
+
+func (q *Queries) DeleteSessionsOf(ctx context.Context, adminID int64) error {
+	_, err := q.db.Exec(ctx, deleteSessionsOf, adminID)
 	return err
 }
 
@@ -310,6 +355,51 @@ func (q *Queries) ListAdjustments(ctx context.Context, arg ListAdjustmentsParams
 	return items, nil
 }
 
+const listAdmins = `-- name: ListAdmins :many
+SELECT id, email, role, telegram_id, (disabled_at IS NOT NULL)::bool AS disabled,
+       (totp_secret IS NOT NULL)::bool AS totp_enrolled, created_at
+FROM admin_users ORDER BY id
+`
+
+type ListAdminsRow struct {
+	ID           int64
+	Email        string
+	Role         string
+	TelegramID   *int64
+	Disabled     bool
+	TotpEnrolled bool
+	CreatedAt    pgtype.Timestamptz
+}
+
+// ListAdmins lists the console users with only what the console shows: no hashes, no secrets.
+func (q *Queries) ListAdmins(ctx context.Context) ([]ListAdminsRow, error) {
+	rows, err := q.db.Query(ctx, listAdmins)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAdminsRow
+	for rows.Next() {
+		var i ListAdminsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Role,
+			&i.TelegramID,
+			&i.Disabled,
+			&i.TotpEnrolled,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAudit = `-- name: ListAudit :many
 SELECT id, admin_id, action, target, before, after, reason, ip, created_at FROM admin_audit
 WHERE ($1::bigint IS NULL OR id < $1)
@@ -364,6 +454,32 @@ func (q *Queries) ListAudit(ctx context.Context, arg ListAuditParams) ([]AdminAu
 	return items, nil
 }
 
+const lockEnabledOwners = `-- name: LockEnabledOwners :many
+SELECT id FROM admin_users WHERE role = 'owner' AND disabled_at IS NULL ORDER BY id FOR UPDATE
+`
+
+// LockEnabledOwners locks every enabled owner (in id order) while a change is checked against
+// the last-owner rule.
+func (q *Queries) LockEnabledOwners(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.Query(ctx, lockEnabledOwners)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockLogin = `-- name: LockLogin :exec
 SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
 `
@@ -372,6 +488,52 @@ SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
 // transaction ends, so the count, the check and the audit row can't interleave.
 func (q *Queries) LockLogin(ctx context.Context, target string) error {
 	_, err := q.db.Exec(ctx, lockLogin, target)
+	return err
+}
+
+const lockUser = `-- name: LockUser :one
+SELECT id, email, role, password_hash, totp_secret, telegram_id, disabled_at, created_at, totp_pending, totp_last_step FROM admin_users WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockUser(ctx context.Context, id int64) (AdminUser, error) {
+	row := q.db.QueryRow(ctx, lockUser, id)
+	var i AdminUser
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Role,
+		&i.PasswordHash,
+		&i.TotpSecret,
+		&i.TelegramID,
+		&i.DisabledAt,
+		&i.CreatedAt,
+		&i.TotpPending,
+		&i.TotpLastStep,
+	)
+	return i, err
+}
+
+const resetTOTP = `-- name: ResetTOTP :exec
+UPDATE admin_users SET totp_secret = NULL, totp_pending = NULL, totp_last_step = 0 WHERE id = $1
+`
+
+// ResetTOTP makes the next login enrol again.
+func (q *Queries) ResetTOTP(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, resetTOTP, id)
+	return err
+}
+
+const setPasswordHash = `-- name: SetPasswordHash :exec
+UPDATE admin_users SET password_hash = $2 WHERE id = $1
+`
+
+type SetPasswordHashParams struct {
+	ID           int64
+	PasswordHash string
+}
+
+func (q *Queries) SetPasswordHash(ctx context.Context, arg SetPasswordHashParams) error {
+	_, err := q.db.Exec(ctx, setPasswordHash, arg.ID, arg.PasswordHash)
 	return err
 }
 
@@ -386,6 +548,23 @@ type SetTOTPPendingParams struct {
 
 func (q *Queries) SetTOTPPending(ctx context.Context, arg SetTOTPPendingParams) error {
 	_, err := q.db.Exec(ctx, setTOTPPending, arg.ID, arg.TotpPending)
+	return err
+}
+
+const setUserAccess = `-- name: SetUserAccess :exec
+UPDATE admin_users SET role = $1,
+    disabled_at = CASE WHEN $2::bool THEN coalesce(disabled_at, now()) ELSE NULL END
+WHERE id = $3
+`
+
+type SetUserAccessParams struct {
+	Role     string
+	Disabled bool
+	ID       int64
+}
+
+func (q *Queries) SetUserAccess(ctx context.Context, arg SetUserAccessParams) error {
+	_, err := q.db.Exec(ctx, setUserAccess, arg.Role, arg.Disabled, arg.ID)
 	return err
 }
 

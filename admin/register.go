@@ -83,5 +83,7 @@ func (adm *Admin) register() {
 	adm.enrolment("POST /api/totp/enrol", adm.enrol)
 	adm.handle("GET /api/me", "", adm.me)
 	adm.registerReads()
+	adm.registerWrites()
+	adm.registerAdmins()
 	adm.mux.HandleFunc("GET /{$}", adm.serveUI)
 }
