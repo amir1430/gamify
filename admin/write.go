@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/amir1430/gamify/auth"
 	"github.com/amir1430/gamify/gameconfig"
@@ -106,9 +107,24 @@ func (adm *Admin) gameWrite(w http.ResponseWriter, r *http.Request, s *session, 
 	return nil
 }
 
+// sideEffectCtx is a context for work after a commit: it outlives the request (a client that
+// hangs up must not skip it) but not forever.
+func sideEffectCtx(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
+}
+
+// kick drops the user's realtime connections, after the audit row committed.
+func (adm *Admin) kick(parent context.Context, id int64) error {
+	ctx, cancel := sideEffectCtx(parent)
+	defer cancel()
+	return adm.a.Realtime.Disconnect(ctx, id)
+}
+
 // publishConfig reloads the games' cache and tells the players, after a commit. The change is
 // stored by then, so a failure here is logged, not an error to the console user.
-func (adm *Admin) publishConfig(ctx context.Context) {
+func (adm *Admin) publishConfig(parent context.Context) {
+	ctx, cancel := sideEffectCtx(parent)
+	defer cancel()
 	if err := adm.a.Games.Load(ctx); err != nil {
 		slog.ErrorContext(ctx, "admin: reload game config", "err", err)
 	}
@@ -220,7 +236,7 @@ func (adm *Admin) disconnect(w http.ResponseWriter, r *http.Request, s *session)
 	}); err != nil {
 		return err
 	}
-	if err := adm.a.Realtime.Disconnect(ctx, id); err != nil {
+	if err := adm.kick(ctx, id); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

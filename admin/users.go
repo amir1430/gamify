@@ -85,7 +85,7 @@ func insertUser(ctx context.Context, tx pgx.Tx, actor *int64, ip *netip.Addr, em
 		return err
 	}
 	return insertAudit(ctx, q, actor, ip, "admin.create", adminTarget(id), nil,
-		map[string]string{"email": email, "role": string(role)}, "")
+		adminView{Email: email, Role: role}, "")
 }
 
 func randomPassword() (string, error) {

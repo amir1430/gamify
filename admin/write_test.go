@@ -10,6 +10,7 @@ import (
 	"github.com/amir1430/gamify/apptest"
 	"github.com/amir1430/gamify/auth"
 	"github.com/amir1430/gamify/fairness"
+	"github.com/amir1430/gamify/gameconfig"
 	"github.com/amir1430/gamify/games/dice"
 )
 
@@ -256,4 +257,21 @@ func TestAuditHasNoSecrets(t *testing.T) {
 	// The new password logs in (and the user enrols TOTP again).
 	secrets.Delete(secretKey{srv, "op@brand.example"})
 	login(t, srv, "op@brand.example", pw)
+}
+
+func TestSideEffectsSurviveCancel(t *testing.T) {
+	a, adm, _ := writeEnv(t)
+	alice := a.User("alice")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	adm.publishConfig(ctx)
+	if n := len(a.Pushes(gameconfig.Channel)); n != 1 {
+		t.Fatalf("config pushes = %d, want 1", n)
+	}
+	if err := adm.kick(ctx, alice); err != nil {
+		t.Fatal(err)
+	}
+	if d := a.Transport.Disconnected(); len(d) != 1 || d[0] != alice {
+		t.Fatalf("disconnected %v", d)
+	}
 }

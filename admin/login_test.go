@@ -392,7 +392,7 @@ func TestCreateUserAudits(t *testing.T) {
 		`SELECT admin_id, target, after::text FROM admin_audit WHERE action = 'admin.create'`).Scan(&adminID, &target, &after); err != nil {
 		t.Fatal(err)
 	}
-	if adminID != nil || !strings.HasPrefix(target, "admin:") || after != `{"role": "owner", "email": "owner@brand.example"}` {
+	if adminID != nil || !strings.HasPrefix(target, "admin:") || after != `{"role": "owner", "email": "owner@brand.example", "disabled": false}` {
 		t.Fatalf("audit %v %q %q", adminID, target, after)
 	}
 }

@@ -134,3 +134,14 @@ func TestPatchNoOpAndDisable(t *testing.T) {
 		t.Fatalf("disabled user's session: %d", st)
 	}
 }
+
+func TestMePasswordBusy(t *testing.T) {
+	a, adm, srv := writeEnv(t)
+	pw := addUser(t, a, "op@brand.example", RoleOperator)
+	c := login(t, srv, "op@brand.example", pw)
+	for range cap(adm.logins) {
+		adm.logins <- struct{}{}
+	}
+	st, body := call(t, c, srv, "POST", "/api/me/password", map[string]string{"current": pw, "new": "a-long-enough-password"})
+	wantErr(t, "busy", st, body, 429, "busy")
+}

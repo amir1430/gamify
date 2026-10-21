@@ -27,7 +27,7 @@ func (adm *Admin) registerAdmins() {
 	adm.handle("GET /api/admins", PermAdmins, adm.listAdmins)
 	adm.handle("POST /api/admins", PermAdmins, adm.createAdmin)
 	adm.handle("PATCH /api/admins/{id}", PermAdmins, adm.updateAdmin)
-	adm.handle("POST /api/me/password", "", adm.changePassword)
+	adm.handle("POST /api/me/password", "", adm.limited(adm.changePassword))
 }
 
 // adminView is all an audit row says about a console user: never a hash, password or TOTP data.
