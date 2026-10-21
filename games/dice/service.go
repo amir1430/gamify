@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/amir1430/gamify/app"
 	"github.com/amir1430/gamify/fairness"
@@ -178,17 +179,58 @@ func (s *Service) Reconcile(ctx context.Context) {
 	}
 }
 
+// BetRow is a dice bet's public columns, for the admin's view (games/dice/diceadmin). It never
+// holds seed data. Target and Roll are hundredths; Amount and Payout minor units of Currency.
+type BetRow struct {
+	ID        int64
+	UserID    int64
+	Amount    int64
+	Currency  string
+	Target    int32
+	Over      bool
+	Roll      int32
+	Payout    int64
+	Status    string // pending, settled or voided
+	CreatedAt time.Time
+}
+
+// ListBets lists bets newest first: one user's (userID non-nil) or everyone's, with status ""
+// meaning any status. before 0 is the first page, else only bets with a smaller ID.
+func (s *Service) ListBets(ctx context.Context, userID *int64, status string, before int64, limit int32) ([]BetRow, error) {
+	var st *string
+	var bid *int64
+	if status != "" {
+		st = &status
+	}
+	if before > 0 {
+		bid = &before
+	}
+	var rows []store.DiceBet
+	var err error
+	if userID != nil {
+		rows, err = s.q.ListDiceBetsByUser(ctx, store.ListDiceBetsByUserParams{UserID: *userID, Status: st, BeforeID: bid, MaxRows: limit})
+	} else {
+		rows, err = s.q.ListDiceBets(ctx, store.ListDiceBetsParams{Status: st, BeforeID: bid, MaxRows: limit})
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]BetRow, len(rows))
+	for i, r := range rows {
+		out[i] = BetRow{ID: r.ID, UserID: r.UserID, Amount: r.Amount, Currency: r.Currency, Target: r.Target,
+			Over: r.Over, Roll: r.Roll, Payout: r.Payout, Status: r.Status, CreatedAt: r.CreatedAt.Time}
+	}
+	return out, nil
+}
+
 // History lists bets newest first for the admin (an app.BetSource): userID 0 means every user.
 // Detail holds the bet's public fields only, never seed data.
 func (s *Service) History(ctx context.Context, userID, beforeID int64, limit int32) ([]app.Bet, error) {
-	arg := store.ListDiceBetsByUserParams{MaxRows: limit}
+	var user *int64
 	if userID > 0 {
-		arg.UserID = &userID
+		user = &userID
 	}
-	if beforeID > 0 {
-		arg.BeforeID = &beforeID
-	}
-	rows, err := s.q.ListDiceBetsByUser(ctx, arg)
+	rows, err := s.ListBets(ctx, user, "", beforeID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +245,7 @@ func (s *Service) History(ctx context.Context, userID, beforeID int64, limit int
 			return nil, err
 		}
 		out = append(out, app.Bet{Game: "dice", ID: r.ID, UserID: r.UserID, Currency: ledger.Currency(r.Currency),
-			Amount: r.Amount, Payout: r.Payout, Status: r.Status, Detail: detail, At: r.CreatedAt.Time})
+			Amount: r.Amount, Payout: r.Payout, Status: r.Status, Detail: detail, At: r.CreatedAt})
 	}
 	return out, nil
 }

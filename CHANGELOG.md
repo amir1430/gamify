@@ -40,6 +40,19 @@ First public version, extracted from the casino's core.
   beyond the balance. A reconciler (`App.Reconcile`) re-applies `approved` rows older than 10 s.
   Audited as `adjust.request`, `adjust.approve`, `adjust.reject`. `Register` refuses a negative
   `ApproveAbove` threshold.
+- `admin`: brand views. `Admin.View(admin.View{…})` describes a page in Go (columns, filters,
+  keyset `List`, optional `Get`, actions with typed inputs; types `Text`, `Int`, `Decimal`,
+  `Money`, `Bool`, `Time`, `Enum`, `UserID`, `JSON`) and the console draws it; call it after
+  `Register` and before `App.Run`. Routes `GET /api/views`, `GET /api/views/{name}` (filters,
+  `?before=`, `?limit=`), `GET /api/views/{name}/{id}` and `POST
+  /api/views/{name}/{id}/actions/{action}` (`{reason, input}`; runs in a transaction with an
+  audit row `view.<view>.<action>`, target `<view>:<id>`; an error or panic rolls back, 500
+  `action_failed`). Integers beyond ±2^53 in integer columns are sent as JSON strings.
+- `admin`: `Config.Perms map[Perm][]Role`, brand permissions for views and actions; owners hold
+  every permission and `/api/me` lists the ones the role holds. `Register` refuses an empty key,
+  a built-in name or an unknown role. `Role.Can` still answers built-ins only.
+- `games/dice/diceadmin`: `Register(adm, s)` adds the "dice-bets" view (filters player and
+  status, player tab). `games/dice`: `Service.ListBets` and `BetRow` for it.
 - `admin`: `ErrEmailTaken`, returned (wrapped) by `CreateUser` for an email in use; it was a
   plain error before, so match it with `errors.Is`.
 - `ledger`: `Ledger.Decimals(c)` (a currency's display decimals).

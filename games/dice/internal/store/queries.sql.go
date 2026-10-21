@@ -91,23 +91,79 @@ func (q *Queries) InsertDiceBet(ctx context.Context, arg InsertDiceBetParams) (D
 	return i, err
 }
 
-const listDiceBetsByUser = `-- name: ListDiceBetsByUser :many
+const listDiceBets = `-- name: ListDiceBets :many
 SELECT id, user_id, idempotency_key, seed_pair_id, nonce, amount, currency, target, over, roll, payout, status, created_at FROM dice_bets
-WHERE ($1::bigint IS NULL OR user_id = $1)
+WHERE ($1::text IS NULL OR status = $1)
   AND ($2::bigint IS NULL OR id < $2)
 ORDER BY id DESC
 LIMIT $3
 `
 
-type ListDiceBetsByUserParams struct {
-	UserID   *int64
+type ListDiceBetsParams struct {
+	Status   *string
 	BeforeID *int64
 	MaxRows  int32
 }
 
-// user_id NULL lists every user's bets (app.BetSource: userID 0); a user's page uses dice_bets_user.
+// Every user's bets, newest first (app.BetSource with userID 0, the admin's view).
+func (q *Queries) ListDiceBets(ctx context.Context, arg ListDiceBetsParams) ([]DiceBet, error) {
+	rows, err := q.db.Query(ctx, listDiceBets, arg.Status, arg.BeforeID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DiceBet
+	for rows.Next() {
+		var i DiceBet
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.IdempotencyKey,
+			&i.SeedPairID,
+			&i.Nonce,
+			&i.Amount,
+			&i.Currency,
+			&i.Target,
+			&i.Over,
+			&i.Roll,
+			&i.Payout,
+			&i.Status,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDiceBetsByUser = `-- name: ListDiceBetsByUser :many
+SELECT id, user_id, idempotency_key, seed_pair_id, nonce, amount, currency, target, over, roll, payout, status, created_at FROM dice_bets
+WHERE user_id = $1
+  AND ($2::text IS NULL OR status = $2)
+  AND ($3::bigint IS NULL OR id < $3)
+ORDER BY id DESC
+LIMIT $4
+`
+
+type ListDiceBetsByUserParams struct {
+	UserID   int64
+	Status   *string
+	BeforeID *int64
+	MaxRows  int32
+}
+
+// One user's bets, newest first, on dice_bets_user.
 func (q *Queries) ListDiceBetsByUser(ctx context.Context, arg ListDiceBetsByUserParams) ([]DiceBet, error) {
-	rows, err := q.db.Query(ctx, listDiceBetsByUser, arg.UserID, arg.BeforeID, arg.MaxRows)
+	rows, err := q.db.Query(ctx, listDiceBetsByUser,
+		arg.UserID,
+		arg.Status,
+		arg.BeforeID,
+		arg.MaxRows,
+	)
 	if err != nil {
 		return nil, err
 	}

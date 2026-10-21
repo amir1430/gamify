@@ -78,8 +78,47 @@ void it at the end (`SettleHeld`, `SettleHolds`). PvP games use pots (`HoldPot`,
 
 Register `a.Bets("crash", s.History)` so the admin can list your bets. The `app.BetSource` lists
 newest first (`beforeID` keyset, `userID` 0 = every user) and fills `app.Bet`: the row's amount,
-payout, status and a `Detail` JSON with your game's own fields. `Detail` never holds an unrevealed
-server seed or anything derived from one. See `games/dice/service.go`.
+payout, status and a `Detail` JSON with your game's own fields. `Detail` never holds the server
+seed, nor outcomes the player hasn't seen yet (e.g. a live round's future steps). See
+`games/dice/service.go`.
+
+## Admin view
+
+A game can add its own page to the admin console, described in Go; the console's UI draws it. Put
+it in a `<game>admin` subpackage (`crash/crashadmin`) that imports `admin` and your game, so the
+game itself never imports `admin` and brands without the console don't pull it in. Export from the
+game only what the view needs (Dice: `Service.ListBets` and `BetRow`). The brand calls
+`crashadmin.Register(adm, s)` after `admin.Register` and before `a.Run`.
+
+```go
+return adm.View(admin.View{
+	Name: "crash-rounds", Title: "Crash rounds", Group: "Crash", Perm: admin.PermView,
+	UserFilter: "user_id", // also a tab on the player page
+	Columns: []admin.Column{
+		{Key: "id", Type: admin.Int},
+		{Key: "user_id", Type: admin.UserID},
+		{Key: "pot", Type: admin.Money, CurrencyKey: "currency"},
+		{Key: "status", Type: admin.Enum, Options: []string{"open", "settled", "voided"}},
+	},
+	Filters: []admin.Filter{{Key: "user_id", Type: admin.UserID}},
+	List:    func(ctx context.Context, q admin.Query) (admin.Page, error) { … }, // keyset: q.Before, q.Limit
+	Actions: []admin.Action{{Name: "void", Title: "Void round", Perm: "crash.void", Reason: true,
+		Run: func(ctx context.Context, tx pgx.Tx, c admin.Call) (before, after any, err error) { … }}},
+})
+```
+
+- Field types: `Text`, `Int`, `Decimal` (an integer shown with `Scale` decimals, never a float),
+  `Money` (minor units; currency from the row's `CurrencyKey` or a fixed `Currency`), `Bool`,
+  `Time`, `Enum` (`Options`), `UserID` (links to the player), `JSON`. Filters are columns of the
+  same type; action inputs (`Fields`) use the same types, `Money`/`Decimal` as integers.
+- `View` checks the description and returns an error; register views at startup.
+- Actions never move money: the ledger isn't in `Run`'s transaction. Change your game's row (mark
+  the round void) and let your reconciler do the ledger part, as for a bet left by a crash. The
+  console writes the audit row in the same transaction; an error or a panic rolls both back.
+- Permissions: a built-in (`admin.PermView`, …) or one of the brand's in
+  `admin.Config.Perms` (`"crash.void": {admin.RoleOperator}`); owners hold them all. Name yours
+  `<game>.<verb>` so they can't clash with a built-in.
+- Worked example: `games/dice/diceadmin`.
 
 ## 6. Limits and errors
 
@@ -127,3 +166,4 @@ finished by `a.ReconcileNow()`, and (games of chance) the revealed seed reproduc
       `math/rand`, guard for multi-step games
 - [ ] User ID from the connection, never the payload
 - [ ] Tested through its RPCs with `apptest`
+- [ ] Admin view, if any, in a `<game>admin` subpackage; actions change rows, never money

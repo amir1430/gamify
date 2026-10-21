@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ type Admin struct {
 	routes map[string]route // pattern → what it needs
 	h      http.Handler
 	logins chan struct{} // login attempts in flight, at most maxLogins
+	views  views         // brand views (View)
 }
 
 // Register migrates the module's tables and adds the console's server to a.Run. Call it after the
@@ -77,6 +79,19 @@ func (cfg Config) validate() (Config, error) {
 		}
 	}
 	cfg.ApproveAbove = maps.Clone(cfg.ApproveAbove)
+	perms := make(map[Perm][]Role, len(cfg.Perms))
+	for p, roles := range cfg.Perms {
+		if p == "" || builtin(p) {
+			return cfg, fmt.Errorf("admin: Config.Perms key %q is empty or a built-in permission", p)
+		}
+		for _, r := range roles {
+			if !r.Valid() {
+				return cfg, fmt.Errorf("admin: Config.Perms[%s] has an unknown role %q", p, r)
+			}
+		}
+		perms[p] = slices.Clone(roles)
+	}
+	cfg.Perms = perms
 	return cfg, nil
 }
 
@@ -94,5 +109,6 @@ func (adm *Admin) register() {
 	adm.registerWrites()
 	adm.registerAdmins()
 	adm.registerAdjustments()
+	adm.registerViews()
 	adm.mux.HandleFunc("GET /{$}", adm.serveUI)
 }

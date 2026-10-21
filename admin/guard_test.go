@@ -83,6 +83,11 @@ func TestEveryRouteHasPerm(t *testing.T) {
 		"POST /api/me/password":    true,
 		"GET /api/me":              true,
 		"GET /api/brand/logo":      true,
+		"GET /api/views":           true, // lists only the views the role holds
+		// Brand views: each handler checks the view's and the action's own permission.
+		"GET /api/views/{name}":                        true,
+		"GET /api/views/{name}/{id}":                   true,
+		"POST /api/views/{name}/{id}/actions/{action}": true,
 	}
 	if len(adm.routes) == 0 {
 		t.Fatal("no routes")

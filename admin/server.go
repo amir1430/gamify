@@ -83,7 +83,7 @@ func (adm *Admin) add(pattern string, rt route, h handlerFunc) {
 				adm.fail(w, r, errMFARequired)
 				return
 			}
-			if rt.perm != "" && !s.Role.Can(rt.perm) {
+			if rt.perm != "" && !adm.can(s.Role, rt.perm) {
 				adm.fail(w, r, errForbidden)
 				return
 			}
@@ -172,11 +172,7 @@ type meCurrency struct {
 // me is the UI's start: who's logged in, what they may do, how the console looks, and the
 // currencies (ledger order) with their display decimals.
 func (adm *Admin) me(w http.ResponseWriter, r *http.Request, s *session) error {
-	perms := []string{}
-	for _, p := range rolePerms[s.Role] {
-		perms = append(perms, string(p))
-	}
-	slices.Sort(perms)
+	perms := adm.perms(s.Role)
 	b := meBrand{Name: adm.cfg.Brand.Name, Accent: adm.cfg.Brand.Accent}
 	if len(adm.cfg.Brand.Logo) > 0 {
 		logo := "/api/brand/logo"

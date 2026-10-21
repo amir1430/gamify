@@ -7,6 +7,7 @@ import (
 	"embed"
 	"io/fs"
 	"net/netip"
+	"slices"
 
 	"github.com/amir1430/gamify/fairness"
 	"github.com/amir1430/gamify/ledger"
@@ -41,6 +42,11 @@ type Config struct {
 
 	ApproveAbove map[ledger.Currency]int64 // adjustments above need a second admin
 	UI           fs.FS                     // nil = embedded
+
+	// Perms are the brand's own permissions for its views and actions (View), with the roles
+	// that hold each, e.g. {"crash.void": {RoleOperator}}. Owners hold every permission. A key
+	// can't be empty or a built-in permission's name.
+	Perms map[Perm][]Role
 }
 
 // Role is a console user's role.
@@ -78,7 +84,18 @@ func (r Role) Valid() bool {
 	return ok
 }
 
-// Can reports whether r has p. An unknown role has nothing.
+// builtin reports whether p is one of the built-in permissions.
+func builtin(p Perm) bool {
+	for _, q := range rolePerms[RoleOwner] {
+		if q == p {
+			return true
+		}
+	}
+	return false
+}
+
+// Can reports whether r has the built-in permission p (brand permissions aside: the console
+// checks those against Config.Perms). An unknown role has nothing.
 func (r Role) Can(p Perm) bool {
 	for _, q := range rolePerms[r] {
 		if q == p {
@@ -86,4 +103,37 @@ func (r Role) Can(p Perm) bool {
 		}
 	}
 	return false
+}
+
+// can reports whether r holds p: owners hold every permission, built-ins come from the role,
+// brand permissions from Config.Perms. An unknown role has nothing.
+func (adm *Admin) can(r Role, p Perm) bool {
+	switch {
+	case !r.Valid():
+		return false
+	case r == RoleOwner, r.Can(p):
+		return true
+	}
+	return slices.Contains(adm.cfg.Perms[p], r)
+}
+
+// knownPerm reports whether p is a built-in or a Config.Perms permission.
+func (adm *Admin) knownPerm(p Perm) bool {
+	_, ok := adm.cfg.Perms[p]
+	return builtin(p) || ok
+}
+
+// perms lists what r holds, built-in and brand, sorted.
+func (adm *Admin) perms(r Role) []string {
+	out := []string{}
+	for _, p := range rolePerms[r] {
+		out = append(out, string(p))
+	}
+	for p := range adm.cfg.Perms {
+		if adm.can(r, p) {
+			out = append(out, string(p))
+		}
+	}
+	slices.Sort(out)
+	return out
 }
