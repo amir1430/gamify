@@ -31,6 +31,8 @@ func TestSetLimitRefusesLoosen(t *testing.T) {
 		{"min zero", "g", "usd", "", gameconfig.LimitOverride{Enabled: true, MinBet: ptr(0)}, gameconfig.ErrBadOverride},
 		{"min > max", "g", "usd", "", gameconfig.LimitOverride{Enabled: true, MinBet: ptr(20), MaxBet: ptr(10)}, gameconfig.ErrBadOverride},
 		{"max bet >= payout", "g", "usd", "", gameconfig.LimitOverride{Enabled: true, MaxBet: ptr(100), MaxPayout: ptr(100)}, gameconfig.ErrBadOverride},
+		{"min above inherited max", "g", "usd", "", gameconfig.LimitOverride{Enabled: true, MinBet: ptr(5000)}, gameconfig.ErrBadOverride},
+		{"payout below inherited max bet", "g", "usd", "", gameconfig.LimitOverride{Enabled: true, MaxPayout: ptr(100)}, gameconfig.ErrBadOverride},
 		{"variant", "g", "usd", "x", gameconfig.LimitOverride{Enabled: true}, gameconfig.ErrBadOverride},
 		{"currency", "g", "eur", "", gameconfig.LimitOverride{Enabled: true}, gameconfig.ErrBadOverride},
 		{"empty game", "", "usd", "", gameconfig.LimitOverride{Enabled: true}, gameconfig.ErrBadOverride},
@@ -136,5 +138,39 @@ func TestSetGameRollback(t *testing.T) {
 	a.Games.Load(ctx)
 	if settings, _ := a.Games.Overrides(); !settings["g"] {
 		t.Fatalf("%v", settings)
+	}
+}
+
+func TestSetLimitVariantInheritance(t *testing.T) {
+	a := apptest.New(t)
+	ctx := context.Background()
+	a.Games.Game("g", 1000, 50_000, []string{"v"})
+	tx, _ := a.Pool.Begin(ctx)
+	if _, err := a.Games.SetLimit(ctx, tx, "g", "usd", "v", gameconfig.LimitOverride{Enabled: true, MinBet: ptr(200)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a.Games.Load(ctx)
+	tx, _ = a.Pool.Begin(ctx)
+	defer tx.Rollback(ctx)
+	if _, err := a.Games.SetLimit(ctx, tx, "g", "usd", "", gameconfig.LimitOverride{Enabled: true, MaxBet: ptr(100)}); !errors.Is(err, gameconfig.ErrBadOverride) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSetLimitRollback(t *testing.T) {
+	a := apptest.New(t)
+	ctx := context.Background()
+	a.Games.Game("g", 1000, 50_000, nil)
+	tx, _ := a.Pool.Begin(ctx)
+	if _, err := a.Games.SetLimit(ctx, tx, "g", "usd", "", gameconfig.LimitOverride{Enabled: true, MaxBet: ptr(500)}); err != nil {
+		t.Fatal(err)
+	}
+	tx.Rollback(ctx)
+	a.Games.Load(ctx)
+	if _, lim := a.Games.Overrides(); len(lim) != 0 {
+		t.Fatalf("rows after rollback: %#v", lim)
 	}
 }

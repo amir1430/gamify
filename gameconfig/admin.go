@@ -55,7 +55,10 @@ func (s *Service) SetGame(ctx context.Context, tx pgx.Tx, game string, enabled b
 			// Lost a race with a concurrent insert: lock that row and update it.
 			row, err = q.LockGameSetting(ctx, game)
 		} else {
-			return Change{After: enabled}, err
+			if err != nil {
+				return Change{}, err
+			}
+			return Change{After: enabled}, nil
 		}
 	}
 	if err != nil {
@@ -92,6 +95,9 @@ func (s *Service) SetLimit(ctx context.Context, tx pgx.Tx, game, currency, varia
 	if o.MaxBet != nil && *o.MaxBet > g.MaxBet || o.MaxPayout != nil && *o.MaxPayout > g.MaxPayout {
 		return Change{}, ErrLoosens
 	}
+	if !s.effectiveOK(g, currency, variant, o) {
+		return Change{}, ErrBadOverride
+	}
 
 	q := store.New(tx)
 	p := store.InsertGameLimitParams{Game: game, Currency: currency, Variant: variant,
@@ -99,7 +105,10 @@ func (s *Service) SetLimit(ctx context.Context, tx pgx.Tx, game, currency, varia
 	row, err := q.LockGameLimit(ctx, store.LockGameLimitParams{Game: game, Currency: currency, Variant: variant})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, err = q.InsertGameLimit(ctx, p); !errors.Is(err, pgx.ErrNoRows) {
-			return Change{After: o}, err
+			if err != nil {
+				return Change{}, err
+			}
+			return Change{After: o}, nil
 		}
 		row, err = q.LockGameLimit(ctx, store.LockGameLimitParams{Game: game, Currency: currency, Variant: variant})
 	}
@@ -171,4 +180,29 @@ func (s *Service) Overrides() (settings map[string]bool, limits map[string]map[s
 		limits[k.game][k.currency][k.variant] = fromRow(r)
 	}
 	return settings, limits
+}
+
+// effectiveOK reports whether, with o written for (g, currency, variant) over the cached rows,
+// every limit set it affects still satisfies MinBet <= MaxBet < MaxPayout. A game-level write
+// (variant "") also affects every variant, which inherits from it.
+func (s *Service) effectiveOK(g *Game, currency, variant string, o LimitOverride) bool {
+	snap := s.snap.Load()
+	limits := make(map[key]store.GameLimit, len(snap.limits)+1)
+	for k, v := range snap.limits {
+		limits[k] = v
+	}
+	limits[key{g.Name, currency, variant}] = store.GameLimit{Game: g.Name, Currency: currency, Variant: variant,
+		Enabled: o.Enabled, MinBet: o.MinBet, MaxBet: o.MaxBet, MaxPayout: o.MaxPayout}
+	next := &snapshot{settings: snap.settings, limits: limits}
+	vs := []string{variant}
+	if variant == "" {
+		vs = append(vs, g.Variants...)
+	}
+	for _, v := range vs {
+		l := g.resolve(next, ledger.Currency(currency), v)
+		if l.MinBet > l.MaxBet || l.MaxBet >= l.MaxPayout {
+			return false
+		}
+	}
+	return true
 }
