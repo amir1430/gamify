@@ -8,6 +8,9 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 First public version, extracted from the casino's core.
 
 ### Added
+- `gameconfig`: transactional writes for the admin (`SetGame`, `SetLimit`, `DeleteLimit` take a
+  `pgx.Tx` and refuse overrides above the code caps) and `Overrides` (cached view). Writes don't
+  reload the cache: call `Load` after commit.
 - `app`: `App.Serve` for extra listeners; `App.Bets` registry of games' bet history (`app.Bet`).
 - `app`: wiring (migrations, ledger init, login, health, core RPCs `wallet.*`, `games.config`,
   `auth.link`, reconcile loop) on `net/http` (`App.HTTP` is a `*http.ServeMux`).
