@@ -61,3 +61,20 @@ UPDATE admin_sessions SET seen_at = now() WHERE id = $1;
 
 -- name: DeleteSession :exec
 DELETE FROM admin_sessions WHERE id = $1;
+
+-- ListAudit lists audit rows newest first; every filter is optional.
+-- name: ListAudit :many
+SELECT id, admin_id, action, target, before, after, reason, ip, created_at FROM admin_audit
+WHERE (sqlc.narg(before_id)::bigint IS NULL OR id < sqlc.narg(before_id))
+  AND (sqlc.narg(admin_id)::bigint IS NULL OR admin_id = sqlc.narg(admin_id))
+  AND (sqlc.narg(action)::text IS NULL OR action = sqlc.narg(action))
+  AND (sqlc.narg(target)::text IS NULL OR target = sqlc.narg(target))
+ORDER BY id DESC LIMIT @max_rows;
+
+-- ListAdjustments lists adjustments newest first; every filter is optional.
+-- name: ListAdjustments :many
+SELECT * FROM admin_adjustments
+WHERE (sqlc.narg(before_id)::bigint IS NULL OR id < sqlc.narg(before_id))
+  AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status))
+  AND (sqlc.narg(user_id)::bigint IS NULL OR user_id = sqlc.narg(user_id))
+ORDER BY id DESC LIMIT @max_rows;

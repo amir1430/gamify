@@ -20,6 +20,9 @@ First public version, extracted from the casino's core.
   and `Origin`), `AllowIPs`, an audit row for every login, enrolment, logout and `CreateUser`;
   routes `/api/login`, `/api/login/telegram`, `/api/totp/enrol`, `/api/logout`, `/api/me`,
   `/api/brand/logo`. `Admin.Handler` for tests. The UI at `/` is a placeholder for now.
+- `admin`: read endpoints for `view` roles: `GET /api/dashboard`, `/api/users` (+ `/{id}`,
+  `/{id}/bets`, `/{id}/seeds`), `/api/games`, `/api/audit`, `/api/adjustments`. Lists page with
+  `?limit=` (default 50, max 100) and `?before=` and answer `{"items", "next"}`.
 - `ledger`: `Ledger.Decimals(c)` (a currency's display decimals).
 - `fairness`: `Service.PairsOf` (a user's seed pairs for the admin; seeds only once revealed).
 - `games/dice`: bet history (`Service.History`, registered with `App.Bets`).

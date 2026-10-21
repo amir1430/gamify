@@ -256,6 +256,114 @@ func (q *Queries) InsertAudit(ctx context.Context, arg InsertAuditParams) error 
 	return err
 }
 
+const listAdjustments = `-- name: ListAdjustments :many
+SELECT id, user_id, currency, amount, reason, requested_by, approved_by, status, error, idempotency_key, created_at, done_at FROM admin_adjustments
+WHERE ($1::bigint IS NULL OR id < $1)
+  AND ($2::text IS NULL OR status = $2)
+  AND ($3::bigint IS NULL OR user_id = $3)
+ORDER BY id DESC LIMIT $4
+`
+
+type ListAdjustmentsParams struct {
+	BeforeID *int64
+	Status   *string
+	UserID   *int64
+	MaxRows  int32
+}
+
+// ListAdjustments lists adjustments newest first; every filter is optional.
+func (q *Queries) ListAdjustments(ctx context.Context, arg ListAdjustmentsParams) ([]AdminAdjustment, error) {
+	rows, err := q.db.Query(ctx, listAdjustments,
+		arg.BeforeID,
+		arg.Status,
+		arg.UserID,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminAdjustment
+	for rows.Next() {
+		var i AdminAdjustment
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Currency,
+			&i.Amount,
+			&i.Reason,
+			&i.RequestedBy,
+			&i.ApprovedBy,
+			&i.Status,
+			&i.Error,
+			&i.IdempotencyKey,
+			&i.CreatedAt,
+			&i.DoneAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAudit = `-- name: ListAudit :many
+SELECT id, admin_id, action, target, before, after, reason, ip, created_at FROM admin_audit
+WHERE ($1::bigint IS NULL OR id < $1)
+  AND ($2::bigint IS NULL OR admin_id = $2)
+  AND ($3::text IS NULL OR action = $3)
+  AND ($4::text IS NULL OR target = $4)
+ORDER BY id DESC LIMIT $5
+`
+
+type ListAuditParams struct {
+	BeforeID *int64
+	AdminID  *int64
+	Action   *string
+	Target   *string
+	MaxRows  int32
+}
+
+// ListAudit lists audit rows newest first; every filter is optional.
+func (q *Queries) ListAudit(ctx context.Context, arg ListAuditParams) ([]AdminAudit, error) {
+	rows, err := q.db.Query(ctx, listAudit,
+		arg.BeforeID,
+		arg.AdminID,
+		arg.Action,
+		arg.Target,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminAudit
+	for rows.Next() {
+		var i AdminAudit
+		if err := rows.Scan(
+			&i.ID,
+			&i.AdminID,
+			&i.Action,
+			&i.Target,
+			&i.Before,
+			&i.After,
+			&i.Reason,
+			&i.Ip,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockLogin = `-- name: LockLogin :exec
 SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
 `
