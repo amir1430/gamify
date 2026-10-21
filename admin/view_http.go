@@ -75,7 +75,7 @@ func (adm *Admin) viewIndex(w http.ResponseWriter, r *http.Request, s *session) 
 		}
 		out = append(out, d)
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, map[string]any{"items": out}) // no paging, so no "next" (as /api/games)
 	return nil
 }
 

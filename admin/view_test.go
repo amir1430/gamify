@@ -132,13 +132,15 @@ func getList(t *testing.T, c *http.Client, srv *httptest.Server, path string) (i
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
-	var out []map[string]any
+	var out struct {
+		Items []map[string]any `json:"items"`
+	}
 	if resp.StatusCode == 200 {
-		if err := json.Unmarshal(raw, &out); err != nil {
-			t.Fatalf("GET %s: %q", path, raw)
+		if err := json.Unmarshal(raw, &out); err != nil || out.Items == nil {
+			t.Fatalf("GET %s: want {\"items\": [...]}, got %q", path, raw)
 		}
 	}
-	return resp.StatusCode, out
+	return resp.StatusCode, out.Items
 }
 
 func TestViewValidation(t *testing.T) {

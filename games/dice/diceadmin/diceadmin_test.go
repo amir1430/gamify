@@ -60,10 +60,12 @@ func TestDiceBetsView(t *testing.T) {
 	}
 	c := login(t, srv, "viewer@brand.example", pw)
 
-	var views []map[string]any
-	get(t, c, srv, "/api/views", &views)
-	if len(views) != 1 || views[0]["name"] != "dice-bets" || views[0]["user_filter"] != "user_id" {
-		t.Fatalf("views = %v", views)
+	var index struct {
+		Items []map[string]any `json:"items"`
+	}
+	get(t, c, srv, "/api/views", &index)
+	if views := index.Items; len(views) != 1 || views[0]["name"] != "dice-bets" || views[0]["user_filter"] != "user_id" {
+		t.Fatalf("views = %v", index)
 	}
 	var page struct {
 		Items []map[string]any `json:"items"`

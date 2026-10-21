@@ -43,8 +43,8 @@ First public version, extracted from the casino's core.
 - `admin`: brand views. `Admin.View(admin.View{…})` describes a page in Go (columns, filters,
   keyset `List`, optional `Get`, actions with typed inputs; types `Text`, `Int`, `Decimal`,
   `Money`, `Bool`, `Time`, `Enum`, `UserID`, `JSON`) and the console draws it; call it after
-  `Register` and before `App.Run`. Routes `GET /api/views`, `GET /api/views/{name}` (filters,
-  `?before=`, `?limit=`), `GET /api/views/{name}/{id}` and `POST
+  `Register` and before `App.Run`. Routes `GET /api/views` (`{"items": [...]}`), `GET
+  /api/views/{name}` (filters, `?before=`, `?limit=`), `GET /api/views/{name}/{id}` and `POST
   /api/views/{name}/{id}/actions/{action}` (`{reason, input}`; runs in a transaction with an
   audit row `view.<view>.<action>`, target `<view>:<id>`; an error or panic rolls back, 500
   `action_failed`). Integers beyond ±2^53 in integer columns are sent as JSON strings.
