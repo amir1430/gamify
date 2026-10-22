@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -525,5 +526,39 @@ func TestMatchmakingPerms(t *testing.T) {
 		if !builtin(p) || !RoleOwner.Can(p) || !RoleOperator.Can(p) || RoleSupport.Can(p) || RoleViewer.Can(p) {
 			t.Fatalf("perm %s: owner and operator only", p)
 		}
+	}
+}
+
+// Call.Reason is the trimmed reason; BadInput, Conflict and ErrNotFound are 400, 409 and 404.
+func TestViewActionRefusals(t *testing.T) {
+	a, adm, srv := thingsEnv(t)
+	v := thingsView(a)
+	var reason string
+	v.Actions = []Action{
+		{Name: "bad", Title: "Bad", Perm: PermView, Reason: true, Run: func(_ context.Context, _ pgx.Tx, c Call) (any, any, error) {
+			reason = c.Reason
+			return nil, nil, BadInput("nope")
+		}},
+		{Name: "clash", Title: "Clash", Perm: PermView, Run: func(context.Context, pgx.Tx, Call) (any, any, error) {
+			return nil, nil, Conflict("closed")
+		}},
+		{Name: "gone", Title: "Gone", Perm: PermView, Run: func(context.Context, pgx.Tx, Call) (any, any, error) {
+			return nil, nil, fmt.Errorf("wrapped: %w", ErrNotFound)
+		}},
+	}
+	if err := adm.View(v); err != nil {
+		t.Fatal(err)
+	}
+	viewer := loginAs(t, a, srv, "viewer", RoleViewer)
+	for _, c := range []struct {
+		act    string
+		status int
+		code   string
+	}{{"bad", 400, "bad_request"}, {"clash", 409, "conflict"}, {"gone", 404, "not_found"}} {
+		st, body := call(t, viewer, srv, "POST", "/api/views/things/1/actions/"+c.act, map[string]any{"reason": "  why "})
+		wantErr(t, c.act, st, body, c.status, c.code)
+	}
+	if reason != "why" {
+		t.Fatalf("Call.Reason %q", reason)
 	}
 }

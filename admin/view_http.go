@@ -178,13 +178,16 @@ func (adm *Admin) viewAction(w http.ResponseWriter, r *http.Request, s *session)
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
 	what := "action " + a.Name
-	call := Call{ID: id, Input: input, Admin: AdminRef{ID: s.AdminID, Email: s.Email, Role: s.Role}}
+	call := Call{Reason: reason, ID: id, Input: input, Admin: AdminRef{ID: s.AdminID, Email: s.Email, Role: s.Role}}
 	ba, err := guarded(ctx, v.Name, what, errActionFailed, func() ([2]any, error) {
 		before, after, err := a.Run(ctx, tx, call)
 		return [2]any{before, after}, err
 	})
 	if err != nil {
 		var e *apiError
+		if errors.Is(err, ErrNotFound) {
+			return errNotFound
+		}
 		if !errors.As(err, &e) {
 			slog.ErrorContext(ctx, "admin: view action failed", "view", v.Name, "action", a.Name, "id", id, "err", err)
 			err = errActionFailed
@@ -199,7 +202,7 @@ func (adm *Admin) viewAction(w http.ResponseWriter, r *http.Request, s *session)
 	}
 	if a.After != nil {
 		_, _ = guarded(ctx, v.Name, what+" after", errActionFailed, func() (struct{}, error) {
-			a.After(ctx, call, ba[0], ba[1])
+			a.After(context.WithoutCancel(ctx), call, ba[0], ba[1])
 			return struct{}{}, nil
 		})
 	}

@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/amir1430/gamify/admin"
-	"github.com/amir1430/gamify/admin/admintest"
 	"github.com/amir1430/gamify/apptest"
+	"github.com/amir1430/gamify/internal/admintest"
 	"github.com/amir1430/gamify/ledger"
 	"github.com/amir1430/gamify/matchmaking"
 	"github.com/amir1430/gamify/matchmaking/matchmakingadmin"
@@ -34,7 +34,7 @@ func setup(t *testing.T) env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Queue(matchmaking.QueueConfig{Name: "bet", Ranked: true, Teams: []matchmaking.Team{{1, 1}, {1, 1}},
+	if _, err := s.Queue(matchmaking.QueueConfig{Name: "bet", Ranked: true, Teams: []matchmaking.Team{{Min: 1, Max: 1}, {Min: 1, Max: 1}},
 		Game: a.Games.PvPGame("arena", 1000, 1<<40, nil), Stakes: map[ledger.Currency][]int64{"usd": {100}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +81,15 @@ func (e env) status(t *testing.T) string {
 	return m.Status
 }
 
+// auditReason is the reason column of the action's one audit row.
+func auditReason(t *testing.T, e env, action string) (reason string) {
+	t.Helper()
+	if err := e.a.Pool.QueryRow(context.Background(), `SELECT reason FROM admin_audit WHERE action = $1`, action).Scan(&reason); err != nil {
+		t.Fatal(err)
+	}
+	return
+}
+
 func audits(t *testing.T, e env, action string) (n int) {
 	t.Helper()
 	if err := e.a.Pool.QueryRow(context.Background(), `SELECT count(*) FROM admin_audit WHERE action = $1`, action).Scan(&n); err != nil {
@@ -94,7 +103,7 @@ func TestCancel(t *testing.T) {
 	if st, body := e.action(t, "cancel", map[string]any{}); st != 400 { // reason is required
 		t.Fatalf("no reason: %d %v", st, body)
 	}
-	if st, body := e.action(t, "cancel", map[string]any{"input": map[string]any{"reason": "cheating"}}); st != 204 {
+	if st, body := e.action(t, "cancel", map[string]any{"reason": "cheating"}); st != 204 {
 		t.Fatalf("cancel: %d %v", st, body)
 	}
 	if got := e.status(t); got != "cancelling" {
@@ -103,8 +112,11 @@ func TestCancel(t *testing.T) {
 	if b := e.a.Balance(e.u[0], "usd"); b != 900 {
 		t.Fatalf("balance %d before the reconciler", b)
 	}
-	if audits(t, e, "view.mm-matches.cancel") != 1 {
-		t.Fatal("no audit row")
+	if audits(t, e, "view.mm-matches.cancel") != 1 || auditReason(t, e, "view.mm-matches.cancel") != "cheating" {
+		t.Fatal("no audit row with the reason")
+	}
+	if st, body := e.action(t, "cancel", map[string]any{"reason": "again"}); st != 204 { // a repeat is a no-op
+		t.Fatalf("repeat: %d %v", st, body)
 	}
 	e.a.ReconcileNow()
 	if got := e.status(t); got != "cancelled" {
@@ -120,8 +132,8 @@ func TestCancel(t *testing.T) {
 func TestReport(t *testing.T) {
 	e := setup(t)
 	for _, bad := range []string{"", "x", "1", "0,1", "1,2,3"} {
-		if st, _ := e.action(t, "report", map[string]any{"input": map[string]any{"ranks": bad, "reason": "r"}}); st == 204 {
-			t.Fatalf("ranks %q accepted", bad)
+		if st, body := e.action(t, "report", map[string]any{"input": map[string]any{"ranks": bad}, "reason": "r"}); st != 400 {
+			t.Fatalf("ranks %q: %d %v, want 400", bad, st, body)
 		}
 	}
 	if got := e.status(t); got != "running" || audits(t, e, "view.mm-matches.report") != 0 {
@@ -129,11 +141,17 @@ func TestReport(t *testing.T) {
 	}
 	ms, _ := e.s.Matches(context.Background(), matchmaking.MatchFilter{}, 0, 1)
 	// team 0 loses, team 1 wins: "2,1"
-	if st, body := e.action(t, "report", map[string]any{"input": map[string]any{"ranks": "2,1", "reason": "ref said"}}); st != 204 {
+	if st, body := e.action(t, "report", map[string]any{"input": map[string]any{"ranks": "2,1"}, "reason": "ref said"}); st != 204 {
 		t.Fatalf("report: %d %v", st, body)
 	}
 	if got := e.status(t); got != "finishing" || audits(t, e, "view.mm-matches.report") != 1 {
 		t.Fatalf("status %s", got)
+	}
+	if auditReason(t, e, "view.mm-matches.report") != "ref said" {
+		t.Fatal("audit reason")
+	}
+	if st, body := e.action(t, "report", map[string]any{"input": map[string]any{"ranks": "1,2"}, "reason": "x"}); st != 409 {
+		t.Fatalf("conflicting result: %d %v", st, body)
 	}
 	e.a.ReconcileNow()
 	if got := e.status(t); got != "settled" {
@@ -154,7 +172,7 @@ func TestViews(t *testing.T) {
 	e := setup(t)
 	viewer := e.cons.Login(admin.RoleViewer)
 	if st, _ := viewer.Do("POST", "/api/views/mm-matches/"+strconv.FormatInt(e.mid, 10)+"/actions/cancel",
-		map[string]any{"input": map[string]any{"reason": "x"}}); st != 403 {
+		map[string]any{"reason": "x"}); st != 403 {
 		t.Fatalf("viewer cancel: %d", st)
 	}
 	st, body := e.op.Do("GET", "/api/views/mm-matches?user_id="+strconv.FormatInt(e.u[0], 10)+"&queue=bet&status=running", nil)
@@ -193,7 +211,27 @@ func TestViews(t *testing.T) {
 	}
 	st, body = e.op.Do("GET", "/api/views/mm-ratings?user_id="+strconv.FormatInt(e.u[0], 10), nil)
 	items, _ = body["items"].([]any)
-	if st != 200 || len(items) != 1 || items[0].(map[string]any)["key"] != "bet" || items[0].(map[string]any)["matches"] != 1.0 {
+	if st != 200 || len(items) != 1 || items[0].(map[string]any)["key"] != "bet" || items[0].(map[string]any)["matches"] != 1.0 || items[0].(map[string]any)["id"] == nil {
 		t.Fatalf("ratings: %d %v", st, body)
+	}
+}
+
+func TestRefusals(t *testing.T) {
+	e := setup(t)
+	do := func(id int64, name string, body any) int {
+		st, _ := e.op.Do("POST", "/api/views/mm-matches/"+strconv.FormatInt(id, 10)+"/actions/"+name, body)
+		return st
+	}
+	if st := do(9999, "cancel", map[string]any{"reason": "x"}); st != 404 {
+		t.Fatalf("unknown match: %d", st)
+	}
+	if st := do(e.mid, "cancel", map[string]any{"reason": "  "}); st != 400 {
+		t.Fatalf("blank reason: %d", st)
+	}
+	if err := e.s.Finish(context.Background(), e.mid, matchmaking.Result{Ranks: []int{1, 2}}); err != nil {
+		t.Fatal(err)
+	}
+	if st := do(e.mid, "cancel", map[string]any{"reason": "late"}); st != 409 { // settled: ErrClosed
+		t.Fatalf("cancel settled: %d", st)
 	}
 }

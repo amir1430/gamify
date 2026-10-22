@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/amir1430/gamify/admin"
-	"github.com/amir1430/gamify/admin/admintest"
 	"github.com/amir1430/gamify/apptest"
+	"github.com/amir1430/gamify/internal/admintest"
 	"github.com/amir1430/gamify/party"
 	"github.com/amir1430/gamify/party/partyadmin"
 	"github.com/amir1430/gamify/realtime"
@@ -76,7 +76,7 @@ func TestDisband(t *testing.T) {
 	if err := a.Pool.QueryRow(ctx, `SELECT count(*) FROM admin_audit WHERE action = 'view.parties.disband' AND reason = 'abuse'`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("audit rows %d %v", n, err)
 	}
-	if st, _ := op.Do("POST", path+"/actions/disband", map[string]any{"reason": "again"}); st != 500 {
+	if st, _ := op.Do("POST", path+"/actions/disband", map[string]any{"reason": "again"}); st != 404 {
 		t.Fatalf("again: %d", st)
 	}
 }

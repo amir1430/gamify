@@ -33,14 +33,14 @@ func Config() admin.Config {
 
 // Console is a console served over TLS for the test.
 type Console struct {
-	t   *testing.T
+	t   testing.TB
 	a   *apptest.App
 	srv *httptest.Server
 	n   int
 }
 
 // Start serves adm for the test.
-func Start(t *testing.T, a *apptest.App, adm *admin.Admin) *Console {
+func Start(t testing.TB, a *apptest.App, adm *admin.Admin) *Console {
 	t.Helper()
 	srv := httptest.NewTLSServer(adm.Handler())
 	t.Cleanup(srv.Close)
@@ -49,7 +49,7 @@ func Start(t *testing.T, a *apptest.App, adm *admin.Admin) *Console {
 
 // Client is a logged-in console user.
 type Client struct {
-	t    *testing.T
+	t    testing.TB
 	c    *http.Client
 	srv  *httptest.Server
 	Role admin.Role

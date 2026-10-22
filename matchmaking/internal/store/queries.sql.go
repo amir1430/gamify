@@ -392,7 +392,7 @@ func (q *Queries) ListMatches(ctx context.Context, arg ListMatchesParams) ([]MmM
 }
 
 const listRatings = `-- name: ListRatings :many
-SELECT r.user_id, r.key, r.mu, r.sigma, r.matches FROM mm_ratings r
+SELECT r.user_id, r.key, r.mu, r.sigma, r.matches, hashtextextended(r.user_id::text || ':' || r.key, 0)::bigint AS row_id FROM mm_ratings r
 WHERE r.user_id IN (
     SELECT DISTINCT u.user_id FROM mm_ratings u
     WHERE ($1::bigint = 0 OR u.user_id < $1)
@@ -413,6 +413,7 @@ type ListRatingsRow struct {
 	Mu      float64
 	Sigma   float64
 	Matches int32
+	RowID   int64
 }
 
 // The ratings of the max_rows highest user IDs below before_id (0: no bound), or of one user.
@@ -431,6 +432,7 @@ func (q *Queries) ListRatings(ctx context.Context, arg ListRatingsParams) ([]Lis
 			&i.Mu,
 			&i.Sigma,
 			&i.Matches,
+			&i.RowID,
 		); err != nil {
 			return nil, err
 		}

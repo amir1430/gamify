@@ -166,6 +166,9 @@ return adm.View(admin.View{
 - Actions never move money: the ledger isn't in `Run`'s transaction. Change your game's row (mark
   the match void) and let your reconciler do the ledger part, as for a row left by a crash. The
   console writes the audit row in the same transaction; an error or a panic rolls both back.
+- `Call.Reason` is the trimmed reason (`Reason: true`; the audit row holds it too). Return
+  `admin.BadInput(msg)` (400), `admin.Conflict(msg)` (409) or `admin.ErrNotFound` (404) for what an
+  operator can get wrong; any other error is a logged 500. `Action.After` runs after the commit.
 - Permissions: a built-in (`admin.PermView`, …) or one of the brand's in
   `admin.Config.Perms` (`"arena.void": {admin.RoleOperator}`); owners hold them all. Name yours
   `<game>.<verb>` so they can't clash with a built-in.

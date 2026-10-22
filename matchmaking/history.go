@@ -66,6 +66,7 @@ type RatingRow struct {
 	Key     string
 	Rating  Rating
 	Matches int
+	ID      int64 // stable per (user, key)
 }
 
 // Ratings lists ratings of the limit highest user IDs below before (0: no bound), all keys of
@@ -77,7 +78,7 @@ func (s *Service) Ratings(ctx context.Context, userID, before int64, limit int32
 	}
 	out := make([]RatingRow, len(rows))
 	for i, r := range rows {
-		out[i] = RatingRow{UserID: r.UserID, Key: r.Key, Rating: Rating{r.Mu, r.Sigma}, Matches: int(r.Matches)}
+		out[i] = RatingRow{UserID: r.UserID, Key: r.Key, Rating: Rating{r.Mu, r.Sigma}, Matches: int(r.Matches), ID: r.RowID}
 	}
 	return out, nil
 }

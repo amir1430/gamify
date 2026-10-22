@@ -175,7 +175,7 @@ SELECT queue, count(*)::bigint AS waiting, min(queued_at)::timestamptz AS oldest
 
 -- name: ListRatings :many
 -- The ratings of the max_rows highest user IDs below before_id (0: no bound), or of one user.
-SELECT r.user_id, r.key, r.mu, r.sigma, r.matches FROM mm_ratings r
+SELECT r.user_id, r.key, r.mu, r.sigma, r.matches, hashtextextended(r.user_id::text || ':' || r.key, 0)::bigint AS row_id FROM mm_ratings r
 WHERE r.user_id IN (
     SELECT DISTINCT u.user_id FROM mm_ratings u
     WHERE (sqlc.arg(before_id)::bigint = 0 OR u.user_id < sqlc.arg(before_id))

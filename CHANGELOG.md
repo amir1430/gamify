@@ -94,8 +94,10 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   `party/partyadmin`: `Register(adm, p)` adds the view `parties` with the action `disband`.
 - `admin`: built-in permissions `matchmaking.cancel`, `matchmaking.report` and `party.disband`
   (`PermMatchCancel`, `PermMatchReport`, `PermPartyDisband`), held by operators and owners.
-  `Action.After(ctx, call, before, after)` runs once the action's transaction has committed.
-  `admin/admintest` drives a console over HTTP in tests.
+  `Action.After(ctx, call, before, after)` runs once the action's transaction has committed (on a
+  context that outlives the request). `Call.Reason` is the action's trimmed reason; actions return
+  `admin.BadInput` (400), `admin.Conflict` (409) or `admin.ErrNotFound` (404, also wrapped) for
+  operator mistakes instead of a logged 500.
 
 ### Upgrade
 - `party`: new goose table `goose_party` (migrations run in `party.Register`); nothing changes unless you register it.

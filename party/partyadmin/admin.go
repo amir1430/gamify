@@ -67,6 +67,9 @@ func Register(adm *admin.Admin, p *party.Service) error {
 			Perm: admin.PermPartyDisband, Reason: true,
 			Run: func(ctx context.Context, tx pgx.Tx, c admin.Call) (any, any, error) {
 				x, err := p.Disband(ctx, tx, c.ID)
+				if errors.Is(err, party.ErrNotFound) {
+					return nil, nil, admin.ErrNotFound
+				}
 				if err != nil {
 					return nil, nil, err
 				}

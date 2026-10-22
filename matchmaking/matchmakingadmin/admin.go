@@ -101,23 +101,20 @@ func matches(s *matchmaking.Service) admin.View {
 		},
 		Actions: []admin.Action{
 			{Name: "cancel", Title: "Cancel match", Confirm: "Cancel this match and refund every stake?", Perm: admin.PermMatchCancel,
-				Fields: []admin.Field{{Key: "reason", Type: admin.Text, Required: true}},
+				Reason: true,
 				Run: func(ctx context.Context, tx pgx.Tx, c admin.Call) (any, any, error) {
 					m, err := s.Get(ctx, c.ID)
 					if err != nil {
-						return nil, nil, err
+						return nil, nil, refusal(err)
 					}
-					reason, _ := c.Input["reason"].(string)
-					if err := s.MarkCancel(ctx, tx, c.ID, reason); err != nil {
-						return nil, nil, err
+					if err := s.MarkCancel(ctx, tx, c.ID, c.Reason); err != nil {
+						return nil, nil, refusal(err)
 					}
-					return map[string]any{"status": m.Status}, map[string]any{"status": "cancelling", "reason": reason}, nil
+					return map[string]any{"status": m.Status}, map[string]any{"status": "cancelling"}, nil
 				}},
 			{Name: "report", Title: "Report result", Perm: admin.PermMatchReport,
-				Fields: []admin.Field{
-					{Key: "ranks", Label: "Ranks, one per team, best 1 (2,1)", Type: admin.Text, Required: true},
-					{Key: "reason", Type: admin.Text, Required: true},
-				},
+				Reason: true,
+				Fields: []admin.Field{{Key: "ranks", Label: "Ranks, one per team, best 1 (2,1)", Type: admin.Text, Required: true}},
 				Run: func(ctx context.Context, tx pgx.Tx, c admin.Call) (any, any, error) {
 					ranks, err := parseRanks(c.Input["ranks"])
 					if err != nil {
@@ -125,16 +122,33 @@ func matches(s *matchmaking.Service) admin.View {
 					}
 					m, err := s.Get(ctx, c.ID)
 					if err != nil {
-						return nil, nil, err
+						return nil, nil, refusal(err)
+					}
+					teams := 0
+					for _, p := range m.Players {
+						teams = max(teams, p.Team+1)
+					}
+					if len(ranks) != teams {
+						return nil, nil, admin.BadInput(fmt.Sprintf("%d ranks for %d teams", len(ranks), teams))
 					}
 					if err := s.Report(ctx, tx, c.ID, matchmaking.Result{Ranks: ranks}); err != nil {
-						return nil, nil, err
+						return nil, nil, refusal(err)
 					}
-					reason, _ := c.Input["reason"].(string)
-					return map[string]any{"status": m.Status}, map[string]any{"status": "finishing", "ranks": ranks, "reason": reason}, nil
+					return map[string]any{"status": m.Status}, map[string]any{"status": "finishing", "ranks": ranks}, nil
 				}},
 		},
 	}
+}
+
+// refusal turns what an operator can cause into the console's 400, 404 and 409.
+func refusal(err error) error {
+	switch {
+	case errors.Is(err, matchmaking.ErrNotFound):
+		return admin.ErrNotFound
+	case errors.Is(err, matchmaking.ErrClosed), errors.Is(err, matchmaking.ErrResultConflict):
+		return admin.Conflict(err.Error())
+	}
+	return err
 }
 
 // parseRanks reads "2,1" into [2 1].
@@ -144,7 +158,7 @@ func parseRanks(v any) ([]int, error) {
 	for _, f := range strings.Split(text, ",") {
 		n, err := strconv.Atoi(strings.TrimSpace(f))
 		if err != nil || n < 1 {
-			return nil, fmt.Errorf("ranks %q: want positive integers like 2,1", text)
+			return nil, admin.BadInput(fmt.Sprintf("ranks %q: want positive integers like 2,1", text))
 		}
 		ranks = append(ranks, n)
 	}
@@ -204,7 +218,7 @@ func ratings(s *matchmaking.Service) admin.View {
 			var last int64
 			for _, r := range rs {
 				users[r.UserID], last = true, r.UserID
-				p.Items = append(p.Items, admin.Row{"id": r.UserID, "user_id": r.UserID, "key": r.Key, "mu": milli(r.Rating.Mu),
+				p.Items = append(p.Items, admin.Row{"id": r.ID, "user_id": r.UserID, "key": r.Key, "mu": milli(r.Rating.Mu),
 					"sigma": milli(r.Rating.Sigma), "ordinal": milli(r.Rating.Ordinal()), "matches": r.Matches})
 			}
 			if len(users) == int(q.Limit) {
