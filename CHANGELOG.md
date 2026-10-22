@@ -16,9 +16,15 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   and `Lock`/`Unlock` for other modules. `party.Register(ctx, app, party.Config{})` adds the
   `party.*` RPCs and the `Service` (`Get`, `Of`, `OnChange`). Config: `PartiesPerUser`, `MaxSize`,
   `MessageBytes`, `MessagesPerSec`. Client errors 1020-1026.
+- `matchmaking`: new opt-in module, started: its tables, `Register(ctx, app, parties, Config{})`,
+  `Service.Queue(QueueConfig)` (validated queue with defaults; `Queue.Config()`), the `Team`,
+  `Ticket`, `Match`, `Player`, `Result` types, `Forever`, client errors 1030-1036, and the OpenSkill
+  `Rating`/`DefaultRating`/`Ordinal`. The ledger game ID `matchmaking.Game = 1` is claimed by `Register`.
 
 ### Upgrade
 - `party`: new goose table `goose_party` (migrations run in `party.Register`); nothing changes unless you register it.
+- `matchmaking`: new goose table `goose_matchmaking` (migrations run in `matchmaking.Register`, which also
+  registers platform ledger game 1); nothing changes unless you register it.
 
 ## [1.0.0] - 2026-10-22
 
