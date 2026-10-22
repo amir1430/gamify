@@ -69,11 +69,15 @@ const (
 	PermAdjust   Perm = "adjust"   // request a balance adjustment
 	PermApprove  Perm = "approve"  // approve an adjustment (not their own)
 	PermAdmins   Perm = "admins"   // manage console users, view their sessions
+
+	PermMatchCancel  Perm = "matchmaking.cancel" // matchmakingadmin: cancel a match
+	PermMatchReport  Perm = "matchmaking.report" // matchmakingadmin: report a match's result
+	PermPartyDisband Perm = "party.disband"      // partyadmin: disband a party
 )
 
 var rolePerms = map[Role][]Perm{
-	RoleOwner:    {PermView, PermIdentity, PermLimits, PermAdjust, PermApprove, PermAdmins},
-	RoleOperator: {PermView, PermIdentity, PermLimits, PermAdjust},
+	RoleOwner:    {PermView, PermIdentity, PermLimits, PermAdjust, PermApprove, PermAdmins, PermMatchCancel, PermMatchReport, PermPartyDisband},
+	RoleOperator: {PermView, PermIdentity, PermLimits, PermAdjust, PermMatchCancel, PermMatchReport, PermPartyDisband},
 	RoleSupport:  {PermView, PermIdentity},
 	RoleViewer:   {PermView},
 }

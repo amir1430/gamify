@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"slices"
 	"sync"
@@ -88,9 +89,10 @@ type Query struct {
 // Money, Decimal and UserID; bool for Bool; string for Text and Enum; time.Time for Time;
 // json.RawMessage for JSON. An optional input that wasn't sent is absent.
 type Call struct {
-	ID    int64
-	Input map[string]any
-	Admin AdminRef
+	Reason string // the trimmed reason, "" unless Action.Reason
+	ID     int64
+	Input  map[string]any
+	Admin  AdminRef
 }
 
 // AdminRef is the console user running an action.
@@ -111,6 +113,9 @@ type Action struct {
 	Reason      bool   // a reason is required
 	Fields      []Field
 	Run         func(ctx context.Context, tx pgx.Tx, c Call) (before, after any, err error)
+	// After, if set, runs once the transaction has committed, with what Run returned (for pushes
+	// and hooks that must not fire for a rolled-back action). It can't fail the action: log in it.
+	After func(ctx context.Context, c Call, before, after any)
 }
 
 // View is a page the brand describes in Go and the console draws: a filtered, paged table, an
@@ -129,6 +134,13 @@ type View struct {
 
 // ErrNotFound is what a view's Get returns for a missing row (404).
 var ErrNotFound = errors.New("admin: not found")
+
+// BadInput is what an action returns for input the operator got wrong: 400, not logged as a failure.
+func BadInput(msg string) error { return badRequest(msg) }
+
+// Conflict is what an action returns for a row that can't take the action now (already closed,
+// a different result): 409, not logged as a failure.
+func Conflict(msg string) error { return &apiError{http.StatusConflict, "conflict", msg} }
 
 var viewName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
 

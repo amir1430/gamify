@@ -159,6 +159,8 @@ published port (`127.0.0.1:10000`) and `centrifugo.proxy_endpoint` at
 | `auth/custom/` | Provider: a brand-signed HS256 JWT (`sub`, `aud`, `exp` ≤ 15 min ahead), for brands with their own accounts |
 | `fairness/` | Opt-in module for games of chance (`Register`: `seed_pairs` table, `seed.info`, `seed.rotate`): seed pairs sealed with AES-256-GCM, nonces, verifier-compatible hashes and floats, pot seeds |
 | `admin/` | Opt-in back office (own migrations, goose table `goose_admin`): console users with roles and permissions, argon2id passwords, TOTP, audit log, balance adjustments, brand views, the console UI (`admin/ui`, embedded); `CreateUser` for the first owner |
+| `party/` | Opt-in module (goose table `goose_party`): parties with a leader, join requests, chat, `Lock`/`Unlock` for other modules; `party/partyadmin` is its console view |
+| `matchmaking/` | Opt-in module (goose table `goose_matchmaking`, needs `party`): queues with parties, ratings (OpenSkill), staked matches (`HoldPot`/`SettlePot`), direct matches (`Create`), `Finish`/`Cancel`, timeouts; `matchmaking/matchmakingadmin` is its console views |
 | `gameconfig/` | Admin-set limits per game × currency × variant (code defaults are hard caps) |
 | `metrics/` | Prometheus metrics and request logs |
 | `db/` | Platform migrations + `Migrate` (each module migrates with its own goose table) |

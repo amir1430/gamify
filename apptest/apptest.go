@@ -17,6 +17,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -161,6 +162,7 @@ type Transport struct {
 	mu           sync.Mutex
 	published    map[string][][]byte
 	disconnected []int64
+	online       map[int64]int
 }
 
 var _ realtime.Transport = (*Transport)(nil)
@@ -179,7 +181,21 @@ func (tr *Transport) Disconnect(_ context.Context, userID int64) error {
 	return nil
 }
 
-func (tr *Transport) Online(context.Context) (map[int64]int, error) { return map[int64]int{}, nil }
+// SetOnline makes Online report exactly these users (one connection each); the default is nobody.
+func (tr *Transport) SetOnline(userIDs ...int64) {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	tr.online = map[int64]int{}
+	for _, id := range userIDs {
+		tr.online[id] = 1
+	}
+}
+
+func (tr *Transport) Online(context.Context) (map[int64]int, error) {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	return maps.Clone(tr.online), nil
+}
 
 func (tr *Transport) Token(userID int64, _ string, _ time.Time) string {
 	return "apptest:" + strconv.FormatInt(userID, 10)
@@ -227,7 +243,11 @@ func freshDatabase(t testing.TB) *pgxpool.Pool {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
 	ctx := context.Background()
-	admin, err := pgx.Connect(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn) // takes the pool_* settings (pool_max_conns) out of the DSN
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := pgx.ConnectConfig(ctx, cfg.ConnConfig.Copy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,10 +256,6 @@ func freshDatabase(t testing.TB) *pgxpool.Pool {
 	name := "apptest_" + hex.EncodeToString(b[:])
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
 		admin.Close(ctx)
-		t.Fatal(err)
-	}
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
 		t.Fatal(err)
 	}
 	cfg.ConnConfig.Database = name

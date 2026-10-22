@@ -24,6 +24,10 @@ import (
 	"github.com/amir1430/gamify/config/drivers"
 	"github.com/amir1430/gamify/fairness"
 	"github.com/amir1430/gamify/ledger"
+	"github.com/amir1430/gamify/matchmaking"
+	"github.com/amir1430/gamify/matchmaking/matchmakingadmin"
+	"github.com/amir1430/gamify/party"
+	"github.com/amir1430/gamify/party/partyadmin"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -90,13 +94,26 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// The sample has no game, so no queues; a brand calls mm.Queue(...) for each of its own.
+	parties, err := party.Register(ctx, a, party.Config{})
+	if err != nil {
+		return err
+	}
+	mm, err := matchmaking.Register(ctx, a, parties, matchmaking.Config{})
+	if err != nil {
+		return err
+	}
 	acfg, adminOn, err := adminConfig(os.Getenv)
 	if err != nil {
 		return err
 	}
 	if adminOn {
 		acfg.Fairness = fair
-		if _, err := admin.Register(ctx, a, acfg); err != nil {
+		adm, err := admin.Register(ctx, a, acfg)
+		if err != nil {
+			return err
+		}
+		if err := errors.Join(partyadmin.Register(adm, parties), matchmakingadmin.Register(adm, mm)); err != nil {
 			return err
 		}
 	}

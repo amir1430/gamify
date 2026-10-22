@@ -34,7 +34,29 @@ var (
 		Name: "gamify_http_request_duration_seconds", Help: "HTTP handling time by server, route and status.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"server", "route", "status"})
+
+	mmTickets = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "gamify_matchmaking_tickets", Help: "Tickets waiting in a matchmaking queue.",
+	}, []string{"queue"})
+	mmWait = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "gamify_matchmaking_wait_seconds", Help: "Time a ticket waited before its match formed.",
+		Buckets: []float64{1, 2, 5, 10, 20, 30, 60, 120, 300},
+	}, []string{"queue"})
+	mmMatches = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "gamify_matchmaking_matches_total", Help: "Matches by queue and outcome (formed, settled, cancelled).",
+	}, []string{"queue", "outcome"})
 )
+
+// MatchmakingTickets sets the number of tickets waiting in queue.
+func MatchmakingTickets(queue string, n int) { mmTickets.WithLabelValues(queue).Set(float64(n)) }
+
+// MatchmakingWait records how long a ticket waited before its match formed.
+func MatchmakingWait(queue string, d time.Duration) {
+	mmWait.WithLabelValues(queue).Observe(d.Seconds())
+}
+
+// MatchmakingMatch counts a match transition: outcome is "formed", "settled" or "cancelled".
+func MatchmakingMatch(queue, outcome string) { mmMatches.WithLabelValues(queue, outcome).Inc() }
 
 // RPC records one finished RPC and logs it: debug always, warn when slow, error on code 1000.
 func RPC(ctx context.Context, method, user string, code uint32, took time.Duration) {

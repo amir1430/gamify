@@ -5,6 +5,119 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+### Added
+- `ledger`: `FeeOf(pot, bp)`, `SettlePotFee` and `SettlePoolFee` (the house's cut set per pot, 0..10_000
+  basis points; `SettlePot`/`SettlePool` are the `FeeBP` case, transfer IDs unchanged), and
+  `RewardPrize(ctx, game, currency, claimID, userID, amount)`, a prize from the rewards account in
+  its own transfer-ID namespace.
+- `app`: `App.Loop(every, f)`, a periodic job `Run` ticks until it ends (like the reconcile ticker).
+- `apptest`: `Transport.SetOnline(ids...)` sets who `Online` reports (default nobody).
+- `party`: new opt-in module: parties with a leader, closed-party join requests, chat/data messages
+  and `Lock`/`Unlock` for other modules. `party.Register(ctx, app, party.Config{})` adds the
+  `party.*` RPCs and the `Service` (`Get`, `Of`, `OnChange`). Config: `PartiesPerUser`, `MaxSize`,
+  `MessageBytes`, `MessagesPerSec`. Client errors 1020-1026.
+- `matchmaking`: new opt-in module, started: its tables, `Register(ctx, app, parties, Config{})`,
+  `Service.Queue(QueueConfig)` (validated queue with defaults; `Queue.Config()`), the `Team`,
+  `Ticket`, `Match`, `Player`, `Result` types, `Forever`, client errors 1030-1036 (1036 `ErrClosed`,
+  "match closed"), and the OpenSkill
+  `Rating`/`DefaultRating`/`Ordinal`. The ledger game ID `matchmaking.Game = 1` is claimed by `Register`.
+  A queue needs 2+ teams unless FFA, a non-empty stake list per currency, `NumberRule.Every > 0`,
+  and non-negative `FillAfter`/`MatchTimeout`/`MaxWait` (`Forever` allowed). The matcher (internal)
+  fills teams anchor first, then larger parties first, oldest first among equal sizes, and falls
+  back to a bounded search when that greedy fill misses a feasible packing.
+- `matchmaking`: tickets and RPCs. `match.queue {queue, currency, stake, properties, numbers, idem_key}`
+  returns a `QueueResult` (exactly one of `Ticket`, `MatchID`, `Removed`); `match.cancel {}`;
+  `match.status {}` returns `{ticket, matches}` (the caller's non-final matches); `rating.get {key}`
+  returns `{mu, sigma, ordinal, matches}`, and `Service.Rating(ctx, userID, key)` is the Go side.
+  A queue call must carry every configured `Numbers` key and every declared `Properties` key and
+  nothing else (`gameconfig.ErrInvalid`); `Stakes`/`Game.Check` limits apply (`ErrInvalid`,
+  `ErrUnavailable`). The caller queues alone unless they lead a party of 2+ (then the whole party
+  queues; with `PartiesPerUser` > 1 the oldest such party they lead), a mere member gets
+  `party.ErrNotLeader`, a party larger than every team (FFA: 1) `ErrPartyTooBig`. Unless
+  `Concurrent`, a user in a non-final match of the queue gets `ErrBusy`. `idem_key` (required, at
+  most 64 bytes) replays the stored outcome even after the ticket is gone and whatever the payload.
+  Pushes: `{"type":"match.ticket","ticket"}` and `{"type":"match.ticket_removed","reason"}`
+  (`cancelled`, `party_changed`; a party change of any kind removes its ticket, and if that fails
+  the next matcher pass removes a ticket whose party is gone or has another leader or members). `Ticket`, `Match`,
+  `Player` and `Result` have JSON tags; `Ticket.Server` (set by `QueueConfig.Prepare`, which gets a
+  copy of the ticket and only its `Server` is kept) is never sent to clients.
+- `matchmaking`: formation. Every `Config.Tick` (`Service.MatchNow(ctx)` runs one pass; one instance
+  per queue at a time) drops tickets older than `MaxWait` (`expired`) and, unless `AllowOffline`,
+  tickets with a user not in `Realtime.Online` (`offline`), then forms matches (`forming`, deadline
+  `MatchTimeout`, players in team then user order, `EntryID` = pot entry ID, ratings snapshotted).
+  Staked: every stake is held (`HoldPot`, game `matchmaking.Game`); a refused hold refunds everyone,
+  cancels the match (`insufficient_funds`), removes the short users' tickets (`match.ticket_removed`
+  `insufficient_funds`) and re-queues the others with their original queue time (`match.ticket`);
+  a user who queued again meanwhile keeps that ticket and the old one is removed (`match.ticket_removed`
+  `already_queued`).
+  Then `QueueConfig.OnMatch` (must be idempotent: it may run again; an error cancels and refunds,
+  reason `on_match`, push `{"type":"match.cancelled","match","reason"}`), then `running` and
+  `{"type":"match.found","match"}` to every player. A ledger outage leaves the match `forming`;
+  the reconcile pass (`Service.Reconcile`) finishes `forming` and `cancelling` matches. A
+  `match.queue` replay of a matched ticket returns `{match_id}`. `Service.Get(ctx, id)` returns a
+  match (`ErrNotFound`).
+- `matchmaking`: `Service.Create(ctx, NewMatch{Queue, Teams, Currency, Stake, Ref})` builds a match without
+  tickets (tournament rounds, "challenge a friend") through the same pipeline: stakes held, `OnMatch`,
+  running, `match.found`. Teams and stake are validated like a ticket; players need not be online. `Ref`
+  (not empty, not `ticket:`-prefixed) makes it idempotent per queue: a repeat returns the existing match.
+  A refused hold cancels and refunds it and returns `ledger.ErrInsufficientFunds` (nobody is re-queued);
+  `ErrBusy` if the queue is not `Concurrent` and a player is in an open match of it.
+- `matchmaking`: results, cancel, ratings, timeouts. `Service.Finish(ctx, id, Result)` (ranks per
+  team, one per team, each >= 1) computes the payouts once and stores them with the result
+  (`finishing`); settling and every retry pay exactly those, never re-reading the queue config.
+  Staked: the pot (stake x players) less the fee (`FeeOf(pot, FeeBP)`, 0 with `NoFee`) goes to the
+  best rank's players in equal shares, the remainder one unit each in `EntryID` order, or to
+  `QueueConfig.Payout`'s winners (players of the match, adding up to the pot less the fee); an all-equal result in a
+  `DrawRefund` queue refunds instead. A payout with no winner or more than `ledger.MaxPotWinners`
+  is refused before anything is stored. Then `SettlePotFee`, and in the transaction that marks the
+  match `settled`, ranked ratings (from `mm_ratings` as they are at settlement, not the formation
+  snapshot) with `matches + 1`. After commit, push
+  `{"type":"match.finished","match","payouts":[{user_id,amount}],"ratings":{user_id:{mu,sigma,ordinal}}}`
+  (once), then `OnFinish` outside any transaction: at least once (an error or crash makes the
+  reconcile pass call it again until it returns nil), must be idempotent, may Finish, Cancel or
+  create other matches. The same result again is a no-op, a different one `ErrResultConflict`, a
+  cancelled match `ErrClosed`. `Service.Cancel(ctx, id, reason)` refunds a forming or running match
+  (`match.cancelled` with the reason); a finishing or settled match is `ErrClosed` (the result
+  stands). `Service.Report(ctx, tx, id, Result)` and `Service.MarkCancel(ctx, tx, id, reason)` only
+  record, in the caller's transaction (admin actions); the reconcile pass moves the money, settles
+  `finishing` matches and cancels forming and running matches past their `MatchTimeout` deadline
+  (reason `timeout`). `QueueConfig.FeeBP` must be below 10000.
+- `matchmaking`: history, metrics, admin. `Register` adds the activity source `"matchmaking"`: one
+  `app.Activity` per player of every staked match that ended (`settled` or `cancelled`; free matches
+  are not listed), amount = stake, payout = what the player won, detail
+  `{"queue","result":"won|lost|refunded|cancelled"}`. Metrics: `gamify_matchmaking_tickets{queue}`
+  (gauge, updated every tick), `gamify_matchmaking_wait_seconds{queue}` (histogram, per ticket when its
+  match forms) and `gamify_matchmaking_matches_total{queue,outcome}` (`formed`, `settled`,
+  `cancelled`, counted once by the instance that made the transition). New Go reads for admin pages:
+  `Service.Matches(ctx, MatchFilter, before, limit)`, `Service.QueueStats(ctx)`,
+  `Service.Ratings(ctx, userID, before, limit)`. New package `matchmaking/matchmakingadmin`:
+  `Register(adm, s)` adds the views `mm-matches` (actions `cancel`, `report` with ranks like `2,1`; the
+  reconcile pass moves the money; reporting a forming match is a 409), `mm-queues` and `mm-ratings`.
+- `matchmaking`: the transactions that hold a match row while calling the ledger (holds, refunds,
+  settlement) take one of `max(1, pool MaxConns/2)` slots, so concurrent `Finish`/`Cancel`/`Create`
+  calls can't take every pool connection and leave none for the Postgres ledger.
+- `apptest`: `TEST_DATABASE_URL` may carry pgxpool settings (`pool_max_conns=4`).
+- `party`: `OnChange` hooks (and the change pushes) run on a context that the RPC's caller hanging
+  up does not cancel. Repeating `party.join` on a closed party keeps the one pending request and
+  pushes `party.request` to the leader once. `party.get` answers anyone with the party ID.
+- `party`: `Service.List(ctx, userID, before, limit)`, `Service.Disband(ctx, tx, id)` (deletes the
+  party in the caller's transaction, a locked one too, and returns it) and `Service.Disbanded(ctx, p)`
+  (after the commit: members get `"left":true`, `OnChange` hooks get no members). New package
+  `party/partyadmin`: `Register(adm, p)` adds the view `parties` with the action `disband`.
+- `admin`: built-in permissions `matchmaking.cancel`, `matchmaking.report` and `party.disband`
+  (`PermMatchCancel`, `PermMatchReport`, `PermPartyDisband`), held by operators and owners.
+  `Action.After(ctx, call, before, after)` runs once the action's transaction has committed (on a
+  context that outlives the request). `Call.Reason` is the action's trimmed reason; actions return
+  `admin.BadInput` (400), `admin.Conflict` (409) or `admin.ErrNotFound` (404, also wrapped) for
+  operator mistakes instead of a logged 500.
+
+### Upgrade
+- `party`: new goose table `goose_party` (migrations run in `party.Register`); nothing changes unless you register it.
+- `matchmaking`: new goose table `goose_matchmaking` (migrations run in `matchmaking.Register`, which also
+  registers platform ledger game 1); nothing changes unless you register it.
+- `admin`: operators and owners now also hold `matchmaking.cancel`, `matchmaking.report` and `party.disband`
+  (they show in `/api/me` permissions); they only matter if you register `matchmakingadmin` or `partyadmin`.
+
 ## [1.0.0] - 2026-10-22
 
 First public version, extracted from the casino's core and made game-neutral: the platform ships
