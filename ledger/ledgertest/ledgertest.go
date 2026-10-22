@@ -17,8 +17,8 @@ import (
 
 // Currencies are the suite's: usd (ledger 1) and tickets (ledger 2, 1,000 welcome tickets).
 var (
-	USD     = ledger.CurrencyConfig{Code: "usd", Ledger: 1, MinBet: 1}
-	Tickets = ledger.CurrencyConfig{Code: "tickets", Ledger: 2, MinBet: 10, Welcome: 1000}
+	USD     = ledger.CurrencyConfig{Code: "usd", Ledger: 1, MinAmount: 1}
+	Tickets = ledger.CurrencyConfig{Code: "tickets", Ledger: 2, MinAmount: 10, Welcome: 1000}
 )
 
 const (
@@ -288,14 +288,14 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 	t.Run("held", func(t *testing.T) {
 		u := f.user()
 		bet := int64(rid())
-		must(t, f.l.HoldStake(ctx, held, "usd", bet, u, 400))
-		must(t, f.l.HoldStake(ctx, held, "usd", bet, u, 400))
+		must(t, f.l.Hold(ctx, held, "usd", bet, u, 400))
+		must(t, f.l.Hold(ctx, held, "usd", bet, u, 400))
 		want(t, "held", f.bal(u, "usd"), 600)
 		for range 2 {
 			must(t, f.l.SettleHeld(ctx, held, "usd", bet, u, 400, 1000))
 		}
 		want(t, "cashed out", f.bal(u, "usd"), 1600)
-		if err := f.l.HoldStake(ctx, held, "usd", int64(rid()), u, 1601); !errors.Is(err, ledger.ErrInsufficientFunds) {
+		if err := f.l.Hold(ctx, held, "usd", int64(rid()), u, 1601); !errors.Is(err, ledger.ErrInsufficientFunds) {
 			t.Fatalf("overdraft: %v", err)
 		}
 	})
@@ -303,7 +303,7 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 	t.Run("extra holds", func(t *testing.T) {
 		u := f.user()
 		bet := int64(rid())
-		must(t, f.l.HoldStake(ctx, extra, "usd", bet, u, 300))
+		must(t, f.l.Hold(ctx, extra, "usd", bet, u, 300))
 		must(t, f.l.HoldExtra(ctx, extra, "usd", bet, u, 1, 300))
 		must(t, f.l.HoldExtra(ctx, extra, "usd", bet, u, 1, 300)) // retry
 		must(t, f.l.HoldExtra(ctx, extra, "usd", bet, u, 3, 100)) // held, then unused: voided at settle

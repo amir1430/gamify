@@ -17,9 +17,9 @@ type Currency string
 
 // CurrencyConfig is one currency of a brand.
 type CurrencyConfig struct {
-	Code   Currency
-	Ledger uint32 // unique per currency, > 0; never change it once money moved
-	MinBet int64  // smallest real-money stake, in minor units; game limits can raise it, never lower it
+	Code      Currency
+	Ledger    uint32 // unique per currency, > 0; never change it once money moved
+	MinAmount int64  // smallest real-money amount a game may charge, in minor units; game limits can raise it, never lower it
 	// Welcome is granted once per user on the first EnsureUser. It is play-only: a sale (Swap) or a
 	// PvP entry (HoldPot) can never take the balance below it, so the grant can't be cashed out.
 	Welcome int64
@@ -44,7 +44,7 @@ const (
 
 // Transfer codes.
 const (
-	codeStake      uint16 = 10
+	codeCharge     uint16 = 10
 	codePayout     uint16 = 11
 	codeTopUp      uint16 = 12
 	codeDeposit    uint16 = 13
@@ -54,14 +54,15 @@ const (
 	codeAdjustment uint16 = 18
 )
 
-// Game namespaces the transfer ID, so bet IDs from different tables never collide. Each game picks
+// Game is an ID space for one table of operation IDs: it namespaces the transfer ID, so row IDs
+// from different tables never collide (a module with two such tables registers two). Each game picks
 // its own constant, unique in the deployment, in 1..MaxGame; never reuse or change one. The
 // platform's games use 1..FirstBrandGame-1, a brand's own games FirstBrandGame..MaxGame. Register it
 // with RegisterGame so a duplicate fails at startup.
 type Game uint64
 
 const (
-	// MaxGame keeps bet transfer IDs (game<<8 | leg) below the other namespaces (ns<<32).
+	// MaxGame keeps operation transfer IDs (game<<8 | leg) below the other namespaces (ns<<32).
 	MaxGame Game = 1<<24 - 1
 	// FirstBrandGame is the first ID for a brand's own games.
 	FirstBrandGame Game = 1 << 20
@@ -77,22 +78,22 @@ func (g Game) check() error {
 	return nil
 }
 
-// Legs of one bet.
+// Legs of one operation.
 const (
-	legStake  uint64 = 1 // instant: posted stake; held games: the pending hold
+	legStake  uint64 = 1 // instant: posted amount; held games: the pending hold
 	legPayout uint64 = 2
 	legPost   uint64 = 3 // held games: posts the pending hold
-	// Extra holds of one game (Blackjack: split, doubles): hold k (1..MaxExtraHolds) is the pending
+	// Extra holds of one game (more amount added mid-game): hold k (1..MaxExtraHolds) is the pending
 	// leg legExtra+k, posted by legExtraPost+k or voided by legExtraVoid+k.
 	legExtra     uint64 = 3
 	legExtraPost uint64 = 11
 	legExtraVoid uint64 = 19
 )
 
-// MaxExtraHolds is how many extra stakes one held game can add (HoldExtra).
+// MaxExtraHolds is how many extra amounts one held game can add (HoldExtra).
 const MaxExtraHolds = 3
 
-// Transfer ID namespaces (high 32 bits of ID.Hi) of everything that isn't a bet.
+// Transfer ID namespaces (high 32 bits of ID.Hi) of everything that isn't a game operation.
 const (
 	nsDeposit uint64 = 1
 	nsWelcome uint64 = 2
@@ -136,7 +137,7 @@ type Ledger struct {
 }
 
 // RegisterGame claims g for the game called name: a second game with the same ID, or the same game
-// with a second ID, is refused. A game's Register calls it before handling any bet.
+// with a second ID, is refused. A game's Register calls it before moving any money.
 func (l *Ledger) RegisterGame(g Game, name string) error {
 	if err := g.check(); err != nil {
 		return err
@@ -173,8 +174,8 @@ func New(d Driver, currencies ...CurrencyConfig) (*Ledger, error) {
 			return nil, fmt.Errorf("ledger: currency %q: ledger %d is 0 or taken", c.Code, c.Ledger)
 		case l.cur[c.Code].Code != "":
 			return nil, fmt.Errorf("ledger: currency %q twice", c.Code)
-		case c.MinBet <= 0 || c.Welcome < 0:
-			return nil, fmt.Errorf("ledger: currency %q: min bet must be > 0, welcome >= 0", c.Code)
+		case c.MinAmount <= 0 || c.Welcome < 0:
+			return nil, fmt.Errorf("ledger: currency %q: min amount must be > 0, welcome >= 0", c.Code)
 		}
 		ledgers[c.Ledger] = true
 		l.cur[c.Code] = c
@@ -189,7 +190,7 @@ func (l *Ledger) Driver() Driver { return l.d }
 // Currencies lists every currency, in configured order.
 func (l *Ledger) Currencies() []Currency { return append([]Currency(nil), l.order...) }
 
-// Default is the first currency: what a bet without one plays in.
+// Default is the first currency: what an operation without one uses.
 func (l *Ledger) Default() Currency { return l.order[0] }
 
 // Valid reports whether c is a configured currency.
@@ -198,21 +199,16 @@ func (l *Ledger) Valid(c Currency) bool { _, ok := l.cur[c]; return ok }
 // Decimals is how many decimals c is shown with (display only), 0 for an unknown currency.
 func (l *Ledger) Decimals(c Currency) uint8 { return l.cur[c].Decimals }
 
-// MinBet is the smallest real-money stake in c, 0 for an unknown currency.
-func (l *Ledger) MinBet(c Currency) int64 { return l.cur[c].MinBet }
-
-// Wins reports whether a winning bet would pay more than its stake. Payouts round down to whole
-// units, so a tiny stake on a low multiplier ($0.01 at 1.98×) would "win" its own cent back; games
-// whose win amount is fixed at bet time (Dice) reject those. Demo bets pass.
-func Wins(amount, winPayout int64) bool { return amount == 0 || winPayout > amount }
+// MinAmount is the smallest real-money amount a game may charge in c, 0 for an unknown currency.
+func (l *Ledger) MinAmount(c Currency) int64 { return l.cur[c].MinAmount }
 
 func system(c CurrencyConfig, kind uint64) ID { return ID{0, uint64(c.Ledger)<<8 | kind} }
 
 // userAccountID: (ledger, user ID).
 func userAccountID(c CurrencyConfig, userID int64) ID { return ID{uint64(c.Ledger), uint64(userID)} }
 
-// betTransferID is deterministic: the same bet leg always gets the same ID, so retries can't double-move money.
-func betTransferID(g Game, leg uint64, betID int64) ID { return ID{uint64(g)<<8 | leg, uint64(betID)} }
+// opTransferID is deterministic: the same operation leg always gets the same ID, so retries can't double-move money.
+func opTransferID(g Game, leg uint64, opID int64) ID { return ID{uint64(g)<<8 | leg, uint64(opID)} }
 
 func (l *Ledger) currency(c Currency) (CurrencyConfig, error) {
 	cur, ok := l.cur[c]
@@ -327,14 +323,14 @@ func (l *Ledger) SystemBalances(ctx context.Context, c Currency) (map[string]int
 	return out, nil
 }
 
-// SettleInstant moves money for a bet whose outcome is already known (Dice):
-// stake user -> house, then payout house -> user if payout > 0, as one atomic linked batch.
-// Retrying with the same bet ID is safe. A demo bet (stake 0) moves nothing.
-func (l *Ledger) SettleInstant(ctx context.Context, g Game, c Currency, betID, userID, stake, payout int64) error {
+// SettleInstant moves money for an operation whose outcome is known at once: amount user ->
+// house, then payout house -> user if payout > 0, as one atomic linked batch. Retrying with the
+// same operation ID is safe. A demo operation (amount 0) moves nothing.
+func (l *Ledger) SettleInstant(ctx context.Context, g Game, c Currency, opID, userID, amount, payout int64) error {
 	if err := g.check(); err != nil {
 		return err
 	}
-	if stake == 0 {
+	if amount == 0 {
 		return nil
 	}
 	cur, err := l.currency(c)
@@ -342,42 +338,42 @@ func (l *Ledger) SettleInstant(ctx context.Context, g Game, c Currency, betID, u
 		return err
 	}
 	user := userAccountID(cur, userID)
-	transfers := []Transfer{{ID: betTransferID(g, legStake, betID), Debit: user, Credit: system(cur, kindHouse),
-		Amount: uint64(stake), Ledger: cur.Ledger, Code: codeStake}}
+	transfers := []Transfer{{ID: opTransferID(g, legStake, opID), Debit: user, Credit: system(cur, kindHouse),
+		Amount: uint64(amount), Ledger: cur.Ledger, Code: codeCharge}}
 	if payout > 0 {
 		transfers[0].Flags.Linked = true
-		transfers = append(transfers, Transfer{ID: betTransferID(g, legPayout, betID), Debit: system(cur, kindHouse),
+		transfers = append(transfers, Transfer{ID: opTransferID(g, legPayout, opID), Debit: system(cur, kindHouse),
 			Credit: user, Amount: uint64(payout), Ledger: cur.Ledger, Code: codePayout})
 	}
 	return l.createTransfers(ctx, transfers)
 }
 
-// HoldStake reserves the stake of a multi-step game (Mines) as a pending transfer user -> house.
-// The balance drops immediately; the money moves for good only in SettleHeld. Safe to repeat.
-// A demo game (stake 0) holds nothing.
-func (l *Ledger) HoldStake(ctx context.Context, g Game, c Currency, betID, userID, stake int64) error {
+// Hold reserves the amount of a multi-step game as a pending transfer user -> house. The balance
+// drops immediately; the money moves for good only in SettleHeld. Safe to repeat. A demo game
+// (amount 0) holds nothing.
+func (l *Ledger) Hold(ctx context.Context, g Game, c Currency, opID, userID, amount int64) error {
 	if err := g.check(); err != nil {
 		return err
 	}
-	if stake == 0 {
+	if amount == 0 {
 		return nil
 	}
 	cur, err := l.currency(c)
 	if err != nil {
 		return err
 	}
-	return l.createTransfers(ctx, []Transfer{{ID: betTransferID(g, legStake, betID), Debit: userAccountID(cur, userID),
-		Credit: system(cur, kindHouse), Amount: uint64(stake), Ledger: cur.Ledger, Code: codeStake,
+	return l.createTransfers(ctx, []Transfer{{ID: opTransferID(g, legStake, opID), Debit: userAccountID(cur, userID),
+		Credit: system(cur, kindHouse), Amount: uint64(amount), Ledger: cur.Ledger, Code: codeCharge,
 		Flags: Flags{Pending: true}}})
 }
 
-// SettleHeld finishes a held game: posts the stake to the house and, if payout > 0,
+// SettleHeld finishes a held game: posts the amount to the house and, if payout > 0,
 // pays house -> user in the same atomic linked batch. Safe to repeat. Demo games move nothing.
-func (l *Ledger) SettleHeld(ctx context.Context, g Game, c Currency, betID, userID, stake, payout int64) error {
+func (l *Ledger) SettleHeld(ctx context.Context, g Game, c Currency, opID, userID, amount, payout int64) error {
 	if err := g.check(); err != nil {
 		return err
 	}
-	if stake == 0 {
+	if amount == 0 {
 		return nil
 	}
 	cur, err := l.currency(c)
@@ -385,22 +381,22 @@ func (l *Ledger) SettleHeld(ctx context.Context, g Game, c Currency, betID, user
 		return err
 	}
 	user := userAccountID(cur, userID)
-	transfers := []Transfer{{ID: betTransferID(g, legPost, betID), PendingID: betTransferID(g, legStake, betID),
-		Debit: user, Credit: system(cur, kindHouse), Amount: uint64(stake), Ledger: cur.Ledger, Code: codeStake,
+	transfers := []Transfer{{ID: opTransferID(g, legPost, opID), PendingID: opTransferID(g, legStake, opID),
+		Debit: user, Credit: system(cur, kindHouse), Amount: uint64(amount), Ledger: cur.Ledger, Code: codeCharge,
 		Flags: Flags{PostPending: true}}}
 	if payout > 0 {
 		transfers[0].Flags.Linked = true
-		transfers = append(transfers, Transfer{ID: betTransferID(g, legPayout, betID), Debit: system(cur, kindHouse),
+		transfers = append(transfers, Transfer{ID: opTransferID(g, legPayout, opID), Debit: system(cur, kindHouse),
 			Credit: user, Amount: uint64(payout), Ledger: cur.Ledger, Code: codePayout})
 	}
 	return l.createTransfers(ctx, transfers)
 }
 
-// HoldExtra adds stake k (1..MaxExtraHolds) to a held game (a Blackjack split or double) as
-// another pending transfer user -> house. Its ID comes from (bet, k), so a retry holds it once.
+// HoldExtra adds amount k (1..MaxExtraHolds) to a held game (more put in mid-game) as another
+// pending transfer user -> house. Its ID comes from (operation, k), so a retry holds it once.
 // The driver remembers a failed ID: once refused for the balance, hold k stays refused
 // (ErrInsufficientFunds) for that game even after a top-up. A demo game (amount 0) holds nothing.
-func (l *Ledger) HoldExtra(ctx context.Context, g Game, c Currency, betID, userID int64, k int, amount int64) error {
+func (l *Ledger) HoldExtra(ctx context.Context, g Game, c Currency, opID, userID int64, k int, amount int64) error {
 	if err := g.check(); err != nil {
 		return err
 	}
@@ -414,9 +410,9 @@ func (l *Ledger) HoldExtra(ctx context.Context, g Game, c Currency, betID, userI
 	if err != nil {
 		return err
 	}
-	res, err := l.d.CreateTransfers(ctx, []Transfer{{ID: betTransferID(g, legExtra+uint64(k), betID),
+	res, err := l.d.CreateTransfers(ctx, []Transfer{{ID: opTransferID(g, legExtra+uint64(k), opID),
 		Debit: userAccountID(cur, userID), Credit: system(cur, kindHouse), Amount: uint64(amount),
-		Ledger: cur.Ledger, Code: codeStake, Flags: Flags{Pending: true}}})
+		Ledger: cur.Ledger, Code: codeCharge, Flags: Flags{Pending: true}}})
 	if err != nil {
 		return err
 	}
@@ -432,15 +428,15 @@ func (l *Ledger) HoldExtra(ctx context.Context, g Game, c Currency, betID, userI
 	return nil
 }
 
-// SettleHolds finishes a held game with extra stakes: posts the main stake and every extra hold
+// SettleHolds finishes a held game with extra amounts: posts the main amount and every extra hold
 // (extra[k-1] for hold k, 0 = not held) and pays house -> user, all in one atomic linked batch.
 // Then it voids the extra holds the game didn't use, in case one was held by an action whose
 // commit failed (no such hold: nothing to do). Safe to repeat. Demo games move nothing.
-func (l *Ledger) SettleHolds(ctx context.Context, g Game, c Currency, betID, userID, stake int64, extra []int64, payout int64) error {
+func (l *Ledger) SettleHolds(ctx context.Context, g Game, c Currency, opID, userID, amount int64, extra []int64, payout int64) error {
 	if err := g.check(); err != nil {
 		return err
 	}
-	if stake == 0 {
+	if amount == 0 {
 		return nil
 	}
 	if len(extra) > MaxExtraHolds {
@@ -453,21 +449,21 @@ func (l *Ledger) SettleHolds(ctx context.Context, g Game, c Currency, betID, use
 	user, house := userAccountID(cur, userID), system(cur, kindHouse)
 	post := func(id, pending ID, amount int64) Transfer {
 		return Transfer{ID: id, PendingID: pending, Debit: user, Credit: house, Amount: uint64(amount),
-			Ledger: cur.Ledger, Code: codeStake, Flags: Flags{PostPending: true}}
+			Ledger: cur.Ledger, Code: codeCharge, Flags: Flags{PostPending: true}}
 	}
-	transfers := []Transfer{post(betTransferID(g, legPost, betID), betTransferID(g, legStake, betID), stake)}
+	transfers := []Transfer{post(opTransferID(g, legPost, opID), opTransferID(g, legStake, opID), amount)}
 	var unused []Transfer
 	for k := 1; k <= MaxExtraHolds; k++ {
-		pending := betTransferID(g, legExtra+uint64(k), betID)
+		pending := opTransferID(g, legExtra+uint64(k), opID)
 		if k <= len(extra) && extra[k-1] > 0 {
-			transfers = append(transfers, post(betTransferID(g, legExtraPost+uint64(k), betID), pending, extra[k-1]))
+			transfers = append(transfers, post(opTransferID(g, legExtraPost+uint64(k), opID), pending, extra[k-1]))
 			continue
 		}
-		unused = append(unused, Transfer{ID: betTransferID(g, legExtraVoid+uint64(k), betID), PendingID: pending,
-			Debit: user, Credit: house, Ledger: cur.Ledger, Code: codeStake, Flags: Flags{VoidPending: true}})
+		unused = append(unused, Transfer{ID: opTransferID(g, legExtraVoid+uint64(k), opID), PendingID: pending,
+			Debit: user, Credit: house, Ledger: cur.Ledger, Code: codeCharge, Flags: Flags{VoidPending: true}})
 	}
 	if payout > 0 {
-		transfers = append(transfers, Transfer{ID: betTransferID(g, legPayout, betID), Debit: house, Credit: user,
+		transfers = append(transfers, Transfer{ID: opTransferID(g, legPayout, opID), Debit: house, Credit: user,
 			Amount: uint64(payout), Ledger: cur.Ledger, Code: codePayout})
 	}
 	link(transfers)

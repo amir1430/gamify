@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// PvP pots: every entry is a pending transfer user -> pot, so the stake leaves the balance at once.
+// PvP pots: every entry is a pending transfer user -> pot, so the amount leaves the balance at once.
 // Settling posts them all and pays the winners from the pot; the house only takes Fee of the pot.
 
 // FeeBP is the house's cut of a pot, in basis points (5%).
@@ -27,13 +27,13 @@ const (
 	legPotWinner uint64 = 8
 )
 
-// PotEntry is one player's stake in a pot; ID is unique per game.
+// PotEntry is one player's amount in a pot; ID is unique per game.
 type PotEntry struct{ ID, UserID, Amount int64 }
 
 // PotWin is a payout from the pot.
 type PotWin struct{ UserID, Amount int64 }
 
-// HoldPot holds an entry's stake. In a currency with a welcome grant the grant stays play-only: a
+// HoldPot holds an entry's amount. In a currency with a welcome grant the grant stays play-only: a
 // linked pair user -> floor -> user of Welcome after the hold fails the whole batch if the balance
 // left is lower. Safe to repeat; a refused entry stays refused (ErrInsufficientFunds), as HoldExtra.
 func (l *Ledger) HoldPot(ctx context.Context, g Game, c Currency, e PotEntry) error {
@@ -45,9 +45,9 @@ func (l *Ledger) HoldPot(ctx context.Context, g Game, c Currency, e PotEntry) er
 		return err
 	}
 	user := userAccountID(cur, e.UserID)
-	id := func(leg uint64) ID { return betTransferID(g, leg, e.ID) }
+	id := func(leg uint64) ID { return opTransferID(g, leg, e.ID) }
 	transfers := []Transfer{{ID: id(legPotHold), Debit: user, Credit: system(cur, kindPot),
-		Amount: uint64(e.Amount), Ledger: cur.Ledger, Code: codeStake, Flags: Flags{Pending: true}}}
+		Amount: uint64(e.Amount), Ledger: cur.Ledger, Code: codeCharge, Flags: Flags{Pending: true}}}
 	if cur.Welcome > 0 {
 		transfers = append(transfers,
 			Transfer{ID: id(legPotFloor), Debit: user, Credit: system(cur, kindFloor),
@@ -94,10 +94,10 @@ func (l *Ledger) SettlePot(ctx context.Context, g Game, c Currency, potID int64,
 		return 0, err
 	}
 	transfers := posts(g, cur, entries)
-	transfers = append(transfers, Transfer{ID: betTransferID(g, legPotFee, potID), Debit: system(cur, kindPot),
-		Credit: system(cur, kindHouse), Amount: uint64(fee), Ledger: cur.Ledger, Code: codeStake})
+	transfers = append(transfers, Transfer{ID: opTransferID(g, legPotFee, potID), Debit: system(cur, kindPot),
+		Credit: system(cur, kindHouse), Amount: uint64(fee), Ledger: cur.Ledger, Code: codeCharge})
 	for i, w := range winners {
-		transfers = append(transfers, Transfer{ID: betTransferID(g, legPotWinner+uint64(i), potID),
+		transfers = append(transfers, Transfer{ID: opTransferID(g, legPotWinner+uint64(i), potID),
 			Debit: system(cur, kindPot), Credit: userAccountID(cur, w.UserID), Amount: uint64(w.Amount),
 			Ledger: cur.Ledger, Code: codePayout})
 	}
@@ -109,9 +109,9 @@ func (l *Ledger) SettlePot(ctx context.Context, g Game, c Currency, potID int64,
 func posts(g Game, cur CurrencyConfig, entries []PotEntry) []Transfer {
 	var out []Transfer
 	for _, e := range entries {
-		out = append(out, Transfer{ID: betTransferID(g, legPotPost, e.ID), PendingID: betTransferID(g, legPotHold, e.ID),
+		out = append(out, Transfer{ID: opTransferID(g, legPotPost, e.ID), PendingID: opTransferID(g, legPotHold, e.ID),
 			Debit: userAccountID(cur, e.UserID), Credit: system(cur, kindPot), Amount: uint64(e.Amount),
-			Ledger: cur.Ledger, Code: codeStake, Flags: Flags{PostPending: true}})
+			Ledger: cur.Ledger, Code: codeCharge, Flags: Flags{PostPending: true}})
 	}
 	return out
 }
@@ -127,8 +127,8 @@ func (l *Ledger) VoidPot(ctx context.Context, g Game, c Currency, entries []PotE
 	}
 	var transfers []Transfer
 	for _, e := range entries {
-		transfers = append(transfers, Transfer{ID: betTransferID(g, legPotVoid, e.ID), PendingID: betTransferID(g, legPotHold, e.ID),
-			Debit: userAccountID(cur, e.UserID), Credit: system(cur, kindPot), Ledger: cur.Ledger, Code: codeStake,
+		transfers = append(transfers, Transfer{ID: opTransferID(g, legPotVoid, e.ID), PendingID: opTransferID(g, legPotHold, e.ID),
+			Debit: userAccountID(cur, e.UserID), Credit: system(cur, kindPot), Ledger: cur.Ledger, Code: codeCharge,
 			Flags: Flags{VoidPending: true}})
 	}
 	res, err := l.d.CreateTransfers(ctx, transfers)
@@ -187,13 +187,13 @@ func (l *Ledger) SettlePool(ctx context.Context, g Game, c Currency, potID int64
 	// Every post first: the fee and shares are paid from the shared pot account, so they must not
 	// apply while a post (a voided or missing hold) failed. Unlinked: a pool is too big for one
 	// batch, so each transfer has its own deterministic ID and a retry skips what exists.
-	payouts := []Transfer{{ID: betTransferID(g, legPotFee, potID), Debit: system(cur, kindPot),
-		Credit: system(cur, kindHouse), Amount: uint64(fee), Ledger: cur.Ledger, Code: codeStake}}
+	payouts := []Transfer{{ID: opTransferID(g, legPotFee, potID), Debit: system(cur, kindPot),
+		Credit: system(cur, kindHouse), Amount: uint64(fee), Ledger: cur.Ledger, Code: codeCharge}}
 	for _, s := range shares {
 		if s.Amount == 0 {
 			continue
 		}
-		payouts = append(payouts, Transfer{ID: betTransferID(g, legPotShare, s.EntryID), Debit: system(cur, kindPot),
+		payouts = append(payouts, Transfer{ID: opTransferID(g, legPotShare, s.EntryID), Debit: system(cur, kindPot),
 			Credit: userAccountID(cur, s.UserID), Amount: uint64(s.Amount), Ledger: cur.Ledger, Code: codePayout})
 	}
 	for _, part := range [][]Transfer{posts(g, cur, entries), payouts} {

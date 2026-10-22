@@ -39,8 +39,8 @@ import (
 // Currencies are the default ones: usd (minor units, no welcome grant) and tickets (1000 granted
 // on the first login, play-only).
 var Currencies = []ledger.CurrencyConfig{
-	{Code: "usd", Ledger: 1, MinBet: 1},
-	{Code: "tickets", Ledger: 2, MinBet: 10, Welcome: 1000},
+	{Code: "usd", Ledger: 1, MinAmount: 1},
+	{Code: "tickets", Ledger: 2, MinAmount: 10, Welcome: 1000},
 }
 
 // App is a running platform for one test. Its embedded *app.App is what games' Register take.

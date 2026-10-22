@@ -14,8 +14,8 @@ func TestParseCurrencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []ledger.CurrencyConfig{{Code: "usd", Ledger: 1, MinBet: 1, Decimals: 2},
-		{Code: "tickets", Ledger: 2, MinBet: 10, Welcome: 1000}, {Code: "coins", Ledger: 3, MinBet: 5}}
+	want := []ledger.CurrencyConfig{{Code: "usd", Ledger: 1, MinAmount: 1, Decimals: 2},
+		{Code: "tickets", Ledger: 2, MinAmount: 10, Welcome: 1000}, {Code: "coins", Ledger: 3, MinAmount: 5}}
 	if len(got) != len(want) {
 		t.Fatalf("%v", got)
 	}

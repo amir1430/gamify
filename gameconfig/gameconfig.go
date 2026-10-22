@@ -210,7 +210,7 @@ func (g *Game) Limits(c ledger.Currency, variant string) (ledger.Currency, Limit
 }
 
 func (g *Game) resolve(snap *snapshot, c ledger.Currency, variant string) Limits {
-	minBet := g.s.ledger.MinBet(c)
+	minBet := g.s.ledger.MinAmount(c)
 	l := Limits{Enabled: true, MinBet: minBet, MaxBet: g.MaxBet, MaxPayout: g.MaxPayout}
 	if set, ok := snap.settings[g.Name]; ok {
 		l.Enabled = set.Enabled

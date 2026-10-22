@@ -175,17 +175,17 @@ func adminConfig(getenv func(string) string) (admin.Config, bool, error) {
 	return cfg, true, nil
 }
 
-// parseCurrencies reads "code:ledger:minbet[:welcome[:decimals]],…", the first being the default.
+// parseCurrencies reads "code:ledger:minamount[:welcome[:decimals]],…", the first being the default.
 func parseCurrencies(s string) ([]ledger.CurrencyConfig, error) {
 	var out []ledger.CurrencyConfig
 	for _, part := range strings.Split(s, ",") {
 		f := strings.Split(strings.TrimSpace(part), ":")
 		if len(f) < 3 || len(f) > 5 {
-			return nil, fmt.Errorf("CURRENCIES: %q: want code:ledger:minbet[:welcome[:decimals]]", part)
+			return nil, fmt.Errorf("CURRENCIES: %q: want code:ledger:minamount[:welcome[:decimals]]", part)
 		}
 		f = append(f, "0", "0")
 		lg, err1 := strconv.ParseUint(f[1], 10, 32)
-		minBet, err2 := strconv.ParseInt(f[2], 10, 64)
+		minAmount, err2 := strconv.ParseInt(f[2], 10, 64)
 		welcome, err3 := strconv.ParseInt(f[3], 10, 64)
 		decimals, err4 := strconv.ParseUint(f[4], 10, 8)
 		if err := errors.Join(err1, err2, err3, err4); err != nil {
@@ -194,7 +194,7 @@ func parseCurrencies(s string) ([]ledger.CurrencyConfig, error) {
 		if decimals > 18 {
 			return nil, fmt.Errorf("CURRENCIES: %q: decimals %d > 18", part, decimals)
 		}
-		out = append(out, ledger.CurrencyConfig{Code: ledger.Currency(f[0]), Ledger: uint32(lg), MinBet: minBet,
+		out = append(out, ledger.CurrencyConfig{Code: ledger.Currency(f[0]), Ledger: uint32(lg), MinAmount: minAmount,
 			Welcome: welcome, Decimals: uint8(decimals)})
 	}
 	return out, nil

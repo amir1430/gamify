@@ -20,7 +20,7 @@ func (d *countingDriver) LookupAccounts(context.Context, []ID) ([]AccountBalance
 
 func testLedger(t *testing.T) (*Ledger, *countingDriver) {
 	d := &countingDriver{}
-	l, err := New(d, CurrencyConfig{Code: "usd", Ledger: 1, MinBet: 1})
+	l, err := New(d, CurrencyConfig{Code: "usd", Ledger: 1, MinAmount: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestGameRange(t *testing.T) {
 		l, d := testLedger(t)
 		for name, call := range map[string]func() error{
 			"SettleInstant": func() error { return l.SettleInstant(ctx, g, "usd", 1, 1, 10, 0) },
-			"HoldStake":     func() error { return l.HoldStake(ctx, g, "usd", 1, 1, 10) },
+			"Hold":          func() error { return l.Hold(ctx, g, "usd", 1, 1, 10) },
 			"SettleHeld":    func() error { return l.SettleHeld(ctx, g, "usd", 1, 1, 10, 0) },
 			"HoldExtra":     func() error { return l.HoldExtra(ctx, g, "usd", 1, 1, 1, 10) },
 			"SettleHolds":   func() error { return l.SettleHolds(ctx, g, "usd", 1, 1, 10, nil, 0) },

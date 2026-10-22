@@ -2,7 +2,7 @@ package ledger
 
 import "context"
 
-// Driver is a double-entry store with TigerBeetle's semantics: the ledger's money logic (bets,
+// Driver is a double-entry store with TigerBeetle's semantics: the ledger's money logic (game operations,
 // holds, pots, swaps) is written once against it, and every driver must pass ledgertest.Run.
 //
 // The contract, as TigerBeetle defines it:
