@@ -271,9 +271,9 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 
 	t.Run("instant", func(t *testing.T) {
 		u := f.user()
-		bet := int64(rid())
+		op := int64(rid())
 		for range 2 { // retry moves nothing more
-			must(t, f.l.SettleInstant(ctx, instant, "usd", bet, u, 100, 198))
+			must(t, f.l.SettleInstant(ctx, instant, "usd", op, u, 100, 198))
 		}
 		want(t, "won", f.bal(u, "usd"), 1098)
 		must(t, f.l.SettleInstant(ctx, instant, "usd", int64(rid()), u, 98, 0))
@@ -290,12 +290,12 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 
 	t.Run("held", func(t *testing.T) {
 		u := f.user()
-		bet := int64(rid())
-		must(t, f.l.Hold(ctx, held, "usd", bet, u, 400))
-		must(t, f.l.Hold(ctx, held, "usd", bet, u, 400))
+		op := int64(rid())
+		must(t, f.l.Hold(ctx, held, "usd", op, u, 400))
+		must(t, f.l.Hold(ctx, held, "usd", op, u, 400))
 		want(t, "held", f.bal(u, "usd"), 600)
 		for range 2 {
-			must(t, f.l.SettleHeld(ctx, held, "usd", bet, u, 400, 1000))
+			must(t, f.l.SettleHeld(ctx, held, "usd", op, u, 400, 1000))
 		}
 		want(t, "cashed out", f.bal(u, "usd"), 1600)
 		if err := f.l.Hold(ctx, held, "usd", int64(rid()), u, 1601); !errors.Is(err, ledger.ErrInsufficientFunds) {
@@ -305,39 +305,39 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 
 	t.Run("extra holds", func(t *testing.T) {
 		u := f.user()
-		bet := int64(rid())
-		must(t, f.l.Hold(ctx, extra, "usd", bet, u, 300))
-		must(t, f.l.HoldExtra(ctx, extra, "usd", bet, u, 1, 300))
-		must(t, f.l.HoldExtra(ctx, extra, "usd", bet, u, 1, 300)) // retry
-		must(t, f.l.HoldExtra(ctx, extra, "usd", bet, u, 3, 100)) // held, then unused: voided at settle
-		if err := f.l.HoldExtra(ctx, extra, "usd", bet, u, 2, 400); !errors.Is(err, ledger.ErrInsufficientFunds) {
+		op := int64(rid())
+		must(t, f.l.Hold(ctx, extra, "usd", op, u, 300))
+		must(t, f.l.HoldExtra(ctx, extra, "usd", op, u, 1, 300))
+		must(t, f.l.HoldExtra(ctx, extra, "usd", op, u, 1, 300)) // retry
+		must(t, f.l.HoldExtra(ctx, extra, "usd", op, u, 3, 100)) // held, then unused: voided at settle
+		if err := f.l.HoldExtra(ctx, extra, "usd", op, u, 2, 400); !errors.Is(err, ledger.ErrInsufficientFunds) {
 			t.Fatalf("hold 2: %v", err)
 		}
 		want(t, "held", f.bal(u, "usd"), 300)
 		for range 2 {
-			must(t, f.l.SettleHolds(ctx, extra, "usd", bet, u, 300, []int64{300}, 1200))
+			must(t, f.l.SettleHolds(ctx, extra, "usd", op, u, 300, []int64{300}, 1200))
 		}
 		want(t, "settled", f.bal(u, "usd"), 1600) // 1000 - 600 + 1200, extra hold 3 back
 	})
 
-	t.Run("concurrent bets never overdraw", func(t *testing.T) {
+	t.Run("concurrent operations never overdraw", func(t *testing.T) {
 		u := f.user()
-		bets := make([]int64, 40)
-		for i := range bets {
-			bets[i] = int64(rid())
+		ops := make([]int64, 40)
+		for i := range ops {
+			ops[i] = int64(rid())
 		}
 		var wg sync.WaitGroup
-		for i := range 2 * len(bets) { // every bet twice, at once: a retry racing its original
+		for i := range 2 * len(ops) { // every operation twice, at once: a retry racing its original
 			wg.Go(func() {
-				err := f.l.SettleInstant(ctx, instant, "usd", bets[i%len(bets)], u, 100, 0)
-				// A retry of a refused bet finds its ID reserved: refused again, as an error.
+				err := f.l.SettleInstant(ctx, instant, "usd", ops[i%len(ops)], u, 100, 0)
+				// A retry of a refused operation finds its ID reserved: refused again, as an error.
 				if err != nil && !errors.Is(err, ledger.ErrInsufficientFunds) && !strings.Contains(err.Error(), string(ledger.ResultIDAlreadyFailed)) {
 					t.Error(err)
 				}
 			})
 		}
 		wg.Wait()
-		want(t, "balance", f.bal(u, "usd"), 0) // ten bets of 100 took the $10, none twice, none past it
+		want(t, "balance", f.bal(u, "usd"), 0) // ten ops of 100 took the $10, none twice, none past it
 	})
 
 	t.Run("deposit, reward, swap", func(t *testing.T) {

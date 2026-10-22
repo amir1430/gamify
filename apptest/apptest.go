@@ -5,10 +5,10 @@
 //
 //	a := apptest.New(t)
 //	fair, _ := fairness.Register(ctx, a.App, apptest.Sealer(t))
-//	crash.Register(ctx, a.App, fair)
+//	arena.Register(ctx, a.App, fair)
 //	alice := a.User("alice")
 //	a.Fund(alice, "usd", 10_000)
-//	res, cerr := apptest.Call[crash.BetResult](a, alice, "crash.bet", crash.BetRequest{…})
+//	res, cerr := apptest.Call[arena.JoinResult](a, alice, "arena.join", arena.JoinRequest{…})
 package apptest
 
 import (

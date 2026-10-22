@@ -27,7 +27,7 @@ func testLedger(t *testing.T) (*Ledger, *countingDriver) {
 	return l, d
 }
 
-// A game ID at or above 1<<24 would put bet transfer IDs into the namespaces of deposits, welcome
+// A game ID at or above 1<<24 would put game operation transfer IDs into the namespaces of deposits, welcome
 // grants and swaps (high 32 bits): every money method must refuse it before sending anything.
 func TestGameRange(t *testing.T) {
 	ctx := context.Background()

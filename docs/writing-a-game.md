@@ -60,7 +60,8 @@ from the payload.
 1. **Create** the row in one transaction, as `pending`. Commit.
 2. **Move money** with the row's ID as the operation ID. Transfer IDs come from `(game, leg, ID)`,
    so calling again for the same row is a no-op.
-   - `ledger.ErrInsufficientFunds`: mark the row `voided`.
+   - `ledger.ErrInsufficientFunds` or `ledger.ErrAlreadyFailed` (a retry of a refused move: the
+     ID stays refused for good, even after a top-up): mark the row `voided`.
    - Any other error: leave it `pending` and return the error.
    - Success: mark it `settled`.
 3. **Reconcile**: register `a.Reconcile(s.Reconcile)`. Every 15 s it finishes rows still
@@ -70,7 +71,7 @@ Pick the ledger call by how money moves in your game:
 
 | Money shape | Calls |
 |---|---|
-| Outcome known at once (a spin, a dice roll) | `SettleInstant(ctx, g, c, opID, user, amount, payout)` |
+| Outcome known at once (a spin, a coin flip) | `SettleInstant(ctx, g, c, opID, user, amount, payout)` |
 | Multi-step (a round with decisions, a single-player run with an entry fee) | `Hold`, more with `HoldExtra`, then `SettleHeld` or `SettleHolds` |
 | Players against each other (a duel, a battle with an entry fee, a tournament) | `HoldPot` per entry, then `SettlePot` (at most `ledger.MaxPotWinners` winners), `SettlePool`, or `VoidPot` |
 | The brand sells something (a skin, an extra life) | `Spend(ctx, g, c, opID, user, amount)` |

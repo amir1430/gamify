@@ -26,6 +26,6 @@ sample). See README.md for the layout, drivers and commands.
 - Every money-moving RPC carries an idempotency key.
 - Provably fair: never change a formula or the pinned vectors in `fairness/fairness_test.go` (they
   match the public verifier). Never log or return an unrevealed
-  server seed. Nonce increment happens in the same transaction as the bet row (`fairness.Service.Next`).
+  server seed. Nonce increment happens in the same transaction as the game's row (`fairness.Service.Next`).
   No `math/rand` in fairness or games.
 - macOS: `CGO_LDFLAGS=-Wl,-ld_classic`.

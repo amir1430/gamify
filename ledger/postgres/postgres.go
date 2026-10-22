@@ -5,8 +5,8 @@
 // transfers in memory with TigerBeetle's rules, then writes the changes. A CHECK constraint on
 // ledger_accounts refuses an overdraft even if this code had a bug.
 //
-// ponytail: every bet locks its currency's house account row, so bets in one currency commit one at
-// a time (roughly a few thousand per second). Shard the house account if a brand outgrows that.
+// ponytail: every game operation locks its currency's house account row, so they commit one at a time
+// per currency (roughly a few thousand per second). Shard the house account if a brand outgrows that.
 package postgres
 
 import (
