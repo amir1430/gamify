@@ -74,8 +74,12 @@ type QueueConfig struct {
 	FillAfter, MaxWait, MatchTimeout time.Duration // defaults 10 s, 2 min, 1 h
 	AllowOffline, Concurrent         bool
 
-	OnMatch, OnFinish func(ctx context.Context, m Match) error
-	Payout            func(pot int64, m Match, r Result) []ledger.PotWin
+	// OnMatch runs once the stakes are held, before the match is running (Match.Status forming); an
+	// error cancels the match and refunds it (reason "on_match"). It may run again for the same
+	// match (a retry after a crash, two instances), so it must be idempotent.
+	OnMatch  func(ctx context.Context, m Match) error
+	OnFinish func(ctx context.Context, m Match) error
+	Payout   func(pot int64, m Match, r Result) []ledger.PotWin
 }
 
 // Queue is a validated queue. Config returns its QueueConfig with the defaults filled.
@@ -159,11 +163,6 @@ func Register(ctx context.Context, a *app.App, parties *party.Service, cfg Confi
 	parties.OnChange(s.onPartyChange)
 	return s, nil
 }
-
-func (s *Service) tick(ctx context.Context) {} // Task 8 fills it
-
-// Reconcile finishes matches a crash left half-done.
-func (s *Service) Reconcile(ctx context.Context) {} // Task 8 fills it
 
 // Queue validates c, fills its defaults and registers it; a duplicate Name is an error.
 func (s *Service) Queue(c QueueConfig) (*Queue, error) {

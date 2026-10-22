@@ -38,6 +38,19 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   Pushes: `{"type":"match.ticket","ticket"}` and `{"type":"match.ticket_removed","reason"}`
   (`cancelled`, `party_changed`; a party change of any kind removes its ticket). `Ticket`, `Match`,
   `Player` and `Result` have JSON tags.
+- `matchmaking`: formation. Every `Config.Tick` (`Service.MatchNow(ctx)` runs one pass; one instance
+  per queue at a time) drops tickets older than `MaxWait` (`expired`) and, unless `AllowOffline`,
+  tickets with a user not in `Realtime.Online` (`offline`), then forms matches (`forming`, deadline
+  `MatchTimeout`, players in team then user order, `EntryID` = pot entry ID, ratings snapshotted).
+  Staked: every stake is held (`HoldPot`, game `matchmaking.Game`); a refused hold refunds everyone,
+  cancels the match (`insufficient_funds`), removes the short users' tickets (`match.ticket_removed`
+  `insufficient_funds`) and re-queues the others with their original queue time (`match.ticket`).
+  Then `QueueConfig.OnMatch` (must be idempotent: it may run again; an error cancels and refunds,
+  reason `on_match`, push `{"type":"match.cancelled","match","reason"}`), then `running` and
+  `{"type":"match.found","match"}` to every player. A ledger outage leaves the match `forming`;
+  the reconcile pass (`Service.Reconcile`) finishes `forming` and `cancelling` matches. A
+  `match.queue` replay of a matched ticket returns `{match_id}`. `Service.Get(ctx, id)` returns a
+  match (`ErrNotFound`).
 
 ### Upgrade
 - `party`: new goose table `goose_party` (migrations run in `party.Register`); nothing changes unless you register it.

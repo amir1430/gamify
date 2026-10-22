@@ -37,6 +37,7 @@ type MmMatch struct {
 	FeeBp     int64
 	Result    []byte
 	Reason    string
+	Tickets   []byte
 	Deadline  pgtype.Timestamptz
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz

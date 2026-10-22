@@ -23,6 +23,31 @@ func (q *Queries) DeleteTicket(ctx context.Context, id int64) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const getMatch = `-- name: GetMatch :one
+SELECT id, queue, ref, status, currency, stake, fee_bp, result, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE id = $1
+`
+
+func (q *Queries) GetMatch(ctx context.Context, id int64) (MmMatch, error) {
+	row := q.db.QueryRow(ctx, getMatch, id)
+	var i MmMatch
+	err := row.Scan(
+		&i.ID,
+		&i.Queue,
+		&i.Ref,
+		&i.Status,
+		&i.Currency,
+		&i.Stake,
+		&i.FeeBp,
+		&i.Result,
+		&i.Reason,
+		&i.Tickets,
+		&i.Deadline,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getRating = `-- name: GetRating :one
 SELECT mu, sigma, matches FROM mm_ratings WHERE user_id = $1 AND key = $2
 `
@@ -74,27 +99,12 @@ func (q *Queries) GetRequest(ctx context.Context, arg GetRequestParams) (GetRequ
 }
 
 const getTicket = `-- name: GetTicket :one
-SELECT id, queue, leader_id, party_id, currency, stake, properties, server, numbers, rating, queued_at
-FROM mm_tickets WHERE id = $1
+SELECT id, queue, leader_id, party_id, currency, stake, properties, server, numbers, rating, queued_at, created_at FROM mm_tickets WHERE id = $1
 `
 
-type GetTicketRow struct {
-	ID         int64
-	Queue      string
-	LeaderID   int64
-	PartyID    int64
-	Currency   string
-	Stake      int64
-	Properties []byte
-	Server     []byte
-	Numbers    []byte
-	Rating     float64
-	QueuedAt   pgtype.Timestamptz
-}
-
-func (q *Queries) GetTicket(ctx context.Context, id int64) (GetTicketRow, error) {
+func (q *Queries) GetTicket(ctx context.Context, id int64) (MmTicket, error) {
 	row := q.db.QueryRow(ctx, getTicket, id)
-	var i GetTicketRow
+	var i MmTicket
 	err := row.Scan(
 		&i.ID,
 		&i.Queue,
@@ -107,8 +117,64 @@ func (q *Queries) GetTicket(ctx context.Context, id int64) (GetTicketRow, error)
 		&i.Numbers,
 		&i.Rating,
 		&i.QueuedAt,
+		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const insertMatch = `-- name: InsertMatch :one
+INSERT INTO mm_matches (queue, ref, status, currency, stake, fee_bp, deadline, tickets)
+VALUES ($1, $2, 'forming', $3, $4, $5, $6, $7) RETURNING id
+`
+
+type InsertMatchParams struct {
+	Queue    string
+	Ref      string
+	Currency string
+	Stake    int64
+	FeeBp    int64
+	Deadline pgtype.Timestamptz
+	Tickets  []byte
+}
+
+func (q *Queries) InsertMatch(ctx context.Context, arg InsertMatchParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertMatch,
+		arg.Queue,
+		arg.Ref,
+		arg.Currency,
+		arg.Stake,
+		arg.FeeBp,
+		arg.Deadline,
+		arg.Tickets,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertMatchPlayer = `-- name: InsertMatchPlayer :exec
+INSERT INTO mm_match_players (match_id, user_id, team, party_id, rating_mu, rating_sigma) VALUES ($1, $2, $3, $4, $5, $6)
+`
+
+type InsertMatchPlayerParams struct {
+	MatchID     int64
+	UserID      int64
+	Team        int32
+	PartyID     int64
+	RatingMu    float64
+	RatingSigma float64
+}
+
+func (q *Queries) InsertMatchPlayer(ctx context.Context, arg InsertMatchPlayerParams) error {
+	_, err := q.db.Exec(ctx, insertMatchPlayer,
+		arg.MatchID,
+		arg.UserID,
+		arg.Team,
+		arg.PartyID,
+		arg.RatingMu,
+		arg.RatingSigma,
+	)
+	return err
 }
 
 const insertRequest = `-- name: InsertRequest :execrows
@@ -183,6 +249,32 @@ func (q *Queries) InsertTicketUser(ctx context.Context, arg InsertTicketUserPara
 	return err
 }
 
+const lockMatch = `-- name: LockMatch :one
+SELECT id, queue, ref, status, currency, stake, fee_bp, result, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE id = $1 AND status IN ('forming', 'cancelling') FOR UPDATE SKIP LOCKED
+`
+
+// The match while it is forming or cancelling, unless another transaction is advancing it.
+func (q *Queries) LockMatch(ctx context.Context, id int64) (MmMatch, error) {
+	row := q.db.QueryRow(ctx, lockMatch, id)
+	var i MmMatch
+	err := row.Scan(
+		&i.ID,
+		&i.Queue,
+		&i.Ref,
+		&i.Status,
+		&i.Currency,
+		&i.Stake,
+		&i.FeeBp,
+		&i.Result,
+		&i.Reason,
+		&i.Tickets,
+		&i.Deadline,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const matchPlayers = `-- name: MatchPlayers :many
 SELECT id, match_id, user_id, team, party_id FROM mm_match_players WHERE match_id = ANY($1::bigint[]) ORDER BY id
 `
@@ -219,6 +311,21 @@ func (q *Queries) MatchPlayers(ctx context.Context, dollar_1 []int64) ([]MatchPl
 		return nil, err
 	}
 	return items, nil
+}
+
+const moveRequests = `-- name: MoveRequests :exec
+UPDATE mm_requests SET ticket_id = $1, match_id = 0 WHERE ticket_id = $2
+`
+
+type MoveRequestsParams struct {
+	NewID int64
+	OldID int64
+}
+
+// A re-queued ticket's requests follow it to its new row.
+func (q *Queries) MoveRequests(ctx context.Context, arg MoveRequestsParams) error {
+	_, err := q.db.Exec(ctx, moveRequests, arg.NewID, arg.OldID)
+	return err
 }
 
 const partyTicketIDs = `-- name: PartyTicketIDs :many
@@ -258,8 +365,125 @@ func (q *Queries) PruneRequests(ctx context.Context, createdAt pgtype.Timestampt
 	return result.RowsAffected(), nil
 }
 
+const queueTickets = `-- name: QueueTickets :many
+SELECT id, queue, leader_id, party_id, currency, stake, properties, server, numbers, rating, queued_at, created_at FROM mm_tickets WHERE queue = $1 ORDER BY queued_at, id FOR UPDATE
+`
+
+// Locks the queue's tickets: a concurrent cancel waits and then finds them matched.
+func (q *Queries) QueueTickets(ctx context.Context, queue string) ([]MmTicket, error) {
+	rows, err := q.db.Query(ctx, queueTickets, queue)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MmTicket
+	for rows.Next() {
+		var i MmTicket
+		if err := rows.Scan(
+			&i.ID,
+			&i.Queue,
+			&i.LeaderID,
+			&i.PartyID,
+			&i.Currency,
+			&i.Stake,
+			&i.Properties,
+			&i.Server,
+			&i.Numbers,
+			&i.Rating,
+			&i.QueuedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requeueTicket = `-- name: RequeueTicket :one
+INSERT INTO mm_tickets (queue, leader_id, party_id, currency, stake, properties, server, numbers, rating, queued_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id
+`
+
+type RequeueTicketParams struct {
+	Queue      string
+	LeaderID   int64
+	PartyID    int64
+	Currency   string
+	Stake      int64
+	Properties []byte
+	Server     []byte
+	Numbers    []byte
+	Rating     float64
+	QueuedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) RequeueTicket(ctx context.Context, arg RequeueTicketParams) (int64, error) {
+	row := q.db.QueryRow(ctx, requeueTicket,
+		arg.Queue,
+		arg.LeaderID,
+		arg.PartyID,
+		arg.Currency,
+		arg.Stake,
+		arg.Properties,
+		arg.Server,
+		arg.Numbers,
+		arg.Rating,
+		arg.QueuedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const setMatchCancelled = `-- name: SetMatchCancelled :execrows
+UPDATE mm_matches SET status = 'cancelled', tickets = '[]', updated_at = now() WHERE id = $1 AND status = 'cancelling'
+`
+
+func (q *Queries) SetMatchCancelled(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, setMatchCancelled, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setMatchCancelling = `-- name: SetMatchCancelling :execrows
+UPDATE mm_matches SET status = 'cancelling', reason = $2, tickets = $3, updated_at = now()
+WHERE id = $1 AND status = 'forming'
+`
+
+type SetMatchCancellingParams struct {
+	ID      int64
+	Reason  string
+	Tickets []byte
+}
+
+func (q *Queries) SetMatchCancelling(ctx context.Context, arg SetMatchCancellingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setMatchCancelling, arg.ID, arg.Reason, arg.Tickets)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setMatchRunning = `-- name: SetMatchRunning :execrows
+UPDATE mm_matches SET status = 'running', tickets = '[]', updated_at = now() WHERE id = $1 AND status = 'forming'
+`
+
+func (q *Queries) SetMatchRunning(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, setMatchRunning, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setRequestRemoved = `-- name: SetRequestRemoved :exec
-UPDATE mm_requests SET removed = $2 WHERE ticket_id = $1
+UPDATE mm_requests SET removed = $2, match_id = 0 WHERE ticket_id = $1
 `
 
 type SetRequestRemovedParams struct {
@@ -288,6 +512,20 @@ func (q *Queries) SetRequestTicket(ctx context.Context, arg SetRequestTicketPara
 	return err
 }
 
+const setRequestsMatch = `-- name: SetRequestsMatch :exec
+UPDATE mm_requests SET match_id = $1 WHERE ticket_id = ANY($2::bigint[])
+`
+
+type SetRequestsMatchParams struct {
+	MatchID   int64
+	TicketIds []int64
+}
+
+func (q *Queries) SetRequestsMatch(ctx context.Context, arg SetRequestsMatchParams) error {
+	_, err := q.db.Exec(ctx, setRequestsMatch, arg.MatchID, arg.TicketIds)
+	return err
+}
+
 const ticketUsers = `-- name: TicketUsers :many
 SELECT user_id FROM mm_ticket_users WHERE ticket_id = $1 ORDER BY user_id
 `
@@ -312,36 +550,80 @@ func (q *Queries) TicketUsers(ctx context.Context, ticketID int64) ([]int64, err
 	return items, nil
 }
 
+const ticketsUsers = `-- name: TicketsUsers :many
+SELECT user_id, ticket_id FROM mm_ticket_users WHERE ticket_id = ANY($1::bigint[]) ORDER BY user_id
+`
+
+func (q *Queries) TicketsUsers(ctx context.Context, dollar_1 []int64) ([]MmTicketUser, error) {
+	rows, err := q.db.Query(ctx, ticketsUsers, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MmTicketUser
+	for rows.Next() {
+		var i MmTicketUser
+		if err := rows.Scan(&i.UserID, &i.TicketID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const tryQueueLock = `-- name: TryQueueLock :one
+SELECT pg_try_advisory_xact_lock(hashtext('mm:' || $1::text))
+`
+
+func (q *Queries) TryQueueLock(ctx context.Context, queue string) (bool, error) {
+	row := q.db.QueryRow(ctx, tryQueueLock, queue)
+	var pg_try_advisory_xact_lock bool
+	err := row.Scan(&pg_try_advisory_xact_lock)
+	return pg_try_advisory_xact_lock, err
+}
+
+const unfinishedMatches = `-- name: UnfinishedMatches :many
+SELECT id FROM mm_matches WHERE status IN ('forming', 'cancelling') ORDER BY id
+`
+
+func (q *Queries) UnfinishedMatches(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.Query(ctx, unfinishedMatches)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const userActiveMatches = `-- name: UserActiveMatches :many
-SELECT m.id, m.queue, m.ref, m.status, m.currency, m.stake, m.fee_bp, m.result, m.reason, m.deadline, m.created_at
-FROM mm_matches m WHERE m.status IN ('forming', 'running', 'finishing', 'cancelling')
+SELECT m.id, m.queue, m.ref, m.status, m.currency, m.stake, m.fee_bp, m.result, m.reason, m.tickets, m.deadline, m.created_at, m.updated_at FROM mm_matches m WHERE m.status IN ('forming', 'running', 'finishing', 'cancelling')
   AND EXISTS (SELECT 1 FROM mm_match_players p WHERE p.match_id = m.id AND p.user_id = $1)
 ORDER BY m.id
 `
 
-type UserActiveMatchesRow struct {
-	ID        int64
-	Queue     string
-	Ref       string
-	Status    string
-	Currency  string
-	Stake     int64
-	FeeBp     int64
-	Result    []byte
-	Reason    string
-	Deadline  pgtype.Timestamptz
-	CreatedAt pgtype.Timestamptz
-}
-
-func (q *Queries) UserActiveMatches(ctx context.Context, userID int64) ([]UserActiveMatchesRow, error) {
+func (q *Queries) UserActiveMatches(ctx context.Context, userID int64) ([]MmMatch, error) {
 	rows, err := q.db.Query(ctx, userActiveMatches, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []UserActiveMatchesRow
+	var items []MmMatch
 	for rows.Next() {
-		var i UserActiveMatchesRow
+		var i MmMatch
 		if err := rows.Scan(
 			&i.ID,
 			&i.Queue,
@@ -352,8 +634,10 @@ func (q *Queries) UserActiveMatches(ctx context.Context, userID int64) ([]UserAc
 			&i.FeeBp,
 			&i.Result,
 			&i.Reason,
+			&i.Tickets,
 			&i.Deadline,
 			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

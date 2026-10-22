@@ -34,6 +34,7 @@ CREATE TABLE mm_requests (
     created_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (user_id, idem_key)
 );
+CREATE INDEX mm_requests_ticket ON mm_requests (ticket_id) WHERE ticket_id <> 0;
 
 CREATE TABLE mm_matches (
     id         bigserial PRIMARY KEY,
@@ -45,6 +46,8 @@ CREATE TABLE mm_matches (
     fee_bp     bigint      NOT NULL DEFAULT 0,
     result     jsonb,
     reason     text        NOT NULL DEFAULT '',
+    -- forming: the tickets it was formed from; cancelling: the ones to re-queue; else [].
+    tickets    jsonb       NOT NULL DEFAULT '[]',
     deadline   timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),

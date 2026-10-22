@@ -242,18 +242,27 @@ func (s *Service) enqueue(ctx context.Context, user int64, r queueReq) (QueueRes
 	if err != nil || replay {
 		return res, err
 	}
-	for _, u := range users {
-		s.push(ctx, u, map[string]any{"type": "match.ticket", "ticket": t})
-	}
-	// The party may have changed between reading it and the commit, after its hook ran.
-	if partyID != 0 {
-		if p, err := s.parties.Get(ctx, partyID); err != nil || p.LeaderID != user ||
-			!slices.Equal(slices.Sorted(slices.Values(p.Members)), users) {
-			s.dropParty(ctx, partyID)
-			res = QueueResult{Removed: "party_changed"}
-		}
+	if s.queued(ctx, t) {
+		res = QueueResult{Removed: "party_changed"}
 	}
 	return res, nil
+}
+
+// queued pushes a new ticket to its users. A party may have changed between reading it and the
+// commit, after its hook ran: then its ticket is dropped and queued reports true.
+func (s *Service) queued(ctx context.Context, t Ticket) (dropped bool) {
+	for _, u := range t.Users {
+		s.push(ctx, u, map[string]any{"type": "match.ticket", "ticket": t})
+	}
+	if t.PartyID == 0 {
+		return false
+	}
+	if p, err := s.parties.Get(ctx, t.PartyID); err != nil || p.LeaderID != t.Leader ||
+		!slices.Equal(slices.Sorted(slices.Values(p.Members)), t.Users) {
+		s.dropParty(ctx, t.PartyID)
+		return true
+	}
+	return false
 }
 
 // outcome is the stored result of a request, if the key was used.
@@ -286,6 +295,10 @@ func loadTicket(ctx context.Context, q *store.Queries, id int64) (Ticket, error)
 	if err != nil {
 		return Ticket{}, err
 	}
+	return toTicket(r, users)
+}
+
+func toTicket(r store.MmTicket, users []int64) (Ticket, error) {
 	t := Ticket{ID: r.ID, Queue: r.Queue, Leader: r.LeaderID, PartyID: r.PartyID, Users: users,
 		Currency: ledger.Currency(r.Currency), Stake: r.Stake, Rating: r.Rating, QueuedAt: r.QueuedAt.Time}
 	for _, f := range []struct {
@@ -332,22 +345,30 @@ func (s *Service) cancel(ctx context.Context, user int64) error {
 func (s *Service) remove(ctx context.Context, ticketID int64, reason string) error {
 	var users []int64
 	err := pgx.BeginFunc(ctx, s.a.Pool, func(tx pgx.Tx) (err error) {
-		q := s.q.WithTx(tx)
-		users = nil
-		if users, err = q.TicketUsers(ctx, ticketID); err != nil {
-			return err
-		}
-		n, err := q.DeleteTicket(ctx, ticketID)
-		if err != nil || n == 0 {
-			users = nil
-			return err
-		}
-		return q.SetRequestRemoved(ctx, store.SetRequestRemovedParams{TicketID: ticketID, Removed: reason})
+		users, err = removeTicket(ctx, s.q.WithTx(tx), ticketID, reason)
+		return err
 	})
+	if err != nil {
+		return err
+	}
 	for _, u := range users {
 		s.push(ctx, u, map[string]any{"type": "match.ticket_removed", "reason": reason})
 	}
-	return err
+	return nil
+}
+
+// removeTicket is remove inside a transaction: it returns the users to tell once it commits, none
+// if the ticket was already gone.
+func removeTicket(ctx context.Context, q *store.Queries, ticketID int64, reason string) ([]int64, error) {
+	users, err := q.TicketUsers(ctx, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	n, err := q.DeleteTicket(ctx, ticketID)
+	if err != nil || n == 0 {
+		return nil, err
+	}
+	return users, q.SetRequestRemoved(ctx, store.SetRequestRemovedParams{TicketID: ticketID, Removed: reason})
 }
 
 func (s *Service) onPartyChange(ctx context.Context, p party.Party) { s.dropParty(ctx, p.ID) }
@@ -382,30 +403,6 @@ func (s *Service) status(ctx context.Context, user int64) (status, error) {
 	if err != nil || len(rows) == 0 {
 		return st, err
 	}
-	ids := make([]int64, len(rows))
-	for i, m := range rows {
-		ids[i] = m.ID
-	}
-	ps, err := s.q.MatchPlayers(ctx, ids)
-	if err != nil {
-		return st, err
-	}
-	for _, m := range rows {
-		out := Match{ID: m.ID, Queue: m.Queue, Ref: m.Ref, Status: m.Status, Currency: ledger.Currency(m.Currency),
-			Stake: m.Stake, FeeBP: m.FeeBp, Reason: m.Reason, CreatedAt: m.CreatedAt.Time, Deadline: m.Deadline.Time,
-			Players: []Player{}}
-		if m.Result != nil {
-			out.Result = &Result{}
-			if err := json.Unmarshal(m.Result, out.Result); err != nil {
-				return st, err
-			}
-		}
-		for _, p := range ps {
-			if p.MatchID == m.ID {
-				out.Players = append(out.Players, Player{EntryID: p.ID, UserID: p.UserID, PartyID: p.PartyID, Team: int(p.Team)})
-			}
-		}
-		st.Matches = append(st.Matches, out)
-	}
-	return st, nil
+	st.Matches, err = s.toMatches(ctx, s.q, rows)
+	return st, err
 }

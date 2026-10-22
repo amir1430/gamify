@@ -14,7 +14,14 @@ UPDATE mm_requests SET ticket_id = $3 WHERE user_id = $1 AND idem_key = $2;
 
 -- name: SetRequestRemoved :exec
 -- Records why the ticket went; the request keeps its ticket_id.
-UPDATE mm_requests SET removed = $2 WHERE ticket_id = $1;
+UPDATE mm_requests SET removed = $2, match_id = 0 WHERE ticket_id = $1;
+
+-- name: SetRequestsMatch :exec
+UPDATE mm_requests SET match_id = $1 WHERE ticket_id = ANY(sqlc.arg(ticket_ids)::bigint[]);
+
+-- name: MoveRequests :exec
+-- A re-queued ticket's requests follow it to its new row.
+UPDATE mm_requests SET ticket_id = sqlc.arg(new_id), match_id = 0 WHERE ticket_id = sqlc.arg(old_id);
 
 -- name: InsertTicket :one
 INSERT INTO mm_tickets (queue, leader_id, party_id, currency, stake, properties, server, numbers, rating)
@@ -23,9 +30,22 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, queued_at;
 -- name: InsertTicketUser :exec
 INSERT INTO mm_ticket_users (user_id, ticket_id) VALUES ($1, $2);
 
+-- name: RequeueTicket :one
+INSERT INTO mm_tickets (queue, leader_id, party_id, currency, stake, properties, server, numbers, rating, queued_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id;
+
 -- name: GetTicket :one
-SELECT id, queue, leader_id, party_id, currency, stake, properties, server, numbers, rating, queued_at
-FROM mm_tickets WHERE id = $1;
+SELECT * FROM mm_tickets WHERE id = $1;
+
+-- name: QueueTickets :many
+-- Locks the queue's tickets: a concurrent cancel waits and then finds them matched.
+SELECT * FROM mm_tickets WHERE queue = $1 ORDER BY queued_at, id FOR UPDATE;
+
+-- name: TicketsUsers :many
+SELECT user_id, ticket_id FROM mm_ticket_users WHERE ticket_id = ANY($1::bigint[]) ORDER BY user_id;
+
+-- name: TryQueueLock :one
+SELECT pg_try_advisory_xact_lock(hashtext('mm:' || sqlc.arg(queue)::text));
 
 -- name: TicketUsers :many
 SELECT user_id FROM mm_ticket_users WHERE ticket_id = $1 ORDER BY user_id;
@@ -47,10 +67,36 @@ SELECT EXISTS (
       AND m.status IN ('forming', 'running', 'finishing', 'cancelling'));
 
 -- name: UserActiveMatches :many
-SELECT m.id, m.queue, m.ref, m.status, m.currency, m.stake, m.fee_bp, m.result, m.reason, m.deadline, m.created_at
-FROM mm_matches m WHERE m.status IN ('forming', 'running', 'finishing', 'cancelling')
+SELECT m.* FROM mm_matches m WHERE m.status IN ('forming', 'running', 'finishing', 'cancelling')
   AND EXISTS (SELECT 1 FROM mm_match_players p WHERE p.match_id = m.id AND p.user_id = $1)
 ORDER BY m.id;
+
+-- name: InsertMatch :one
+INSERT INTO mm_matches (queue, ref, status, currency, stake, fee_bp, deadline, tickets)
+VALUES ($1, $2, 'forming', $3, $4, $5, $6, $7) RETURNING id;
+
+-- name: InsertMatchPlayer :exec
+INSERT INTO mm_match_players (match_id, user_id, team, party_id, rating_mu, rating_sigma) VALUES ($1, $2, $3, $4, $5, $6);
+
+-- name: GetMatch :one
+SELECT * FROM mm_matches WHERE id = $1;
+
+-- name: LockMatch :one
+-- The match while it is forming or cancelling, unless another transaction is advancing it.
+SELECT * FROM mm_matches WHERE id = $1 AND status IN ('forming', 'cancelling') FOR UPDATE SKIP LOCKED;
+
+-- name: UnfinishedMatches :many
+SELECT id FROM mm_matches WHERE status IN ('forming', 'cancelling') ORDER BY id;
+
+-- name: SetMatchCancelling :execrows
+UPDATE mm_matches SET status = 'cancelling', reason = $2, tickets = $3, updated_at = now()
+WHERE id = $1 AND status = 'forming';
+
+-- name: SetMatchRunning :execrows
+UPDATE mm_matches SET status = 'running', tickets = '[]', updated_at = now() WHERE id = $1 AND status = 'forming';
+
+-- name: SetMatchCancelled :execrows
+UPDATE mm_matches SET status = 'cancelled', tickets = '[]', updated_at = now() WHERE id = $1 AND status = 'cancelling';
 
 -- name: MatchPlayers :many
 SELECT id, match_id, user_id, team, party_id FROM mm_match_players WHERE match_id = ANY($1::bigint[]) ORDER BY id;
