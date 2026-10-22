@@ -78,22 +78,22 @@ func TestReadEndpoints(t *testing.T) {
 	st, body = get("/api/users/abc")
 	wantErr(t, "bad id", st, body, 400, "bad_request")
 
-	games := ok("/api/users/" + id + "/bets")["games"].([]any)
+	games := ok("/api/users/" + id + "/activity")["games"].([]any)
 	if len(games) != 1 || games[0] != "arena" {
 		t.Fatalf("games = %v", games)
 	}
-	st, body = get("/api/users/" + id + "/bets?game=nope")
+	st, body = get("/api/users/" + id + "/activity?game=nope")
 	wantErr(t, "unknown game", st, body, 400, "unknown_game")
-	bets := ok("/api/users/" + id + "/bets?game=arena&limit=10")
+	bets := ok("/api/users/" + id + "/activity?game=arena&limit=10")
 	if len(bets["items"].([]any)) != 2 || bets["next"] != nil {
 		t.Fatalf("bets = %v", bets)
 	}
-	p1 := ok("/api/users/" + id + "/bets?game=arena&limit=1")
+	p1 := ok("/api/users/" + id + "/activity?game=arena&limit=1")
 	first := p1["items"].([]any)[0].(map[string]any)
 	if len(p1["items"].([]any)) != 1 || p1["next"] != first["id"] {
 		t.Fatalf("page 1 = %v", p1)
 	}
-	p2 := ok(fmt.Sprintf("/api/users/%s/bets?game=arena&limit=1&before=%v", id, p1["next"]))
+	p2 := ok(fmt.Sprintf("/api/users/%s/activity?game=arena&limit=1&before=%v", id, p1["next"]))
 	if len(p2["items"].([]any)) != 1 || p2["items"].([]any)[0].(map[string]any)["id"] == first["id"] {
 		t.Fatalf("page 2 = %v", p2)
 	}

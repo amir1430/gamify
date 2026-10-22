@@ -90,7 +90,7 @@ func (adm *Admin) registerReads() {
 	adm.handle("GET /api/dashboard", PermView, adm.dashboard)
 	adm.handle("GET /api/users", PermView, adm.users)
 	adm.handle("GET /api/users/{id}", PermView, adm.user)
-	adm.handle("GET /api/users/{id}/bets", PermView, adm.bets)
+	adm.handle("GET /api/users/{id}/activity", PermView, adm.activity)
 	adm.handle("GET /api/users/{id}/seeds", PermView, adm.seeds)
 	adm.handle("GET /api/games", PermView, adm.games)
 	adm.handle("GET /api/audit", PermView, adm.auditList)
@@ -160,12 +160,12 @@ func (adm *Admin) user(w http.ResponseWriter, r *http.Request, _ *session) error
 	return nil
 }
 
-func (adm *Admin) bets(w http.ResponseWriter, r *http.Request, _ *session) error {
+func (adm *Admin) activity(w http.ResponseWriter, r *http.Request, _ *session) error {
 	id, err := userID(r)
 	if err != nil {
 		return err
 	}
-	sources := adm.a.BetSources()
+	sources := adm.a.HistorySources()
 	game := r.URL.Query().Get("game")
 	if game == "" {
 		names := make([]string, 0, len(sources))
@@ -184,11 +184,11 @@ func (adm *Admin) bets(w http.ResponseWriter, r *http.Request, _ *session) error
 	if err != nil {
 		return err
 	}
-	bets, err := src(r.Context(), id, before, limit)
+	rows, err := src(r.Context(), id, before, limit)
 	if err != nil {
 		return err
 	}
-	writePage(w, bets, limit, func(b app.Bet) int64 { return b.ID })
+	writePage(w, rows, limit, func(b app.Activity) int64 { return b.ID })
 	return nil
 }
 

@@ -63,7 +63,7 @@ const (
 type Perm string
 
 const (
-	PermView     Perm = "view"     // dashboard, players, bets, limits, audit
+	PermView     Perm = "view"     // dashboard, players, activity, limits, audit
 	PermIdentity Perm = "identity" // unlink an identity, kick a session
 	PermLimits   Perm = "limits"   // change game limits, turn games off
 	PermAdjust   Perm = "adjust"   // request a balance adjustment

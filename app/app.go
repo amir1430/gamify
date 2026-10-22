@@ -29,7 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ReconcileEvery is how often unfinished bets are settled again (after a crash or a driver outage).
+// ReconcileEvery is how often unfinished operations are settled again (after a crash or a driver outage).
 const ReconcileEvery = 15 * time.Second
 
 type Config struct {
@@ -73,8 +73,8 @@ type App struct {
 	providers map[string]auth.Provider
 	reconcile []func(context.Context)
 	extra     []namedServer
-	betsMu    sync.Mutex
-	bets      map[string]BetSource
+	historyMu sync.Mutex
+	history   map[string]HistorySource
 }
 
 // New migrates the platform's tables, readies the ledger and loads the game limits.
@@ -125,7 +125,7 @@ func (a *App) Serve(name string, srv *http.Server) {
 	a.extra = append(a.extra, namedServer{name, srv})
 }
 
-// Reconcile registers a job run every ReconcileEvery (a game finishing its pending bets).
+// Reconcile registers a job run every ReconcileEvery (a game finishing its pending operations).
 func (a *App) Reconcile(f func(context.Context)) { a.reconcile = append(a.reconcile, f) }
 
 // RunReconcile runs every registered reconcile job once (Run does it every ReconcileEvery).

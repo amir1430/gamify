@@ -18,7 +18,7 @@ export function Players() {
 
   return (
     <>
-      <PageHeader title="Players" description="Newest first. Open one for identities, balances, bets and seeds." />
+      <PageHeader title="Players" description="Newest first. Open one for identities, balances, activity and seeds." />
       <Toolbar>
         <form
           className="relative w-full max-w-sm"

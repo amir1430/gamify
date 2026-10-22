@@ -35,7 +35,7 @@ import { playerName, type Player as PlayerRow } from './players'
 
 type Identity = { provider: string; subject: string; linked_at: string }
 type PlayerView = { user: PlayerRow; identities: Identity[]; balances: Record<string, number> }
-type Bet = { game: string; id: number; currency: string; amount: number; payout: number; status: string; detail?: Record<string, unknown>; at: string }
+type Activity = { game: string; id: number; currency: string; amount: number; payout: number; status: string; detail?: Record<string, unknown>; at: string }
 type Seed = {
   id: number
   status: 'active' | 'next' | 'revealed'
@@ -47,10 +47,10 @@ type Seed = {
   revealed_at: string | null
 }
 
-const TABS = ['profile', 'auth', 'wallet', 'bets', 'seeds'] as const
+const TABS = ['profile', 'auth', 'wallet', 'activity', 'seeds'] as const
 
 // One player (Nakama's account page): header with actions, then Profile, Authentication (linked
-// identities, unlink), Wallet (balances, adjustments), Bets (per game) and Seeds (with fairness).
+// identities, unlink), Wallet (balances, adjustments), Activity (per game) and Seeds (with fairness).
 export function Player() {
   const id = useParams().id!
   const [tab, setTab] = useTab(TABS)
@@ -107,7 +107,7 @@ export function Player() {
               { value: 'profile', label: 'Profile' },
               { value: 'auth', label: 'Authentication', count: p.identities.length },
               { value: 'wallet', label: 'Wallet' },
-              { value: 'bets', label: 'Bets' },
+              { value: 'activity', label: 'Activity' },
               ...(hasSeeds ? [{ value: 'seeds' as const, label: 'Seeds' }] : []),
             ]}
           />
@@ -124,7 +124,7 @@ export function Player() {
           )}
           {tab === 'auth' && <Identities id={u.id} identities={p.identities} canUnlink={canIdentity} />}
           {tab === 'wallet' && <Wallet id={u.id} balances={p.balances} />}
-          {tab === 'bets' && <Bets id={u.id} />}
+          {tab === 'activity' && <ActivityTab id={u.id} />}
           {tab === 'seeds' && hasSeeds && (
             <>
               <SeedsTable rows={seeds.rows} loading={seeds.loading} />
@@ -232,14 +232,14 @@ function Wallet({ id, balances }: { id: number; balances: Record<string, number>
   )
 }
 
-// One sub-tab per game that reports bet history (app.Bets), kept in ?game=.
-function Bets({ id }: { id: number }) {
-  const { query } = useCustom<{ games: string[] }>({ url: `/api/users/${id}/bets`, method: 'get' })
+// One sub-tab per game that reports activity (app.History), kept in ?game=.
+function ActivityTab({ id }: { id: number }) {
+  const { query } = useCustom<{ games: string[] }>({ url: `/api/users/${id}/activity`, method: 'get' })
   const games = query.data?.data.games ?? []
   const [g, setG] = useParam('game')
   const game = games.includes(g) ? g : (games[0] ?? '')
   if (query.isLoading) return <Skeleton className="h-32 w-full rounded-lg" />
-  if (!games.length) return <Note>No game reports bet history.</Note>
+  if (!games.length) return <Note>No game reports activity.</Note>
   return (
     <>
       {games.length > 1 && (
@@ -247,25 +247,25 @@ function Bets({ id }: { id: number }) {
           <Segmented value={game} onChange={(v) => setG(v === games[0] ? null : v)} options={games.map((n) => ({ value: n, label: n }))} />
         </div>
       )}
-      <BetsTable id={id} game={game} key={game} />
+      <ActivityTable id={id} game={game} key={game} />
     </>
   )
 }
 
-function BetsTable({ id, game }: { id: number; game: string }) {
+function ActivityTable({ id, game }: { id: number; game: string }) {
   const { money } = useMoney()
-  const { rows, loading, more } = usePaged<Bet>(`users/${id}/bets`, { game })
+  const { rows, loading, more } = usePaged<Activity>(`users/${id}/activity`, { game })
   return (
     <>
       <DataTable
         rows={rows}
         loading={loading}
         rowKey={(b) => b.id}
-        empty="No bets yet."
+        empty="No activity yet."
         columns={[
           { key: 'when', title: 'When', render: (b) => <When at={b.at} /> },
           { key: 'id', title: 'ID', render: (b) => <Mono>#{b.id}</Mono> },
-          { key: 'bet', title: 'Stake', align: 'right', render: (b) => <span className="num">{money(b.amount, b.currency)}</span> },
+          { key: 'amount', title: 'Amount', align: 'right', render: (b) => <span className="num">{money(b.amount, b.currency)}</span> },
           { key: 'payout', title: 'Payout', align: 'right', render: (b) => <span className="num">{money(b.payout, b.currency)}</span> },
           {
             key: 'res',
@@ -282,7 +282,7 @@ function BetsTable({ id, game }: { id: number; game: string }) {
   )
 }
 
-// A bet's game fields as key: value pairs.
+// An activity row's game fields as key: value pairs.
 function Detail({ detail }: { detail?: Record<string, unknown> }) {
   const entries = Object.entries(detail ?? {})
   if (!entries.length) return <Faint />
