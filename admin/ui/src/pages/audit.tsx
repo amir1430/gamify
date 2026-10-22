@@ -79,7 +79,7 @@ export function Audit() {
             <Input
               className="pl-8"
               type="search"
-              placeholder="Target, e.g. user:42 or game:dice"
+              placeholder="Target, e.g. user:42 or game:arena"
               value={text.target}
               onChange={(e) => setText((t) => ({ ...t, target: e.target.value }))}
               aria-label="Target"
@@ -116,7 +116,7 @@ export function Audit() {
   )
 }
 
-// user:42 → the player, adjust:7 → adjustments, game:dice/… → games; anything else as text.
+// user:42 → the player, adjust:7 → adjustments, game:arena/… → games; anything else as text.
 function Target({ t }: { t: string }) {
   const [kind, rest] = t.split(/:(.*)/s)
   const to = kind === 'user' ? `/players/${rest}` : kind === 'adjust' ? '/adjustments' : kind === 'game' ? '/games' : null

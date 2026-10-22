@@ -30,7 +30,7 @@ CREATE TABLE admin_audit (
     id         bigserial PRIMARY KEY,
     admin_id   bigint      REFERENCES admin_users(id), -- NULL: failed login of an unknown email
     action     text        NOT NULL,   -- "game.limit.set", "user.unlink", "adjust.request", …
-    target     text        NOT NULL,   -- "user:42", "game:dice/usd/", "adjust:7"
+    target     text        NOT NULL,   -- "user:42", "game:arena/usd/", "adjust:7"
     before     jsonb,
     after      jsonb,
     reason     text,                   -- required for money and identity actions

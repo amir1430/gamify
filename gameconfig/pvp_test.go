@@ -7,7 +7,7 @@ import (
 func TestPvPIgnoresOff(t *testing.T) {
 	s := newService()
 	s.Off(usd)
-	house := s.Game("dice", 100, 1000, nil)
+	house := s.Game("arena", 100, 1000, nil)
 	pvp := s.PvPGame("flipduel", 100, 1000, nil)
 	if _, _, err := house.Limits(usd, ""); err != ErrUnavailable {
 		t.Fatalf("house game in an off currency: %v", err)
@@ -16,7 +16,7 @@ func TestPvPIgnoresOff(t *testing.T) {
 		t.Fatalf("pvp game in an off currency: %v %+v", err, l)
 	}
 	pub := s.Public()
-	if !pub["flipduel"][usd].Limits.Enabled || pub["dice"][usd].Limits.Enabled {
+	if !pub["flipduel"][usd].Limits.Enabled || pub["arena"][usd].Limits.Enabled {
 		t.Fatalf("public: %+v", pub)
 	}
 }

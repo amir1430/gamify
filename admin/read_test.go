@@ -9,20 +9,16 @@ import (
 
 	"github.com/amir1430/gamify/apptest"
 	"github.com/amir1430/gamify/fairness"
-	"github.com/amir1430/gamify/games/dice"
 )
 
-// readEnv is an admin with fairness and dice registered, a viewer logged in, and alice with two
-// dice bets.
+// readEnv is an admin with fairness and the arena test game registered, a viewer logged in, and
+// alice with two arena rows and seeds.
 func readEnv(t *testing.T) (a *apptest.App, adm *Admin, srv *httptest.Server, viewer *http.Client, alice int64) {
 	t.Helper()
 	ctx := context.Background()
 	a = apptest.New(t)
 	fair, err := fairness.Register(ctx, a.App, apptest.Sealer(t))
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := dice.Register(ctx, a.App, fair); err != nil {
 		t.Fatal(err)
 	}
 	adm, err = Register(ctx, a.App, Config{Addr: "127.0.0.1:0", Origin: testOrigin, TOTPKey: testKey, Fairness: fair})
@@ -34,10 +30,9 @@ func readEnv(t *testing.T) (a *apptest.App, adm *Admin, srv *httptest.Server, vi
 	viewer = login(t, srv, "viewer@brand.example", addUser(t, a, "viewer@brand.example", RoleViewer))
 	alice = a.User("alice")
 	a.Fund(alice, "usd", 10_000)
-	for i := range 2 {
-		if _, cerr := a.Call(alice, "dice.bet", dice.BetRequest{Amount: 100, Target: 5000, Over: true, IdemKey: fmt.Sprint("k", i)}); cerr != nil {
-			t.Fatal(cerr)
-		}
+	registerArena(a, arenaRow(2, alice), arenaRow(1, alice))
+	if err := fair.Ensure(ctx, alice); err != nil {
+		t.Fatal(err)
 	}
 	return
 }
@@ -84,21 +79,21 @@ func TestReadEndpoints(t *testing.T) {
 	wantErr(t, "bad id", st, body, 400, "bad_request")
 
 	games := ok("/api/users/" + id + "/bets")["games"].([]any)
-	if len(games) != 1 || games[0] != "dice" {
+	if len(games) != 1 || games[0] != "arena" {
 		t.Fatalf("games = %v", games)
 	}
 	st, body = get("/api/users/" + id + "/bets?game=nope")
 	wantErr(t, "unknown game", st, body, 400, "unknown_game")
-	bets := ok("/api/users/" + id + "/bets?game=dice&limit=10")
+	bets := ok("/api/users/" + id + "/bets?game=arena&limit=10")
 	if len(bets["items"].([]any)) != 2 || bets["next"] != nil {
 		t.Fatalf("bets = %v", bets)
 	}
-	p1 := ok("/api/users/" + id + "/bets?game=dice&limit=1")
+	p1 := ok("/api/users/" + id + "/bets?game=arena&limit=1")
 	first := p1["items"].([]any)[0].(map[string]any)
 	if len(p1["items"].([]any)) != 1 || p1["next"] != first["id"] {
 		t.Fatalf("page 1 = %v", p1)
 	}
-	p2 := ok(fmt.Sprintf("/api/users/%s/bets?game=dice&limit=1&before=%v", id, p1["next"]))
+	p2 := ok(fmt.Sprintf("/api/users/%s/bets?game=arena&limit=1&before=%v", id, p1["next"]))
 	if len(p2["items"].([]any)) != 1 || p2["items"].([]any)[0].(map[string]any)["id"] == first["id"] {
 		t.Fatalf("page 2 = %v", p2)
 	}
@@ -117,7 +112,7 @@ func TestReadEndpoints(t *testing.T) {
 			t.Fatalf("game lacks %q: %v", k, gm)
 		}
 	}
-	if gm["name"] != "dice" || gm["enabled"] != true {
+	if gm["name"] != "arena" || gm["enabled"] != true {
 		t.Fatalf("game = %v", gm)
 	}
 

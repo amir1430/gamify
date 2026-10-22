@@ -6,7 +6,7 @@ sample). See README.md for the layout, drivers and commands.
 ## Rules
 
 - Money: integer minor units (`int64`), never floats; multiplier math with `math/big`, rounded down.
-  The ledger driver is the source of truth for balances. Postgres tables of games hold bet metadata
+  The ledger driver is the source of truth for balances. Game tables hold game metadata
   only. No app-side balance checks: drivers refuse overdrafts.
 - Ledger drivers implement TigerBeetle's semantics exactly. `ledger/ledgertest` is the contract: a
   driver change must pass it on Postgres *and* TigerBeetle. Never weaken a suite case to make a
@@ -24,8 +24,8 @@ sample). See README.md for the layout, drivers and commands.
 - sqlc for every query (no SQL strings in Go). Generated `store/` dirs: don't edit, run `sqlc generate`.
 - User identity comes only from the transport's authenticated connection, never from an RPC payload.
 - Every money-moving RPC carries an idempotency key.
-- Provably fair: never change a formula or the pinned vectors in `fairness/fairness_test.go` and
-  `games/dice/dice_test.go` (they match the public verifier). Never log or return an unrevealed
+- Provably fair: never change a formula or the pinned vectors in `fairness/fairness_test.go` (they
+  match the public verifier). Never log or return an unrevealed
   server seed. Nonce increment happens in the same transaction as the bet row (`fairness.Service.Next`).
   No `math/rand` in fairness or games.
 - macOS: `CGO_LDFLAGS=-Wl,-ld_classic`.

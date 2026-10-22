@@ -1,4 +1,4 @@
-// Command gamify is a sample brand: the platform with Dice. Infra comes from gamify.yaml
+// Command gamify is a sample brand: the platform without games. Infra comes from gamify.yaml
 // (GAMIFY_CONFIG), product settings and keys from env. A brand copies this file and registers its
 // own games.
 package main
@@ -23,8 +23,6 @@ import (
 	"github.com/amir1430/gamify/config"
 	"github.com/amir1430/gamify/config/drivers"
 	"github.com/amir1430/gamify/fairness"
-	"github.com/amir1430/gamify/games/dice"
-	"github.com/amir1430/gamify/games/dice/diceadmin"
 	"github.com/amir1430/gamify/ledger"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -92,21 +90,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	diceSvc, err := dice.Register(ctx, a, fair)
-	if err != nil {
-		return err
-	}
 	acfg, adminOn, err := adminConfig(os.Getenv)
 	if err != nil {
 		return err
 	}
 	if adminOn {
 		acfg.Fairness = fair
-		adm, err := admin.Register(ctx, a, acfg)
-		if err != nil {
-			return err
-		}
-		if err := diceadmin.Register(adm, diceSvc); err != nil {
+		if _, err := admin.Register(ctx, a, acfg); err != nil {
 			return err
 		}
 	}

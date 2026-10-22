@@ -76,7 +76,7 @@ type ClientError struct {
 
 func (e *ClientError) Error() string { return e.Message }
 
-// Router maps RPC methods ("dice.bet") to handlers.
+// Router maps RPC methods ("arena.join") to handlers.
 type Router struct {
 	methods map[string]Handler
 	// Check, when set, runs before every method: an error refuses the call (a restricted player).

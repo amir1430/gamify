@@ -13,8 +13,8 @@ import (
 )
 
 func TestRecords(t *testing.T) {
-	RPC(context.Background(), "dice.bet", "1", 1101, time.Millisecond)
-	if got := testutil.ToFloat64(rpcs.WithLabelValues("dice.bet", "1101")); got != 1 {
+	RPC(context.Background(), "arena.join", "1", 1101, time.Millisecond)
+	if got := testutil.ToFloat64(rpcs.WithLabelValues("arena.join", "1101")); got != 1 {
 		t.Fatalf("rpc count = %v", got)
 	}
 
@@ -31,7 +31,7 @@ func TestRecords(t *testing.T) {
 	for _, want := range []string{
 		`gamify_http_request_duration_seconds_count{route="/share/card/{file}",server="app",status="200"} 1`,
 		`gamify_http_request_duration_seconds_count{route="unmatched",server="app",status="404"} 1`,
-		`gamify_rpc_total{code="1101",method="dice.bet"} 1`,
+		`gamify_rpc_total{code="1101",method="arena.join"} 1`,
 		`go_goroutines`,
 	} {
 		if !strings.Contains(body, want) {

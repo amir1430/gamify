@@ -27,27 +27,27 @@ func set(s *Service, settings []store.GameSetting, limits []store.GameLimit) {
 
 func TestLimits(t *testing.T) {
 	s := newService()
-	plinko := s.Game("plinko", 1_000_000, 10_000_000, []string{"low/8", "high/16"})
-	dice := s.Game("dice", 1_000_000, 98_000_000, nil)
+	runner := s.Game("runner", 1_000_000, 10_000_000, []string{"low/8", "high/16"})
+	arena := s.Game("arena", 1_000_000, 98_000_000, nil)
 
 	// No rows: the code defaults, the ledger minimum, "" = USD.
-	c, l, err := plinko.Limits("", "high/16")
+	c, l, err := runner.Limits("", "high/16")
 	if err != nil || c != usd || l != (Limits{true, 1, 1_000_000, 10_000_000}) {
 		t.Fatalf("defaults: %v %+v %v", c, l, err)
 	}
-	if _, l, _ := plinko.Limits(tickets, ""); l.MinBet != 10 {
+	if _, l, _ := runner.Limits(tickets, ""); l.MinBet != 10 {
 		t.Fatalf("tickets min: %d", l.MinBet)
 	}
-	if _, _, err := plinko.Limits("eur", ""); !errors.Is(err, ErrInvalid) {
+	if _, _, err := runner.Limits("eur", ""); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("unknown currency: %v", err)
 	}
 
 	set(s, nil, []store.GameLimit{
-		{Game: "plinko", Currency: "usd", Enabled: true, MinBet: ptr(100), MaxBet: ptr(50_000)},
-		{Game: "plinko", Currency: "usd", Variant: "high/16", Enabled: true, MaxBet: ptr(5_000), MaxPayout: ptr(1_000_000)},
-		{Game: "plinko", Currency: "usd", Variant: "low/8", Enabled: false},
+		{Game: "runner", Currency: "usd", Enabled: true, MinBet: ptr(100), MaxBet: ptr(50_000)},
+		{Game: "runner", Currency: "usd", Variant: "high/16", Enabled: true, MaxBet: ptr(5_000), MaxPayout: ptr(1_000_000)},
+		{Game: "runner", Currency: "usd", Variant: "low/8", Enabled: false},
 		// Looser than the code: clamped back.
-		{Game: "dice", Currency: "tickets", Enabled: true, MinBet: ptr(1), MaxBet: ptr(9_000_000), MaxPayout: ptr(1 << 40)},
+		{Game: "arena", Currency: "tickets", Enabled: true, MinBet: ptr(1), MaxBet: ptr(9_000_000), MaxPayout: ptr(1 << 40)},
 	})
 	for _, tc := range []struct {
 		g       *Game
@@ -56,12 +56,12 @@ func TestLimits(t *testing.T) {
 		want    Limits
 		err     error
 	}{
-		{plinko, usd, "", Limits{true, 100, 50_000, 10_000_000}, nil},                  // game row
-		{plinko, usd, "high/16", Limits{true, 100, 5_000, 1_000_000}, nil},             // variant inherits min
-		{plinko, usd, "low/8", Limits{false, 100, 50_000, 10_000_000}, ErrUnavailable}, // variant off
-		{plinko, usd, "nope", Limits{true, 100, 50_000, 10_000_000}, nil},              // unknown variant: game row
-		{plinko, tickets, "high/16", Limits{true, 10, 1_000_000, 10_000_000}, nil},     // rows are per currency
-		{dice, tickets, "", Limits{true, 10, 1_000_000, 98_000_000}, nil},              // clamped
+		{runner, usd, "", Limits{true, 100, 50_000, 10_000_000}, nil},                  // game row
+		{runner, usd, "high/16", Limits{true, 100, 5_000, 1_000_000}, nil},             // variant inherits min
+		{runner, usd, "low/8", Limits{false, 100, 50_000, 10_000_000}, ErrUnavailable}, // variant off
+		{runner, usd, "nope", Limits{true, 100, 50_000, 10_000_000}, nil},              // unknown variant: game row
+		{runner, tickets, "high/16", Limits{true, 10, 1_000_000, 10_000_000}, nil},     // rows are per currency
+		{arena, tickets, "", Limits{true, 10, 1_000_000, 98_000_000}, nil},             // clamped
 	} {
 		_, got, err := tc.g.Limits(tc.cur, tc.variant)
 		if got != tc.want || !errors.Is(err, tc.err) {
@@ -70,11 +70,11 @@ func TestLimits(t *testing.T) {
 	}
 
 	// A game turned off turns off every variant, demo bets too.
-	set(s, []store.GameSetting{{Game: "plinko", Enabled: false}}, nil)
-	if _, _, err := plinko.Stake(usd, "high/16", 0); !errors.Is(err, ErrUnavailable) {
+	set(s, []store.GameSetting{{Game: "runner", Enabled: false}}, nil)
+	if _, _, err := runner.Stake(usd, "high/16", 0); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("game off: %v", err)
 	}
-	if _, _, err := dice.Stake(usd, "", 100); err != nil {
+	if _, _, err := arena.Stake(usd, "", 100); err != nil {
 		t.Fatalf("other game: %v", err)
 	}
 }
@@ -99,9 +99,9 @@ func TestStake(t *testing.T) {
 
 func TestPublic(t *testing.T) {
 	s := newService()
-	s.Game("plinko", 1_000_000, 10_000_000, []string{"low/8", "high/16"})
-	set(s, nil, []store.GameLimit{{Game: "plinko", Currency: "usd", Variant: "high/16", Enabled: false}})
-	p := s.Public()["plinko"]
+	s.Game("runner", 1_000_000, 10_000_000, []string{"low/8", "high/16"})
+	set(s, nil, []store.GameLimit{{Game: "runner", Currency: "usd", Variant: "high/16", Enabled: false}})
+	p := s.Public()["runner"]
 	if p[usd].Limits != (Limits{true, 1, 1_000_000, 10_000_000}) || len(p[usd].Variants) != 1 || p[usd].Variants["high/16"].Enabled {
 		t.Fatalf("usd: %+v", p[usd])
 	}
@@ -113,18 +113,18 @@ func TestPublic(t *testing.T) {
 // A currency turned off takes no bets in any game or variant, demo included; the other is untouched.
 func TestOff(t *testing.T) {
 	s := newService()
-	plinko := s.Game("plinko", 1_000_000, 10_000_000, []string{"low/8", "high/16"})
-	set(s, nil, []store.GameLimit{{Game: "plinko", Currency: "usd", Variant: "high/16", Enabled: true, MaxBet: ptr(500)}})
+	runner := s.Game("runner", 1_000_000, 10_000_000, []string{"low/8", "high/16"})
+	set(s, nil, []store.GameLimit{{Game: "runner", Currency: "usd", Variant: "high/16", Enabled: true, MaxBet: ptr(500)}})
 	s.Off(usd)
 	for _, v := range []string{"", "high/16"} {
-		if _, _, err := plinko.Stake("", v, 0); !errors.Is(err, ErrUnavailable) {
+		if _, _, err := runner.Stake("", v, 0); !errors.Is(err, ErrUnavailable) {
 			t.Fatalf("usd %q: %v", v, err)
 		}
 	}
-	if _, _, err := plinko.Stake(tickets, "high/16", 100); err != nil {
+	if _, _, err := runner.Stake(tickets, "high/16", 100); err != nil {
 		t.Fatalf("tickets: %v", err)
 	}
-	p := s.Public()["plinko"]
+	p := s.Public()["runner"]
 	if p[usd].Limits.Enabled || p[usd].Variants["high/16"].Enabled || !p[tickets].Limits.Enabled {
 		t.Fatalf("public: %+v", p)
 	}

@@ -13,14 +13,14 @@ import (
 
 func TestBetsRegistry(t *testing.T) {
 	a := &App{}
-	a.Bets("dice", func(context.Context, int64, int64, int32) ([]Bet, error) { return nil, nil })
+	a.Bets("arena", func(context.Context, int64, int64, int32) ([]Bet, error) { return nil, nil })
 	got := a.BetSources()
-	if got["dice"] == nil {
-		t.Fatal(`BetSources() has no "dice"`)
+	if got["arena"] == nil {
+		t.Fatal(`BetSources() has no "arena"`)
 	}
-	delete(got, "dice")
+	delete(got, "arena")
 	got["x"] = nil
-	if again := a.BetSources(); again["dice"] == nil || len(again) != 1 {
+	if again := a.BetSources(); again["arena"] == nil || len(again) != 1 {
 		t.Fatalf("mutating the copy changed the registry: %v", again)
 	}
 	defer func() {
@@ -28,7 +28,7 @@ func TestBetsRegistry(t *testing.T) {
 			t.Fatal("duplicate game did not panic")
 		}
 	}()
-	a.Bets("dice", nil)
+	a.Bets("arena", nil)
 }
 
 // blockingTransport serves until ctx ends, like a real transport.

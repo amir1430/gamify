@@ -62,17 +62,17 @@ func TestGameRange(t *testing.T) {
 
 func TestRegisterGame(t *testing.T) {
 	l, _ := testLedger(t)
-	if err := l.RegisterGame(1, "dice"); err != nil {
+	if err := l.RegisterGame(1, "arena"); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.RegisterGame(1, "dice"); err != nil {
+	if err := l.RegisterGame(1, "arena"); err != nil {
 		t.Fatalf("registering the same game again: %v", err)
 	}
-	if err := l.RegisterGame(1, "mines"); err == nil {
+	if err := l.RegisterGame(1, "runner"); err == nil {
 		t.Fatal("a second game took ID 1")
 	}
-	if err := l.RegisterGame(FirstBrandGame, "dice"); err == nil {
-		t.Fatal("dice took a second ID")
+	if err := l.RegisterGame(FirstBrandGame, "arena"); err == nil {
+		t.Fatal("arena took a second ID")
 	}
 	if err := l.RegisterGame(MaxGame+1, "big"); !errors.Is(err, ErrBadGame) {
 		t.Fatalf("out of range: %v", err)
