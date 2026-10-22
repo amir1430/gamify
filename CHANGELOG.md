@@ -77,11 +77,32 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   record, in the caller's transaction (admin actions); the reconcile pass moves the money, settles
   `finishing` matches and cancels running matches past their `MatchTimeout` deadline (reason
   `timeout`). `QueueConfig.FeeBP` must be below 10000.
+- `matchmaking`: history, metrics, admin. `Register` adds the activity source `"matchmaking"`: one
+  `app.Activity` per player of every staked match that ended (`settled` or `cancelled`; free matches
+  are not listed), amount = stake, payout = what the player won, detail
+  `{"queue","result":"won|lost|refunded|cancelled"}`. Metrics: `gamify_matchmaking_tickets{queue}`
+  (gauge, updated every tick), `gamify_matchmaking_wait_seconds{queue}` (histogram, per ticket when its
+  match forms) and `gamify_matchmaking_matches_total{queue,outcome}` (`formed`, `settled`,
+  `cancelled`, counted once by the instance that made the transition). New Go reads for admin pages:
+  `Service.Matches(ctx, MatchFilter, before, limit)`, `Service.QueueStats(ctx)`,
+  `Service.Ratings(ctx, userID, before, limit)`. New package `matchmaking/matchmakingadmin`:
+  `Register(adm, s)` adds the views `mm-matches` (actions `cancel`, `report` with ranks like `2,1`; the
+  reconcile pass moves the money), `mm-queues` and `mm-ratings`.
+- `party`: `Service.List(ctx, userID, before, limit)`, `Service.Disband(ctx, tx, id)` (deletes the
+  party in the caller's transaction, a locked one too, and returns it) and `Service.Disbanded(ctx, p)`
+  (after the commit: members get `"left":true`, `OnChange` hooks get no members). New package
+  `party/partyadmin`: `Register(adm, p)` adds the view `parties` with the action `disband`.
+- `admin`: built-in permissions `matchmaking.cancel`, `matchmaking.report` and `party.disband`
+  (`PermMatchCancel`, `PermMatchReport`, `PermPartyDisband`), held by operators and owners.
+  `Action.After(ctx, call, before, after)` runs once the action's transaction has committed.
+  `admin/admintest` drives a console over HTTP in tests.
 
 ### Upgrade
 - `party`: new goose table `goose_party` (migrations run in `party.Register`); nothing changes unless you register it.
 - `matchmaking`: new goose table `goose_matchmaking` (migrations run in `matchmaking.Register`, which also
   registers platform ledger game 1); nothing changes unless you register it.
+- `admin`: operators and owners now also hold `matchmaking.cancel`, `matchmaking.report` and `party.disband`
+  (they show in `/api/me` permissions); they only matter if you register `matchmakingadmin` or `partyadmin`.
 
 ## [1.0.0] - 2026-10-22
 

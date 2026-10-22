@@ -325,6 +325,123 @@ func (q *Queries) InsertTicketUser(ctx context.Context, arg InsertTicketUserPara
 	return err
 }
 
+const listMatches = `-- name: ListMatches :many
+SELECT m.id, m.queue, m.ref, m.status, m.currency, m.stake, m.fee_bp, m.result, m.payouts, m.refund, m.on_finish_done, m.reason, m.tickets, m.deadline, m.created_at, m.updated_at FROM mm_matches m
+WHERE ($1::bigint = 0 OR m.id < $1)
+  AND ($2::text = '' OR m.queue = $2)
+  AND ($3::text = '' OR m.status = $3)
+  AND (NOT $4::bool OR (m.stake > 0 AND m.status IN ('settled', 'cancelled')))
+  AND ($5::bigint = 0 OR EXISTS (
+        SELECT 1 FROM mm_match_players p WHERE p.match_id = m.id AND p.user_id = $5))
+ORDER BY m.id DESC LIMIT $6
+`
+
+type ListMatchesParams struct {
+	BeforeID int64
+	Queue    string
+	Status   string
+	History  bool
+	UserID   int64
+	MaxRows  int32
+}
+
+// Newest first. user_id 0, queue ” and status ” are no filter; history keeps staked matches that
+// ended (settled or cancelled).
+func (q *Queries) ListMatches(ctx context.Context, arg ListMatchesParams) ([]MmMatch, error) {
+	rows, err := q.db.Query(ctx, listMatches,
+		arg.BeforeID,
+		arg.Queue,
+		arg.Status,
+		arg.History,
+		arg.UserID,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MmMatch
+	for rows.Next() {
+		var i MmMatch
+		if err := rows.Scan(
+			&i.ID,
+			&i.Queue,
+			&i.Ref,
+			&i.Status,
+			&i.Currency,
+			&i.Stake,
+			&i.FeeBp,
+			&i.Result,
+			&i.Payouts,
+			&i.Refund,
+			&i.OnFinishDone,
+			&i.Reason,
+			&i.Tickets,
+			&i.Deadline,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRatings = `-- name: ListRatings :many
+SELECT r.user_id, r.key, r.mu, r.sigma, r.matches FROM mm_ratings r
+WHERE r.user_id IN (
+    SELECT DISTINCT u.user_id FROM mm_ratings u
+    WHERE ($1::bigint = 0 OR u.user_id < $1)
+      AND ($2::bigint = 0 OR u.user_id = $2)
+    ORDER BY u.user_id DESC LIMIT $3)
+ORDER BY r.user_id DESC, r.key
+`
+
+type ListRatingsParams struct {
+	BeforeID int64
+	UserID   int64
+	MaxRows  int32
+}
+
+type ListRatingsRow struct {
+	UserID  int64
+	Key     string
+	Mu      float64
+	Sigma   float64
+	Matches int32
+}
+
+// The ratings of the max_rows highest user IDs below before_id (0: no bound), or of one user.
+func (q *Queries) ListRatings(ctx context.Context, arg ListRatingsParams) ([]ListRatingsRow, error) {
+	rows, err := q.db.Query(ctx, listRatings, arg.BeforeID, arg.UserID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRatingsRow
+	for rows.Next() {
+		var i ListRatingsRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Key,
+			&i.Mu,
+			&i.Sigma,
+			&i.Matches,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockMatch = `-- name: LockMatch :one
 SELECT id, queue, ref, status, currency, stake, fee_bp, result, payouts, refund, on_finish_done, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE id = $1 AND status IN ('forming', 'finishing', 'cancelling') FOR UPDATE SKIP LOCKED
 `
@@ -574,6 +691,36 @@ func (q *Queries) PruneRequests(ctx context.Context, createdAt pgtype.Timestampt
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queueStats = `-- name: QueueStats :many
+SELECT queue, count(*)::bigint AS waiting, min(queued_at)::timestamptz AS oldest FROM mm_tickets GROUP BY queue
+`
+
+type QueueStatsRow struct {
+	Queue   string
+	Waiting int64
+	Oldest  pgtype.Timestamptz
+}
+
+func (q *Queries) QueueStats(ctx context.Context) ([]QueueStatsRow, error) {
+	rows, err := q.db.Query(ctx, queueStats)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QueueStatsRow
+	for rows.Next() {
+		var i QueueStatsRow
+		if err := rows.Scan(&i.Queue, &i.Waiting, &i.Oldest); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const queueTickets = `-- name: QueueTickets :many

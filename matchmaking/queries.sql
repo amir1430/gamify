@@ -157,3 +157,28 @@ SELECT * FROM mm_matches WHERE queue = $1 AND ref = $2;
 -- name: LockQueue :exec
 -- Blocks until the queue's formation pass (TryQueueLock) and other direct creates are done.
 SELECT pg_advisory_xact_lock(hashtext('mm:' || sqlc.arg(queue)::text));
+
+-- name: ListMatches :many
+-- Newest first. user_id 0, queue '' and status '' are no filter; history keeps staked matches that
+-- ended (settled or cancelled).
+SELECT m.* FROM mm_matches m
+WHERE (sqlc.arg(before_id)::bigint = 0 OR m.id < sqlc.arg(before_id))
+  AND (sqlc.arg(queue)::text = '' OR m.queue = sqlc.arg(queue))
+  AND (sqlc.arg(status)::text = '' OR m.status = sqlc.arg(status))
+  AND (NOT sqlc.arg(history)::bool OR (m.stake > 0 AND m.status IN ('settled', 'cancelled')))
+  AND (sqlc.arg(user_id)::bigint = 0 OR EXISTS (
+        SELECT 1 FROM mm_match_players p WHERE p.match_id = m.id AND p.user_id = sqlc.arg(user_id)))
+ORDER BY m.id DESC LIMIT sqlc.arg(max_rows);
+
+-- name: QueueStats :many
+SELECT queue, count(*)::bigint AS waiting, min(queued_at)::timestamptz AS oldest FROM mm_tickets GROUP BY queue;
+
+-- name: ListRatings :many
+-- The ratings of the max_rows highest user IDs below before_id (0: no bound), or of one user.
+SELECT r.user_id, r.key, r.mu, r.sigma, r.matches FROM mm_ratings r
+WHERE r.user_id IN (
+    SELECT DISTINCT u.user_id FROM mm_ratings u
+    WHERE (sqlc.arg(before_id)::bigint = 0 OR u.user_id < sqlc.arg(before_id))
+      AND (sqlc.arg(user_id)::bigint = 0 OR u.user_id = sqlc.arg(user_id))
+    ORDER BY u.user_id DESC LIMIT sqlc.arg(max_rows))
+ORDER BY r.user_id DESC, r.key;

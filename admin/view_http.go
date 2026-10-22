@@ -197,6 +197,12 @@ func (adm *Admin) viewAction(w http.ResponseWriter, r *http.Request, s *session)
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	if a.After != nil {
+		_, _ = guarded(ctx, v.Name, what+" after", errActionFailed, func() (struct{}, error) {
+			a.After(ctx, call, ba[0], ba[1])
+			return struct{}{}, nil
+		})
+	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

@@ -38,3 +38,11 @@ INSERT INTO party_requests (party_id, user_id) VALUES ($1, $2) ON CONFLICT DO NO
 -- name: DeleteRequest :execrows
 DELETE FROM party_requests WHERE party_id = $1 AND user_id = $2;
 
+
+-- name: ListParties :many
+-- Newest first; user_id 0 is every party, else the parties the user is in.
+SELECT id, leader_id, name, max_size, open, COALESCE(locked_by, '')::text AS locked_by FROM parties
+WHERE (sqlc.arg(before_id)::bigint = 0 OR id < sqlc.arg(before_id))
+  AND (sqlc.arg(user_id)::bigint = 0 OR EXISTS (
+        SELECT 1 FROM party_members m WHERE m.party_id = parties.id AND m.user_id = sqlc.arg(user_id)))
+ORDER BY id DESC LIMIT sqlc.arg(max_rows);

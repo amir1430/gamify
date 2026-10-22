@@ -21,3 +21,6 @@ func SetSettlePot(f func(l *ledger.Ledger, ctx context.Context, g ledger.Game, c
 	settlePot = f
 	return func() { settlePot = old }
 }
+
+// TickNow runs the matcher loop's tick once (a pass and the gauges).
+func (s *Service) TickNow(ctx context.Context) { s.tick(ctx) }

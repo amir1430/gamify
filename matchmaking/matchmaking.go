@@ -166,6 +166,7 @@ func Register(ctx context.Context, a *app.App, parties *party.Service, cfg Confi
 	s := &Service{a: a, parties: parties, q: store.New(a.Pool), cfg: cfg}
 	a.Loop(cfg.Tick, s.tick)
 	a.Reconcile(s.Reconcile)
+	a.History("matchmaking", s.history)
 	s.handle()
 	parties.OnChange(s.onPartyChange)
 	return s, nil

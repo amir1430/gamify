@@ -113,6 +113,57 @@ func (q *Queries) GetParty(ctx context.Context, id int64) (GetPartyRow, error) {
 	return i, err
 }
 
+const listParties = `-- name: ListParties :many
+SELECT id, leader_id, name, max_size, open, COALESCE(locked_by, '')::text AS locked_by FROM parties
+WHERE ($1::bigint = 0 OR id < $1)
+  AND ($2::bigint = 0 OR EXISTS (
+        SELECT 1 FROM party_members m WHERE m.party_id = parties.id AND m.user_id = $2))
+ORDER BY id DESC LIMIT $3
+`
+
+type ListPartiesParams struct {
+	BeforeID int64
+	UserID   int64
+	MaxRows  int32
+}
+
+type ListPartiesRow struct {
+	ID       int64
+	LeaderID int64
+	Name     string
+	MaxSize  int32
+	Open     bool
+	LockedBy string
+}
+
+// Newest first; user_id 0 is every party, else the parties the user is in.
+func (q *Queries) ListParties(ctx context.Context, arg ListPartiesParams) ([]ListPartiesRow, error) {
+	rows, err := q.db.Query(ctx, listParties, arg.BeforeID, arg.UserID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPartiesRow
+	for rows.Next() {
+		var i ListPartiesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeaderID,
+			&i.Name,
+			&i.MaxSize,
+			&i.Open,
+			&i.LockedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockParty = `-- name: LockParty :one
 SELECT id, leader_id, name, max_size, open, COALESCE(locked_by, '')::text AS locked_by FROM parties WHERE id = $1 FOR UPDATE
 `

@@ -282,3 +282,65 @@ func TestPartyJoinAcceptConcurrent(t *testing.T) {
 		}
 	}
 }
+
+func TestDisband(t *testing.T) {
+	a, s := setup(t, party.Config{})
+	ctx := context.Background()
+	alice, bob := a.User("alice"), a.User("bob")
+	p, _ := call(t, a, alice, "party.create", map[string]any{"max": 4, "open": true})
+	if _, cerr := call(t, a, bob, "party.join", map[string]any{"party_id": p.ID}); cerr != nil {
+		t.Fatal(cerr)
+	}
+	if err := s.Lock(ctx, p.ID, "tournament:7"); err != nil {
+		t.Fatal(err)
+	}
+	var hooked []party.Party
+	s.OnChange(func(_ context.Context, p party.Party) { hooked = append(hooked, p) })
+
+	// rolled back: nothing changes
+	tx, err := a.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Disband(ctx, tx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	tx.Rollback(ctx)
+	if got, err := s.Get(ctx, p.ID); err != nil || len(got.Members) != 2 {
+		t.Fatalf("after rollback: %+v %v", got, err)
+	}
+
+	tx, err = a.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	seen := len(pushes(a, bob, "party"))
+	former, err := s.Disband(ctx, tx, p.ID)
+	if err != nil || !slices.Equal(former.Members, []int64{alice, bob}) {
+		t.Fatalf("disband: %+v %v", former, err)
+	}
+	if len(pushes(a, bob, "party")) != seen || len(hooked) != 0 {
+		t.Fatalf("announced before commit: %d pushes, %d hooks", len(pushes(a, bob, "party")), len(hooked))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.Disbanded(ctx, former)
+	for _, u := range []int64{alice, bob} {
+		if l := last(t, a, u, "party"); !l.Left || l.Party.ID != p.ID {
+			t.Fatalf("user %d push %+v", u, l)
+		}
+	}
+	if len(hooked) != 1 || hooked[0].ID != p.ID || len(hooked[0].Members) != 0 {
+		t.Fatalf("hooks %+v", hooked)
+	}
+	if _, err := s.Get(ctx, p.ID); err != party.ErrNotFound {
+		t.Fatalf("party still there: %v", err)
+	}
+	tx, _ = a.Pool.Begin(ctx)
+	if _, err := s.Disband(ctx, tx, p.ID); err != party.ErrNotFound {
+		t.Fatalf("again: %v", err)
+	}
+	tx.Rollback(ctx)
+}

@@ -88,7 +88,7 @@ func TestLoginFlow(t *testing.T) {
 	for _, p := range body["permissions"].([]any) {
 		perms = append(perms, p.(string))
 	}
-	if want := []string{"adjust", "admins", "approve", "identity", "limits", "view"}; !slices.Equal(perms, want) {
+	if want := []string{"adjust", "admins", "approve", "identity", "limits", "matchmaking.cancel", "matchmaking.report", "party.disband", "view"}; !slices.Equal(perms, want) {
 		t.Fatalf("permissions %v, want %v", perms, want)
 	}
 	brand := body["brand"].(map[string]any)

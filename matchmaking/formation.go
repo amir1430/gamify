@@ -12,6 +12,7 @@ import (
 
 	"github.com/amir1430/gamify/ledger"
 	"github.com/amir1430/gamify/matchmaking/internal/store"
+	"github.com/amir1430/gamify/metrics"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -27,6 +28,13 @@ var settlePot = (*ledger.Ledger).SettlePotFee
 func (s *Service) tick(ctx context.Context) {
 	if err := s.MatchNow(ctx); err != nil {
 		slog.ErrorContext(ctx, "matchmaking: tick", "err", err)
+	}
+	stats, err := s.QueueStats(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "matchmaking: tick", "err", err)
+	}
+	for _, st := range stats {
+		metrics.MatchmakingTickets(st.Name, int(st.Waiting))
 	}
 }
 
@@ -153,8 +161,9 @@ func (s *Service) formQueue(ctx context.Context, q *Queue) (ids []int64, err err
 		}
 	}
 	var removed []removal
+	var waits []time.Duration // of the tickets in the matches formed
 	err = pgx.BeginFunc(ctx, s.a.Pool, func(tx pgx.Tx) error {
-		ids, removed = nil, nil
+		ids, removed, waits = nil, nil, nil
 		qs := s.q.WithTx(tx)
 		if ok, err := qs.TryQueueLock(ctx, cfg.Name); err != nil || !ok {
 			return err
@@ -206,11 +215,20 @@ func (s *Service) formQueue(ctx context.Context, q *Queue) (ids []int64, err err
 				return err
 			}
 			ids = append(ids, id)
+			for _, tid := range f.Tickets {
+				waits = append(waits, now.Sub(live[slices.IndexFunc(live, func(t Ticket) bool { return t.ID == tid })].QueuedAt))
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	for _, d := range waits {
+		metrics.MatchmakingWait(cfg.Name, d)
+	}
+	for range ids {
+		metrics.MatchmakingMatch(cfg.Name, "formed")
 	}
 	for _, r := range removed {
 		for _, u := range r.users {
@@ -444,7 +462,8 @@ func (s *Service) cancelled(ctx context.Context, tx pgx.Tx, m Match, raw []byte)
 		return err
 	}
 	q := s.q.WithTx(tx)
-	if _, err := q.SetMatchCancelled(ctx, m.ID); err != nil {
+	n, err := q.SetMatchCancelled(ctx, m.ID)
+	if err != nil {
 		return err
 	}
 	var requeued []Ticket
@@ -462,6 +481,9 @@ func (s *Service) cancelled(ctx context.Context, tx pgx.Tx, m Match, raw []byte)
 	}
 	for _, t := range requeued {
 		s.queued(ctx, t)
+	}
+	if n > 0 {
+		metrics.MatchmakingMatch(m.Queue, "cancelled")
 	}
 	if m.Reason != "insufficient_funds" {
 		m.Status = "cancelled"

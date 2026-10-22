@@ -10,6 +10,7 @@ import (
 	"github.com/amir1430/gamify/gameconfig"
 	"github.com/amir1430/gamify/ledger"
 	"github.com/amir1430/gamify/matchmaking/internal/store"
+	"github.com/amir1430/gamify/metrics"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -64,6 +65,7 @@ func (s *Service) Create(ctx context.Context, n NewMatch) (Match, error) {
 
 	var id int64
 	var status string
+	var fresh bool
 	err = pgx.BeginFunc(ctx, s.a.Pool, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
 		if !cfg.Concurrent {
@@ -86,6 +88,7 @@ func (s *Service) Create(ctx context.Context, n NewMatch) (Match, error) {
 		if err != nil {
 			return err
 		}
+		fresh = true
 		if !cfg.Concurrent {
 			busy, err := q.UsersBusy(ctx, store.UsersBusyParams{UserIds: users, Queue: cfg.Name})
 			if err != nil {
@@ -111,6 +114,9 @@ func (s *Service) Create(ctx context.Context, n NewMatch) (Match, error) {
 	})
 	if err != nil {
 		return Match{}, err
+	}
+	if fresh {
+		metrics.MatchmakingMatch(cfg.Name, "formed")
 	}
 	if status == "forming" { // fresh, or an existing one still forming; else just report it
 		if err := s.advance(ctx, id); err != nil {

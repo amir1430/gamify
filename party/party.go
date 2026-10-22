@@ -126,6 +126,25 @@ func (s *Service) Of(ctx context.Context, userID int64) ([]Party, error) {
 	return out, nil
 }
 
+// List lists parties newest first (before 0: the first page), or only those userID is in when it
+// is not 0.
+func (s *Service) List(ctx context.Context, userID, before int64, limit int32) ([]Party, error) {
+	rows, err := s.q.ListParties(ctx, store.ListPartiesParams{BeforeID: before, UserID: userID, MaxRows: limit})
+	if err != nil {
+		return nil, err
+	}
+	out := []Party{}
+	for _, r := range rows {
+		m, err := s.q.PartyMembers(ctx, r.ID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, Party{ID: r.ID, LeaderID: r.LeaderID, Name: r.Name, Max: int(r.MaxSize), Open: r.Open,
+			Locked: r.LockedBy, Members: append([]int64{}, m...)})
+	}
+	return out, nil
+}
+
 // Lock freezes membership (join, leave, kick, accept) on behalf of by, e.g. "tournament:7".
 // Idempotent for the same by; ErrLocked if someone else holds it.
 func (s *Service) Lock(ctx context.Context, partyID int64, by string) error {
@@ -214,4 +233,24 @@ func (s *Service) allow(user int64) bool {
 	}
 	s.sent[user] = append(w, now)
 	return true
+}
+
+// Disband deletes party id with its members and requests in the caller's transaction (an admin
+// action; a locked party too) and returns it as it was. Nothing is announced yet: call Disbanded
+// after the transaction commits.
+func (s *Service) Disband(ctx context.Context, tx pgx.Tx, id int64) (Party, error) {
+	q := s.q.WithTx(tx)
+	p, err := load(ctx, q, id, true)
+	if err != nil {
+		return Party{}, err
+	}
+	return p, q.DeleteParty(ctx, id)
+}
+
+// Disbanded announces a party Disband deleted, once its transaction committed: every former member
+// gets the party with "left":true and the OnChange hooks get it with no Members.
+func (s *Service) Disbanded(ctx context.Context, p Party) {
+	former := p.Members
+	p.Members = []int64{}
+	s.changed(ctx, p, former...)
 }

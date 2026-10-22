@@ -9,6 +9,7 @@ import (
 
 	"github.com/amir1430/gamify/ledger"
 	"github.com/amir1430/gamify/matchmaking/internal/store"
+	"github.com/amir1430/gamify/metrics"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -252,6 +253,7 @@ func (s *Service) settle(ctx context.Context, tx pgx.Tx, m Match, row store.MmMa
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	metrics.MatchmakingMatch(m.Queue, "settled")
 	m.Status = "settled"
 	for _, p := range m.Players {
 		s.push(ctx, p.UserID, map[string]any{"type": "match.finished", "match": m, "payouts": paid, "ratings": ratings})
