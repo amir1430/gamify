@@ -190,6 +190,9 @@ func (c QueueConfig) validate() (QueueConfig, error) {
 	if c.FFA != nil && (len(c.Teams) != 1 || c.Teams[0] != Team{1, 1}) {
 		return c, errors.New("FFA needs Teams [{1,1}]")
 	}
+	if c.FFA == nil && len(c.Teams) < 2 {
+		return c, errors.New("need at least 2 teams (or FFA)")
+	}
 	if c.FFA != nil && (c.FFA.Min < 2 || c.FFA.Min > c.FFA.Max) {
 		return c, fmt.Errorf("FFA size %d..%d", c.FFA.Min, c.FFA.Max)
 	}
@@ -197,11 +200,22 @@ func (c QueueConfig) validate() (QueueConfig, error) {
 		return c, errors.New("stakes need a Game")
 	}
 	for cur, ss := range c.Stakes {
+		if len(ss) == 0 {
+			return c, fmt.Errorf("no stakes in %s", cur)
+		}
 		for _, v := range ss {
 			if v <= 0 {
 				return c, fmt.Errorf("stake %d in %s", v, cur)
 			}
 		}
+	}
+	for k, r := range c.Numbers {
+		if r.Every <= 0 {
+			return c, fmt.Errorf("number %q: Every %v", k, r.Every)
+		}
+	}
+	if c.FillAfter < 0 || c.MatchTimeout < 0 || c.MaxWait < 0 && c.MaxWait != Forever {
+		return c, errors.New("negative FillAfter, MatchTimeout or MaxWait")
 	}
 	if c.FeeBP < 0 || c.FeeBP > 10_000 {
 		return c, fmt.Errorf("FeeBP %d outside 0..10000", c.FeeBP)

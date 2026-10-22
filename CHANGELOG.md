@@ -20,6 +20,9 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   `Service.Queue(QueueConfig)` (validated queue with defaults; `Queue.Config()`), the `Team`,
   `Ticket`, `Match`, `Player`, `Result` types, `Forever`, client errors 1030-1036, and the OpenSkill
   `Rating`/`DefaultRating`/`Ordinal`. The ledger game ID `matchmaking.Game = 1` is claimed by `Register`.
+  A queue needs 2+ teams unless FFA, a non-empty stake list per currency, `NumberRule.Every > 0`,
+  and non-negative `FillAfter`/`MatchTimeout`/`MaxWait` (`Forever` allowed). The matcher (internal)
+  fills teams anchor first, then larger parties first, oldest first among equal sizes.
 
 ### Upgrade
 - `party`: new goose table `goose_party` (migrations run in `party.Register`); nothing changes unless you register it.
