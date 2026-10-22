@@ -243,7 +243,11 @@ func freshDatabase(t testing.TB) *pgxpool.Pool {
 		t.Skip("TEST_DATABASE_URL not set")
 	}
 	ctx := context.Background()
-	admin, err := pgx.Connect(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn) // takes the pool_* settings (pool_max_conns) out of the DSN
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := pgx.ConnectConfig(ctx, cfg.ConnConfig.Copy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,10 +256,6 @@ func freshDatabase(t testing.TB) *pgxpool.Pool {
 	name := "apptest_" + hex.EncodeToString(b[:])
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
 		admin.Close(ctx)
-		t.Fatal(err)
-	}
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
 		t.Fatal(err)
 	}
 	cfg.ConnConfig.Database = name

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"os"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -551,5 +553,48 @@ func TestPayoutStored(t *testing.T) {
 	balances(t, e, map[int64]int64{p0: 900 + 150, p1: 900 + 40})
 	if m := matchOf(t, e, m.ID); m.Status != "settled" {
 		t.Fatalf("match %+v", m)
+	}
+}
+
+// Settling holds a match row's transaction while the Postgres ledger takes a second connection
+// from the same pool: concurrent Finish calls must not starve it.
+func TestFinishSmallPool(t *testing.T) {
+	t.Setenv("TEST_DATABASE_URL", os.Getenv("TEST_DATABASE_URL")+"&pool_max_conns=4")
+	e := setup(t)
+	if n := e.a.Pool.Config().MaxConns; n != 4 {
+		t.Fatalf("pool size %d", n)
+	}
+	q := directBet(t, e)
+	ctx := context.Background()
+	var ms []matchmaking.Match
+	for i := range 20 {
+		a, b := e.a.User("a"+strconv.Itoa(i)), e.a.User("b"+strconv.Itoa(i))
+		e.a.Fund(a, "usd", 1000)
+		e.a.Fund(b, "usd", 1000)
+		m, err := e.s.Create(ctx, matchmaking.NewMatch{Queue: q, Teams: [][]int64{{a}, {b}}, Currency: "usd", Stake: 100,
+			Ref: "r" + strconv.Itoa(i)})
+		if err != nil || m.Status != "running" {
+			t.Fatalf("create %d: %+v %v", i, m, err)
+		}
+		ms = append(ms, m)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	errs := make(chan error, len(ms))
+	for _, m := range ms {
+		wg.Go(func() { errs <- e.s.Finish(ctx, m.ID, wins(m, m.Players[0].UserID)) })
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, m := range ms {
+		if got := matchOf(t, e, m.ID); got.Status != "settled" {
+			t.Fatalf("match %+v", got)
+		}
 	}
 }

@@ -455,3 +455,47 @@ func TestOnMatchError(t *testing.T) {
 		t.Fatal("OnMatch ran for a cancelled match")
 	}
 }
+
+// A kept ticket whose user queued elsewhere while its match was cancelling is dropped, and they
+// are told (already_queued).
+func TestRequeueAlreadyQueued(t *testing.T) {
+	e := setup(t)
+	alice, bob := e.a.User("alice"), e.a.User("bob")
+	e.a.Transport.SetOnline(alice, bob)
+	e.a.Fund(alice, "usd", 1000)
+	e.a.Fund(bob, "usd", 50)
+	ra, cerr := queue(e, alice, queueReq{Queue: "bet", Currency: "usd", Stake: 100, IdemKey: "a"})
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	if _, cerr := queue(e, bob, queueReq{Queue: "bet", Currency: "usd", Stake: 100, IdemKey: "b"}); cerr != nil {
+		t.Fatal(cerr)
+	}
+	var other matchmaking.QueueResult
+	restore := matchmaking.SetHoldPot(func(l *ledger.Ledger, ctx context.Context, g ledger.Game, c ledger.Currency, en ledger.PotEntry) error {
+		if en.UserID == bob { // alice's ticket is in the match: she queues elsewhere meanwhile
+			if other, cerr = queue(e, alice, queueReq{Queue: "ffa", IdemKey: "other"}); cerr != nil {
+				t.Error(cerr)
+			}
+		}
+		return l.HoldPot(ctx, g, c, en)
+	})
+	defer restore()
+	matchNow(t, e)
+	if m := onlyMatch(t, e); m.Status != "cancelled" || m.Reason != "insufficient_funds" {
+		t.Fatalf("match %+v", m)
+	}
+	if got := removedPush(e, alice); len(got) != 1 || got[0] != "already_queued" {
+		t.Fatalf("alice pushes %v", got)
+	}
+	if st := statusOf(t, e, alice); st.Ticket == nil || other.Ticket == nil || st.Ticket.ID != other.Ticket.ID {
+		t.Fatalf("alice status %+v", st.Ticket)
+	}
+	if r, _ := queue(e, alice, queueReq{Queue: "bet", Currency: "usd", Stake: 100, IdemKey: "a"}); r.Removed != "already_queued" ||
+		ra.Ticket == nil {
+		t.Fatalf("alice replay %+v", r)
+	}
+	if e.a.Balance(alice, "usd") != 1000 {
+		t.Fatal("alice not refunded")
+	}
+}

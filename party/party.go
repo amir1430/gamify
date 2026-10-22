@@ -207,8 +207,10 @@ func (s *Service) send(ctx context.Context, user int64, v any) {
 	_ = realtime.PublishJSON(ctx, s.rt, realtime.UserChannel(user), v) // best effort: clients re-read with party.get
 }
 
-// changed announces a committed membership change: pushes, then the hooks.
+// changed announces a committed membership change: pushes, then the hooks. Both run on a context
+// the caller hanging up doesn't cancel: the change is done, its consequences must follow.
 func (s *Service) changed(ctx context.Context, p Party, left ...int64) {
+	ctx = context.WithoutCancel(ctx)
 	s.push(ctx, p, left...)
 	s.mu.Lock()
 	hooks := slices.Clone(s.hooks)

@@ -150,6 +150,12 @@ type Service struct {
 
 	mu     sync.Mutex
 	queues map[string]*Queue
+
+	// slots bounds the transactions that hold a match row while calling the ledger (step): the
+	// Postgres ledger takes a second connection from the same pool, so with every connection
+	// held by such a transaction none would be left for the ledger.
+	// ponytail: half the pool, sized for the Postgres ledger; TigerBeetle doesn't need it, size per driver if that ceiling bites
+	slots chan struct{}
 }
 
 // Register adds matchmaking to an app: its tables, the matcher loop and reconcile pass.
@@ -163,7 +169,8 @@ func Register(ctx context.Context, a *app.App, parties *party.Service, cfg Confi
 	if err := a.Ledger.RegisterGame(Game, "matchmaking"); err != nil {
 		return nil, err
 	}
-	s := &Service{a: a, parties: parties, q: store.New(a.Pool), cfg: cfg}
+	s := &Service{a: a, parties: parties, q: store.New(a.Pool), cfg: cfg,
+		slots: make(chan struct{}, max(1, a.Pool.Config().MaxConns/2))}
 	a.Loop(cfg.Tick, s.tick)
 	a.Reconcile(s.Reconcile)
 	a.History("matchmaking", s.history)

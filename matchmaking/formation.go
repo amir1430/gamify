@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/amir1430/gamify/ledger"
@@ -185,6 +186,14 @@ func (s *Service) formQueue(ctx context.Context, q *Queue) (ids []int64, err err
 				reason = "expired"
 			case !cfg.AllowOffline && slices.ContainsFunc(t.Users, func(u int64) bool { return online[u] == 0 }):
 				reason = "offline"
+			case t.PartyID != 0: // a change whose OnChange hook failed or never ran (a crash)
+				changed, err := s.partyChanged(ctx, t)
+				if err != nil {
+					return err
+				}
+				if changed {
+					reason = "party_changed"
+				}
 			}
 			if reason == "" {
 				live = append(live, t)
@@ -341,12 +350,21 @@ func (s *Service) advance(ctx context.Context, id int64) error {
 	}
 }
 
-// step does one locked step; again is true when the match moved to a status with more to do.
+// step does one locked step; again is true when the match moved to a status with more to do. Its
+// transaction holds one of s.slots until it commits or rolls back.
 func (s *Service) step(ctx context.Context, id int64) (again bool, err error) {
-	tx, err := s.a.Pool.Begin(ctx)
+	select {
+	case s.slots <- struct{}{}:
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+	release := sync.OnceFunc(func() { <-s.slots })
+	ptx, err := s.a.Pool.Begin(ctx)
 	if err != nil {
+		release()
 		return false, err
 	}
+	tx := slotTx{ptx, release}
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	row, err := q.LockMatch(ctx, id)
@@ -410,6 +428,23 @@ func (s *Service) step(ctx context.Context, id int64) (again bool, err error) {
 	return false, nil
 }
 
+// slotTx gives its slot back when the transaction ends, so nothing after the commit (pushes,
+// OnMatch, OnFinish, which may Finish or Create) holds one.
+type slotTx struct {
+	pgx.Tx
+	release func()
+}
+
+func (t slotTx) Commit(ctx context.Context) error {
+	defer t.release()
+	return t.Tx.Commit(ctx)
+}
+
+func (t slotTx) Rollback(ctx context.Context) error {
+	defer t.release()
+	return t.Tx.Rollback(ctx)
+}
+
 // broke records a refused hold: the match is cancelling with the units to re-queue (every ticket
 // without a short user), and the short units' tickets are removed (insufficient_funds).
 func (s *Service) broke(ctx context.Context, tx pgx.Tx, m Match, raw []byte, short []int64) error {
@@ -467,20 +502,27 @@ func (s *Service) cancelled(ctx context.Context, tx pgx.Tx, m Match, raw []byte)
 		return err
 	}
 	var requeued []Ticket
+	var dropped []int64
 	for _, t := range tickets {
-		nt, ok, err := requeue(ctx, tx, s.q, t)
+		nt, gone, err := requeue(ctx, tx, s.q, t)
 		if err != nil {
 			return err
 		}
-		if ok {
+		if gone == nil {
 			requeued = append(requeued, nt)
 		}
+		dropped = append(dropped, gone...)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	for _, t := range requeued {
-		s.queued(ctx, t)
+		if _, err := s.queued(ctx, t); err != nil { // the next matcher pass drops a changed party's ticket
+			slog.ErrorContext(ctx, "matchmaking: re-queued ticket", "ticket", t.ID, "err", err)
+		}
+	}
+	for _, u := range dropped {
+		s.push(ctx, u, map[string]any{"type": "match.ticket_removed", "reason": "already_queued"})
 	}
 	if n > 0 {
 		metrics.MatchmakingMatch(m.Queue, "cancelled")
@@ -495,12 +537,13 @@ func (s *Service) cancelled(ctx context.Context, tx pgx.Tx, m Match, raw []byte)
 }
 
 // requeue inserts t again under a new ID with its original queue time and moves its requests to
-// it. A user who queued again meanwhile (a Concurrent queue) keeps that ticket: t is dropped
-// (already_queued).
-func requeue(ctx context.Context, tx pgx.Tx, qs *store.Queries, t Ticket) (Ticket, bool, error) {
+// it. A user may have queued again while the match was forming or cancelling (in another queue, as
+// a user has one ticket across queues, or in this one if it is Concurrent): they keep that ticket,
+// t is dropped (already_queued) and requeue returns t's users (dropped) to tell once tx commits.
+func requeue(ctx context.Context, tx pgx.Tx, qs *store.Queries, t Ticket) (_ Ticket, dropped []int64, err error) {
 	sp, err := tx.Begin(ctx)
 	if err != nil {
-		return t, false, err
+		return t, nil, err
 	}
 	defer sp.Rollback(ctx)
 	q := qs.WithTx(sp)
@@ -511,23 +554,23 @@ func requeue(ctx context.Context, tx pgx.Tx, qs *store.Queries, t Ticket) (Ticke
 		Currency: string(t.Currency), Stake: t.Stake, Properties: props, Server: server, Numbers: numbers, Rating: t.Rating,
 		QueuedAt: pgtype.Timestamptz{Time: t.QueuedAt, Valid: true}})
 	if err != nil {
-		return t, false, err
+		return t, nil, err
 	}
 	for _, u := range t.Users {
 		if err := q.InsertTicketUser(ctx, store.InsertTicketUserParams{UserID: u, TicketID: id}); err != nil {
 			var pg *pgconn.PgError
 			if errors.As(err, &pg) && pg.Code == "23505" {
 				if err := sp.Rollback(ctx); err != nil {
-					return t, false, err
+					return t, nil, err
 				}
-				return t, false, qs.WithTx(tx).SetRequestRemoved(ctx, store.SetRequestRemovedParams{TicketID: t.ID, Removed: "already_queued"})
+				return t, t.Users, qs.WithTx(tx).SetRequestRemoved(ctx, store.SetRequestRemovedParams{TicketID: t.ID, Removed: "already_queued"})
 			}
-			return t, false, err
+			return t, nil, err
 		}
 	}
 	if err := q.MoveRequests(ctx, store.MoveRequestsParams{NewID: id, OldID: t.ID}); err != nil {
-		return t, false, err
+		return t, nil, err
 	}
 	t.ID = id
-	return t, true, sp.Commit(ctx)
+	return t, nil, sp.Commit(ctx)
 }

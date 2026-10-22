@@ -36,7 +36,8 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   `Concurrent`, a user in a non-final match of the queue gets `ErrBusy`. `idem_key` (required, at
   most 64 bytes) replays the stored outcome even after the ticket is gone and whatever the payload.
   Pushes: `{"type":"match.ticket","ticket"}` and `{"type":"match.ticket_removed","reason"}`
-  (`cancelled`, `party_changed`; a party change of any kind removes its ticket). `Ticket`, `Match`,
+  (`cancelled`, `party_changed`; a party change of any kind removes its ticket, and if that fails
+  the next matcher pass removes a ticket whose party is gone or has another leader or members). `Ticket`, `Match`,
   `Player` and `Result` have JSON tags.
 - `matchmaking`: formation. Every `Config.Tick` (`Service.MatchNow(ctx)` runs one pass; one instance
   per queue at a time) drops tickets older than `MaxWait` (`expired`) and, unless `AllowOffline`,
@@ -44,7 +45,9 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   `MatchTimeout`, players in team then user order, `EntryID` = pot entry ID, ratings snapshotted).
   Staked: every stake is held (`HoldPot`, game `matchmaking.Game`); a refused hold refunds everyone,
   cancels the match (`insufficient_funds`), removes the short users' tickets (`match.ticket_removed`
-  `insufficient_funds`) and re-queues the others with their original queue time (`match.ticket`).
+  `insufficient_funds`) and re-queues the others with their original queue time (`match.ticket`);
+  a user who queued again meanwhile keeps that ticket and the old one is removed (`match.ticket_removed`
+  `already_queued`).
   Then `QueueConfig.OnMatch` (must be idempotent: it may run again; an error cancels and refunds,
   reason `on_match`, push `{"type":"match.cancelled","match","reason"}`), then `running` and
   `{"type":"match.found","match"}` to every player. A ledger outage leaves the match `forming`;
@@ -88,6 +91,12 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   `Service.Ratings(ctx, userID, before, limit)`. New package `matchmaking/matchmakingadmin`:
   `Register(adm, s)` adds the views `mm-matches` (actions `cancel`, `report` with ranks like `2,1`; the
   reconcile pass moves the money), `mm-queues` and `mm-ratings`.
+- `matchmaking`: the transactions that hold a match row while calling the ledger (holds, refunds,
+  settlement) take one of `max(1, pool MaxConns/2)` slots, so concurrent `Finish`/`Cancel`/`Create`
+  calls can't take every pool connection and leave none for the Postgres ledger.
+- `apptest`: `TEST_DATABASE_URL` may carry pgxpool settings (`pool_max_conns=4`).
+- `party`: `OnChange` hooks (and the change pushes) run on a context that the RPC's caller hanging
+  up does not cancel.
 - `party`: `Service.List(ctx, userID, before, limit)`, `Service.Disband(ctx, tx, id)` (deletes the
   party in the caller's transaction, a locked one too, and returns it) and `Service.Disbanded(ctx, p)`
   (after the commit: members get `"left":true`, `OnChange` hooks get no members). New package

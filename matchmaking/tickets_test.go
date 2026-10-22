@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -23,7 +24,12 @@ type env struct {
 
 func setup(t *testing.T) env {
 	t.Helper()
-	a := apptest.New(t)
+	return setupOn(t, apptest.New(t))
+}
+
+// setupOn registers parties, matchmaking and the test queues on a.
+func setupOn(t *testing.T, a *apptest.App) env {
+	t.Helper()
 	ctx := context.Background()
 	p, err := party.Register(ctx, a.App, party.Config{})
 	if err != nil {
@@ -403,5 +409,83 @@ func TestQueueConcurrentSameKey(t *testing.T) {
 		if id := <-ids; id != first || id < 1 {
 			t.Fatalf("ticket ids differ: %d vs %d", id, first)
 		}
+	}
+}
+
+// cancelOnLeft cancels a call's context when the party push to the user who left goes out: a
+// client hanging up right after its party.leave committed.
+type cancelOnLeft struct {
+	realtime.Transport
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnLeft) Publish(ctx context.Context, ch string, data []byte) error {
+	if c.cancel != nil && strings.Contains(string(data), `"left":true`) {
+		c.cancel()
+	}
+	return c.Transport.Publish(ctx, ch, data)
+}
+
+func TestQueuePartyLeaveCancelledCtx(t *testing.T) {
+	a := apptest.New(t)
+	tr := &cancelOnLeft{Transport: a.Realtime}
+	a.Realtime = tr
+	e := setupOn(t, a)
+	alice, bob, carol := e.a.User("alice"), e.a.User("bob"), e.a.User("carol")
+	pr, _ := apptest.Call[party.Party](e.a, alice, "party.create", map[string]any{"open": true})
+	for _, u := range []int64{bob, carol} {
+		if _, cerr := e.a.Call(u, "party.join", map[string]any{"party_id": pr.ID}); cerr != nil {
+			t.Fatal(cerr)
+		}
+	}
+	if _, cerr := queue(e, alice, queueReq{Queue: "5v5", IdemKey: "a"}); cerr != nil {
+		t.Fatal(cerr)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	tr.cancel = cancel
+	if _, cerr := e.a.Router.Call(ctx, "party.leave", strconv.FormatInt(carol, 10), []byte("{}")); cerr != nil {
+		t.Fatal(cerr)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("context not cancelled by the leave push")
+	}
+	for _, u := range []int64{alice, bob, carol} {
+		if st := statusOf(t, e, u); st.Ticket != nil {
+			t.Fatalf("user %d still queued after a leave on a cancelled context", u)
+		}
+		if got := removedPush(e, u); len(got) != 1 || got[0] != "party_changed" {
+			t.Fatalf("user %d removal pushes %v", u, got)
+		}
+	}
+}
+
+// A party change the hook missed (a crash between commit and hook) is caught by the matcher.
+func TestFormDropsChangedParty(t *testing.T) {
+	e := setup(t)
+	alice, bob, carol := e.a.User("alice"), e.a.User("bob"), e.a.User("carol")
+	e.a.Transport.SetOnline(alice, bob, carol)
+	pr, _ := apptest.Call[party.Party](e.a, alice, "party.create", map[string]any{"open": true})
+	for _, u := range []int64{bob, carol} {
+		if _, cerr := e.a.Call(u, "party.join", map[string]any{"party_id": pr.ID}); cerr != nil {
+			t.Fatal(cerr)
+		}
+	}
+	if _, cerr := queue(e, alice, queueReq{Queue: "5v5", IdemKey: "a"}); cerr != nil {
+		t.Fatal(cerr)
+	}
+	if _, err := e.a.Pool.Exec(context.Background(), `DELETE FROM party_members WHERE user_id = $1`, carol); err != nil {
+		t.Fatal(err)
+	}
+	matchNow(t, e)
+	for _, u := range []int64{alice, bob, carol} {
+		if st := statusOf(t, e, u); st.Ticket != nil {
+			t.Fatalf("user %d still queued", u)
+		}
+		if got := removedPush(e, u); len(got) != 1 || got[0] != "party_changed" {
+			t.Fatalf("user %d removal pushes %v", u, got)
+		}
+	}
+	if r, _ := queue(e, alice, queueReq{Queue: "5v5", IdemKey: "a"}); r.Removed != "party_changed" {
+		t.Fatalf("replay %+v", r)
 	}
 }

@@ -247,27 +247,43 @@ func (s *Service) enqueue(ctx context.Context, user int64, r queueReq) (QueueRes
 	if err != nil || replay {
 		return res, err
 	}
-	if s.queued(ctx, t) {
+	dropped, err := s.queued(ctx, t)
+	if dropped {
 		res = QueueResult{Removed: "party_changed"}
 	}
-	return res, nil
+	return res, err
 }
 
 // queued pushes a new ticket to its users. A party may have changed between reading it and the
-// commit, after its hook ran: then its ticket is dropped and queued reports true.
-func (s *Service) queued(ctx context.Context, t Ticket) (dropped bool) {
+// commit, after its hook ran: then its ticket is dropped and queued reports true. An error means
+// the ticket could not be dropped; the next matcher pass drops it (partyChanged).
+func (s *Service) queued(ctx context.Context, t Ticket) (dropped bool, err error) {
 	for _, u := range t.Users {
 		s.push(ctx, u, map[string]any{"type": "match.ticket", "ticket": t})
 	}
 	if t.PartyID == 0 {
-		return false
+		return false, nil
 	}
-	if p, err := s.parties.Get(ctx, t.PartyID); err != nil || p.LeaderID != t.Leader ||
-		!slices.Equal(slices.Sorted(slices.Values(p.Members)), t.Users) {
-		s.dropParty(ctx, t.PartyID)
-		return true
+	if changed, err := s.partyChanged(ctx, t); err != nil || !changed {
+		return false, err
 	}
-	return false
+	if err := s.dropParty(ctx, t.PartyID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// partyChanged reports whether party ticket t no longer matches its party (gone, another leader or
+// other members).
+func (s *Service) partyChanged(ctx context.Context, t Ticket) (bool, error) {
+	p, err := s.parties.Get(ctx, t.PartyID)
+	if errors.Is(err, party.ErrNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return p.LeaderID != t.Leader || !slices.Equal(slices.Sorted(slices.Values(p.Members)), t.Users), nil
 }
 
 // outcome is the stored result of a request, if the key was used.
@@ -376,19 +392,25 @@ func removeTicket(ctx context.Context, q *store.Queries, ticketID int64, reason 
 	return users, q.SetRequestRemoved(ctx, store.SetRequestRemovedParams{TicketID: ticketID, Removed: reason})
 }
 
-func (s *Service) onPartyChange(ctx context.Context, p party.Party) { s.dropParty(ctx, p.ID) }
+// onPartyChange drops a changed party's ticket; if that fails, the next matcher pass does.
+func (s *Service) onPartyChange(ctx context.Context, p party.Party) {
+	if err := s.dropParty(ctx, p.ID); err != nil {
+		slog.ErrorContext(ctx, "matchmaking: dropping a changed party's ticket", "party", p.ID, "err", err)
+	}
+}
 
 // dropParty removes the party's ticket, if it is queued.
-func (s *Service) dropParty(ctx context.Context, partyID int64) {
+func (s *Service) dropParty(ctx context.Context, partyID int64) error {
 	ids, err := s.q.PartyTicketIDs(ctx, partyID)
+	if err != nil {
+		return err
+	}
 	for _, id := range ids {
-		if err = s.remove(ctx, id, "party_changed"); err != nil {
-			break
+		if err := s.remove(ctx, id, "party_changed"); err != nil {
+			return err
 		}
 	}
-	if err != nil {
-		slog.ErrorContext(ctx, "matchmaking: dropping a changed party's ticket", "party", partyID, "err", err)
-	}
+	return nil
 }
 
 func (s *Service) status(ctx context.Context, user int64) (status, error) {
