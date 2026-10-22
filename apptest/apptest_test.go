@@ -72,3 +72,15 @@ func TestIsolated(t *testing.T) {
 		t.Fatalf("second app sees the first one's money: %d", got)
 	}
 }
+
+func TestSetOnline(t *testing.T) {
+	a := apptest.New(t)
+	if on, _ := a.Transport.Online(context.Background()); len(on) != 0 {
+		t.Fatalf("default online = %v, want empty", on)
+	}
+	a.Transport.SetOnline(1, 2)
+	on, err := a.Transport.Online(context.Background())
+	if err != nil || len(on) != 2 || on[1] != 1 || on[2] != 1 {
+		t.Fatalf("online = %v, %v", on, err)
+	}
+}

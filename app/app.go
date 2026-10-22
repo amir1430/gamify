@@ -72,6 +72,7 @@ type App struct {
 	cfg       Config
 	providers map[string]auth.Provider
 	reconcile []func(context.Context)
+	loops     []loop
 	extra     []namedServer
 	historyMu sync.Mutex
 	history   map[string]HistorySource
@@ -127,6 +128,17 @@ func (a *App) Serve(name string, srv *http.Server) {
 
 // Reconcile registers a job run every ReconcileEvery (a game finishing its pending operations).
 func (a *App) Reconcile(f func(context.Context)) { a.reconcile = append(a.reconcile, f) }
+
+// Loop registers f to run every `every` while Run is going (a module's own ticker, like a matcher).
+// Call it before Run: Run reads the list without a lock.
+func (a *App) Loop(every time.Duration, f func(context.Context)) {
+	a.loops = append(a.loops, loop{every, f})
+}
+
+type loop struct {
+	every time.Duration
+	f     func(context.Context)
+}
 
 // RunReconcile runs every registered reconcile job once (Run does it every ReconcileEvery).
 func (a *App) RunReconcile(ctx context.Context) {
@@ -287,6 +299,20 @@ func (a *App) Run(ctx context.Context) error {
 			}
 		}
 	}()
+	for _, l := range a.loops {
+		go func() {
+			t := time.NewTicker(l.every)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					l.f(ctx)
+				}
+			}
+		}()
+	}
 	slog.Info("started", "http", servers[0].Addr, "methods", len(a.Router.Methods()))
 	for _, e := range a.extra {
 		slog.Info("listening", "server", e.name, "addr", e.Addr)

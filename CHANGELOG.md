@@ -10,6 +10,8 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   basis points; `SettlePot`/`SettlePool` are the `FeeBP` case, transfer IDs unchanged), and
   `RewardPrize(ctx, game, currency, claimID, userID, amount)`, a prize from the rewards account in
   its own transfer-ID namespace.
+- `app`: `App.Loop(every, f)`, a periodic job `Run` ticks until it ends (like the reconcile ticker).
+- `apptest`: `Transport.SetOnline(ids...)` sets who `Online` reports (default nobody).
 
 ## [1.0.0] - 2026-10-22
 
