@@ -344,3 +344,17 @@ func TestDisband(t *testing.T) {
 	}
 	tx.Rollback(ctx)
 }
+
+func TestPartyJoinClosedTwice(t *testing.T) {
+	a, _ := setup(t, party.Config{})
+	alice, bob := a.User("alice"), a.User("bob")
+	p, cerr := call(t, a, alice, "party.create", map[string]any{"max": 4})
+	must(t, cerr)
+	for range 3 {
+		_, cerr = call(t, a, bob, "party.join", map[string]any{"party_id": p.ID})
+		must(t, cerr)
+	}
+	if n := len(pushes(a, alice, "party.request")); n != 1 {
+		t.Fatalf("request pushes %d, want 1", n)
+	}
+}

@@ -34,7 +34,7 @@ var (
 	ErrPartyTooBig    = &realtime.ClientError{Code: 1033, Message: "party does not fit the queue"}
 	ErrNotFound       = &realtime.ClientError{Code: 1034, Message: "match not found"}
 	ErrResultConflict = &realtime.ClientError{Code: 1035, Message: "conflicting result"}
-	ErrClosed         = &realtime.ClientError{Code: 1036, Message: "queue closed"}
+	ErrClosed         = &realtime.ClientError{Code: 1036, Message: "match closed"}
 )
 
 // Team is the size range of one team.
@@ -68,7 +68,9 @@ type QueueConfig struct {
 	Numbers    map[string]NumberRule
 	Compatible func(a, b Ticket) bool
 	// Prepare puts server-side properties (a league's tier) into t.Server; equal Server maps are
-	// required to match.
+	// required to match. It gets a copy of the new ticket (no ID yet): only its Server is kept, a
+	// change to any other field is ignored. An error refuses the queue call (a ClientError reaches
+	// the client as is).
 	Prepare func(ctx context.Context, t *Ticket) error
 
 	FillAfter, MaxWait, MatchTimeout time.Duration // defaults 10 s, 2 min, 1 h
@@ -83,8 +85,9 @@ type QueueConfig struct {
 	// least once: an error or a crash before it is recorded as done makes the reconciler call it
 	// again, so it must be idempotent.
 	OnFinish func(ctx context.Context, m Match) error
-	// Payout decides a staked match's winners when its result is reported; they must add up to pot
-	// less the fee, at most ledger.MaxPotWinners of them paid, or Finish refuses the result. Its
+	// Payout decides a staked match's winners when its result is reported; they must be players of
+	// the match and add up to pot less the fee, at most ledger.MaxPotWinners of them paid, or Finish
+	// refuses the result. Its
 	// answer is stored with the result: settling never calls it again.
 	Payout func(pot int64, m Match, r Result) []ledger.PotWin
 }
@@ -104,7 +107,7 @@ type Ticket struct {
 	Currency   ledger.Currency   `json:"currency"`
 	Stake      int64             `json:"stake"`
 	Properties map[string]string `json:"properties"`
-	Server     map[string]string `json:"server"`
+	Server     map[string]string `json:"-"` // set by QueueConfig.Prepare; brand data, never sent to clients
 	Numbers    map[string]int64  `json:"numbers"`
 	Rating     float64           `json:"rating"` // mean ordinal of Users under RatingKey
 	QueuedAt   time.Time         `json:"queued_at"`

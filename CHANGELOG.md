@@ -18,7 +18,8 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   `MessageBytes`, `MessagesPerSec`. Client errors 1020-1026.
 - `matchmaking`: new opt-in module, started: its tables, `Register(ctx, app, parties, Config{})`,
   `Service.Queue(QueueConfig)` (validated queue with defaults; `Queue.Config()`), the `Team`,
-  `Ticket`, `Match`, `Player`, `Result` types, `Forever`, client errors 1030-1036, and the OpenSkill
+  `Ticket`, `Match`, `Player`, `Result` types, `Forever`, client errors 1030-1036 (1036 `ErrClosed`,
+  "match closed"), and the OpenSkill
   `Rating`/`DefaultRating`/`Ordinal`. The ledger game ID `matchmaking.Game = 1` is claimed by `Register`.
   A queue needs 2+ teams unless FFA, a non-empty stake list per currency, `NumberRule.Every > 0`,
   and non-negative `FillAfter`/`MatchTimeout`/`MaxWait` (`Forever` allowed). The matcher (internal)
@@ -38,7 +39,8 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   Pushes: `{"type":"match.ticket","ticket"}` and `{"type":"match.ticket_removed","reason"}`
   (`cancelled`, `party_changed`; a party change of any kind removes its ticket, and if that fails
   the next matcher pass removes a ticket whose party is gone or has another leader or members). `Ticket`, `Match`,
-  `Player` and `Result` have JSON tags.
+  `Player` and `Result` have JSON tags; `Ticket.Server` (set by `QueueConfig.Prepare`, which gets a
+  copy of the ticket and only its `Server` is kept) is never sent to clients.
 - `matchmaking`: formation. Every `Config.Tick` (`Service.MatchNow(ctx)` runs one pass; one instance
   per queue at a time) drops tickets older than `MaxWait` (`expired`) and, unless `AllowOffline`,
   tickets with a user not in `Realtime.Online` (`offline`), then forms matches (`forming`, deadline
@@ -65,7 +67,7 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   (`finishing`); settling and every retry pay exactly those, never re-reading the queue config.
   Staked: the pot (stake x players) less the fee (`FeeOf(pot, FeeBP)`, 0 with `NoFee`) goes to the
   best rank's players in equal shares, the remainder one unit each in `EntryID` order, or to
-  `QueueConfig.Payout`'s winners (must add up to the pot less the fee); an all-equal result in a
+  `QueueConfig.Payout`'s winners (players of the match, adding up to the pot less the fee); an all-equal result in a
   `DrawRefund` queue refunds instead. A payout with no winner or more than `ledger.MaxPotWinners`
   is refused before anything is stored. Then `SettlePotFee`, and in the transaction that marks the
   match `settled`, ranked ratings (from `mm_ratings` as they are at settlement, not the formation
@@ -78,8 +80,8 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   (`match.cancelled` with the reason); a finishing or settled match is `ErrClosed` (the result
   stands). `Service.Report(ctx, tx, id, Result)` and `Service.MarkCancel(ctx, tx, id, reason)` only
   record, in the caller's transaction (admin actions); the reconcile pass moves the money, settles
-  `finishing` matches and cancels running matches past their `MatchTimeout` deadline (reason
-  `timeout`). `QueueConfig.FeeBP` must be below 10000.
+  `finishing` matches and cancels forming and running matches past their `MatchTimeout` deadline
+  (reason `timeout`). `QueueConfig.FeeBP` must be below 10000.
 - `matchmaking`: history, metrics, admin. `Register` adds the activity source `"matchmaking"`: one
   `app.Activity` per player of every staked match that ended (`settled` or `cancelled`; free matches
   are not listed), amount = stake, payout = what the player won, detail
@@ -90,13 +92,14 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   `Service.Matches(ctx, MatchFilter, before, limit)`, `Service.QueueStats(ctx)`,
   `Service.Ratings(ctx, userID, before, limit)`. New package `matchmaking/matchmakingadmin`:
   `Register(adm, s)` adds the views `mm-matches` (actions `cancel`, `report` with ranks like `2,1`; the
-  reconcile pass moves the money), `mm-queues` and `mm-ratings`.
+  reconcile pass moves the money; reporting a forming match is a 409), `mm-queues` and `mm-ratings`.
 - `matchmaking`: the transactions that hold a match row while calling the ledger (holds, refunds,
   settlement) take one of `max(1, pool MaxConns/2)` slots, so concurrent `Finish`/`Cancel`/`Create`
   calls can't take every pool connection and leave none for the Postgres ledger.
 - `apptest`: `TEST_DATABASE_URL` may carry pgxpool settings (`pool_max_conns=4`).
 - `party`: `OnChange` hooks (and the change pushes) run on a context that the RPC's caller hanging
-  up does not cancel.
+  up does not cancel. Repeating `party.join` on a closed party keeps the one pending request and
+  pushes `party.request` to the leader once. `party.get` answers anyone with the party ID.
 - `party`: `Service.List(ctx, userID, before, limit)`, `Service.Disband(ctx, tx, id)` (deletes the
   party in the caller's transaction, a locked one too, and returns it) and `Service.Disbanded(ctx, p)`
   (after the commit: members get `"left":true`, `OnChange` hooks get no members). New package

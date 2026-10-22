@@ -226,18 +226,18 @@ the `*Queue` for `Create`.
 
 ```go
 matchmaking.QueueConfig{
-	Name: "duel", Teams: []matchmaking.Team{{1, 1}, {1, 1}}, Ranked: true,
+	Name: "duel", Teams: []matchmaking.Team{{Min: 1, Max: 1}, {Min: 1, Max: 1}}, Ranked: true,
 	OnMatch: s.startMatch, OnFinish: s.matchDone,
 }
 ```
 
-A queue needs two teams, or a free-for-all: `Teams: {{1, 1}}, FFA: &matchmaking.Team{Min: 2, Max: 8}`.
+A queue needs two teams, or a free-for-all: `Teams: []matchmaking.Team{{Min: 1, Max: 1}}, FFA: &matchmaking.Team{Min: 2, Max: 8}`.
 
 **A staked 5v5 with parties** (a party of 1..5 queues together and plays on one team):
 
 ```go
 matchmaking.QueueConfig{
-	Name: "arena5", Teams: []matchmaking.Team{{1, 5}, {1, 5}}, Ranked: true,
+	Name: "arena5", Teams: []matchmaking.Team{{Min: 1, Max: 5}, {Min: 1, Max: 5}}, Ranked: true,
 	Game:   pvp, // *gameconfig.Game from a.Games.Game(...): Check()s every stake against its limits
 	Stakes: map[ledger.Currency][]int64{"usd": {100, 500, 2_000}},
 	FeeBP:  500, // 5%; the default is ledger.FeeBP, NoFee: true for none
@@ -250,14 +250,16 @@ matchmaking.QueueConfig{
 - `party.create {max, name, open}`, `party.join {party_id}`, `party.accept {party_id, user_id}`
   (a leader approves a request to a closed party), `party.leave`, `party.kick`, `party.lead`
   (hand over leadership), `party.get`, `party.send {party_id, kind, data}`. Errors 1020-1026. The
-  party pushes its changes to every member.
+  party pushes its changes to every member. `party.get {party_id}` answers anyone who has the ID:
+  the ID is the invite, so share it only with whom you'd let see the members.
 - `match.queue {queue, currency, stake, properties, numbers, idem_key}` returns one of
   `{ticket}`, `{match_id}`, `{removed}`. A party leader queues the whole party; a member gets
   `party.ErrNotLeader`. A repeat of the `idem_key` returns the stored outcome.
 - `match.cancel {}` leaves the queue; `match.status {}` returns `{ticket, matches}` (what a
   reconnecting client needs); `rating.get {key}`.
 - Pushes to the user channel, by `type`: `match.ticket`, `match.ticket_removed` (`reason`:
-  `cancelled`, `party_changed`, `expired`, `offline`, `insufficient_funds`), `match.found` (`match`),
+  `cancelled`, `party_changed`, `expired`, `offline`, `insufficient_funds`, `already_queued`: a
+  re-queue after a cancelled match found the user already queued again), `match.found` (`match`),
   `match.finished` (`match`, `payouts`, `ratings`), `match.cancelled` (`match`, `reason`).
 - Errors 1030-1036: `ErrQueued`, `ErrBusy`, `ErrUnknownQueue`, `ErrPartyTooBig`, `ErrNotFound`,
   `ErrResultConflict`, `ErrClosed`.
@@ -280,14 +282,15 @@ func (s *Service) startMatch(ctx context.Context, m matchmaking.Match) error {
   updates ratings, pushes `match.finished`, then calls `OnFinish`. If the ledger is down it returns
   the error and the reconciler finishes the settlement from the stored result.
 - **`Cancel(ctx, matchID, reason)`** refunds every stake and pushes `match.cancelled` (a player left
-  before the start, the server crashed).
-- **`MatchTimeout`** (default 1 h) is the safety net: a match still running past it is cancelled
+  before the start, the server crashed). A match whose result is in (`finishing` or `settled`)
+  returns `ErrClosed`: the result stands.
+- **`MatchTimeout`** (default 1 h) is the safety net: a match still forming or running past it is cancelled
   (reason `timeout`) and refunded. Set it above your longest game.
 - **`OnFinish`** runs after settlement, outside any transaction, so it may `Finish`, `Cancel` or
   `Create` other matches (a tournament's next round). It is **at least once**: an error or a crash
   makes the reconciler call it again, so make it idempotent.
 - **`Payout(pot, m, result) []ledger.PotWin`** replaces the default (the best rank's players split
-  the pot less the fee equally). It must pay exactly `pot - ledger.FeeOf(pot, m.FeeBP)`, at most
+  the pot less the fee equally). It must pay players of the match exactly `pot - ledger.FeeOf(pot, m.FeeBP)`, at most
   `ledger.MaxPotWinners` winners; it must be deterministic. Its answer is stored when `Finish`
   records the result, and settling never calls it again; a wrong answer makes `Finish` return an error
   and store nothing.
@@ -322,7 +325,8 @@ All in `QueueConfig`, all with defaults:
 - `Properties`: client-sent strings that must be equal (`{"region"}`); `Numbers`: client-sent
   numbers that may differ by `Diff`, plus `Widen` per `Every` of waiting.
 - `Prepare(ctx, *Ticket)`: set `t.Server[...]` from your own data (a league tier); equal `Server`
-  maps are required to match. The client can't send these.
+  maps are required to match. The client can't send these and never sees them (`Ticket.Server` is
+  not in the JSON). Prepare gets a copy of the ticket: only `Server` is kept.
 - `Compatible(a, b Ticket) bool`: a last veto on any two tickets in a match.
 
 ## Checklist

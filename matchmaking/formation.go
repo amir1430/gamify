@@ -62,7 +62,7 @@ func (s *Service) MatchNow(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Reconcile cancels running matches past their deadline (reason "timeout"), finishes matches a
+// Reconcile cancels forming and running matches past their deadline (reason "timeout"), finishes matches a
 // crash, a ledger outage or an admin action left forming, finishing or cancelling, and calls
 // OnFinish again for settled matches it has not yet succeeded for.
 func (s *Service) Reconcile(ctx context.Context) {
@@ -293,7 +293,7 @@ func (s *Service) insertMatch(ctx context.Context, q *store.Queries, cfg QueueCo
 	for _, r := range rs {
 		rating[r.UserID] = Rating{r.Mu, r.Sigma}
 	}
-	raw, err := json.Marshal(snap)
+	raw, err := encodeTickets(snap)
 	if err != nil {
 		return 0, err
 	}
@@ -325,6 +325,34 @@ func (s *Service) insertMatch(ctx context.Context, q *store.Queries, cfg QueueCo
 		}
 	}
 	return id, q.SetRequestsMatch(ctx, store.SetRequestsMatchParams{MatchID: id, TicketIds: f.Tickets})
+}
+
+// storedTicket is a ticket as its match keeps it for a re-queue: with Server, which the JSON sent
+// to clients leaves out.
+type storedTicket struct {
+	Ticket
+	Server map[string]string `json:"server"`
+}
+
+func encodeTickets(ts []Ticket) ([]byte, error) {
+	out := make([]storedTicket, len(ts))
+	for i, t := range ts {
+		out[i] = storedTicket{t, t.Server}
+	}
+	return json.Marshal(out)
+}
+
+func decodeTickets(raw []byte) ([]Ticket, error) {
+	var in []storedTicket
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return nil, err
+	}
+	out := make([]Ticket, len(in))
+	for i, t := range in {
+		out[i] = t.Ticket
+		out[i].Server = t.Server
+	}
+	return out, nil
 }
 
 // queueOf is the registered queue called name.
@@ -448,8 +476,9 @@ func (t slotTx) Rollback(ctx context.Context) error {
 // broke records a refused hold: the match is cancelling with the units to re-queue (every ticket
 // without a short user), and the short units' tickets are removed (insufficient_funds).
 func (s *Service) broke(ctx context.Context, tx pgx.Tx, m Match, raw []byte, short []int64) error {
-	var tickets, keep []Ticket
-	if err := json.Unmarshal(raw, &tickets); err != nil {
+	var keep []Ticket
+	tickets, err := decodeTickets(raw)
+	if err != nil {
 		return err
 	}
 	var drop []Ticket
@@ -460,7 +489,7 @@ func (s *Service) broke(ctx context.Context, tx pgx.Tx, m Match, raw []byte, sho
 			keep = append(keep, t)
 		}
 	}
-	keepRaw, err := json.Marshal(keep)
+	keepRaw, err := encodeTickets(keep)
 	if err != nil {
 		return err
 	}
@@ -492,8 +521,8 @@ func (s *Service) cancelled(ctx context.Context, tx pgx.Tx, m Match, raw []byte)
 			return err
 		}
 	}
-	var tickets []Ticket
-	if err := json.Unmarshal(raw, &tickets); err != nil {
+	tickets, err := decodeTickets(raw)
+	if err != nil {
 		return err
 	}
 	q := s.q.WithTx(tx)

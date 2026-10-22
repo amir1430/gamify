@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"slices"
 
 	"github.com/amir1430/gamify/gameconfig"
@@ -192,8 +193,13 @@ func (s *Service) enqueue(ctx context.Context, user int64, r queueReq) (QueueRes
 		return QueueResult{}, err
 	}
 	if cfg.Prepare != nil {
-		if err := cfg.Prepare(ctx, &t); err != nil {
+		c := t
+		c.Users, c.Properties, c.Numbers = slices.Clone(t.Users), maps.Clone(t.Properties), maps.Clone(t.Numbers)
+		if err := cfg.Prepare(ctx, &c); err != nil {
 			return QueueResult{}, err
+		}
+		if c.Server != nil {
+			t.Server = c.Server
 		}
 	}
 	props, _ := json.Marshal(t.Properties)

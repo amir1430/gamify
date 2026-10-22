@@ -168,6 +168,16 @@ func TestReport(t *testing.T) {
 	}
 }
 
+func TestReportForming(t *testing.T) {
+	e := setup(t)
+	if _, err := e.a.Pool.Exec(context.Background(), `UPDATE mm_matches SET status = 'forming' WHERE id = $1`, e.mid); err != nil {
+		t.Fatal(err)
+	}
+	if st, body := e.action(t, "report", map[string]any{"input": map[string]any{"ranks": "2,1"}, "reason": "r"}); st != 409 {
+		t.Fatalf("report forming: %d %v, want 409", st, body)
+	}
+}
+
 func TestViews(t *testing.T) {
 	e := setup(t)
 	viewer := e.cons.Login(admin.RoleViewer)

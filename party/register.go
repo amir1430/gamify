@@ -122,9 +122,10 @@ func (s *Service) join(ctx context.Context, user, partyID int64) (Party, error) 
 		if len(p.Members) >= p.Max {
 			return ErrFull
 		}
-		if !p.Open {
-			requested = true
-			return q.AddRequest(ctx, store.AddRequestParams{PartyID: partyID, UserID: user})
+		if !p.Open { // a repeat leaves the pending request alone and tells the leader once
+			n, err := q.AddRequest(ctx, store.AddRequestParams{PartyID: partyID, UserID: user})
+			requested = n > 0
+			return err
 		}
 		joined = true
 		if err = q.AddMember(ctx, store.AddMemberParams{PartyID: partyID, UserID: user}); err != nil {

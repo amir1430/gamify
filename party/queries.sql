@@ -32,7 +32,7 @@ UPDATE parties SET leader_id = $2 WHERE id = $1;
 -- name: SetLocked :exec
 UPDATE parties SET locked_by = NULLIF($2::text, '') WHERE id = $1;
 
--- name: AddRequest :exec
+-- name: AddRequest :execrows
 INSERT INTO party_requests (party_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING;
 
 -- name: DeleteRequest :execrows

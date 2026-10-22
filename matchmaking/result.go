@@ -168,6 +168,9 @@ func payouts(c QueueConfig, m Match) (wins []ledger.PotWin, refund bool, err err
 			if w.Amount < 0 {
 				return nil, false, fmt.Errorf("matchmaking: match %d: Payout pays %d", m.ID, w.Amount)
 			}
+			if !slices.ContainsFunc(m.Players, func(p Player) bool { return p.UserID == w.UserID }) {
+				return nil, false, fmt.Errorf("matchmaking: match %d: Payout pays user %d, not a player", m.ID, w.UserID)
+			}
 			sum += w.Amount
 			if w.Amount > 0 {
 				wins = append(wins, w)

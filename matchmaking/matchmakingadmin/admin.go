@@ -124,6 +124,9 @@ func matches(s *matchmaking.Service) admin.View {
 					if err != nil {
 						return nil, nil, refusal(err)
 					}
+					if m.Status == "forming" { // Report takes running matches (and repeats of a result)
+						return nil, nil, admin.Conflict("the match is still forming")
+					}
 					teams := 0
 					for _, p := range m.Players {
 						teams = max(teams, p.Team+1)

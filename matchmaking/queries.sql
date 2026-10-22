@@ -1,7 +1,3 @@
--- name: PruneRequests :execrows
--- Drops idempotency rows older than the cutoff.
-DELETE FROM mm_requests WHERE created_at < $1;
-
 -- name: GetRequest :one
 SELECT queue, ticket_id, match_id, removed FROM mm_requests WHERE user_id = $1 AND idem_key = $2;
 
@@ -93,7 +89,8 @@ SELECT * FROM mm_matches WHERE id = $1 FOR UPDATE;
 SELECT id FROM mm_matches WHERE status IN ('forming', 'finishing', 'cancelling') ORDER BY id;
 
 -- name: TimedOutMatches :many
-SELECT id FROM mm_matches WHERE status = 'running' AND deadline < now() ORDER BY id;
+-- Forming too: a match whose holds or OnMatch never got through by its deadline.
+SELECT id FROM mm_matches WHERE status IN ('forming', 'running') AND deadline < now() ORDER BY id;
 
 -- name: SetMatchCancelling :execrows
 UPDATE mm_matches SET status = 'cancelling', reason = $2, tickets = $3, updated_at = now()

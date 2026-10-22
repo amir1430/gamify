@@ -598,3 +598,51 @@ func TestFinishSmallPool(t *testing.T) {
 		}
 	}
 }
+
+func TestFinishPayoutNotPlayer(t *testing.T) {
+	e := setup(t)
+	q := staked(e, "outsider", matchmaking.Team{1, 1}, matchmaking.Team{1, 1})
+	stranger := e.a.User("stranger")
+	q.Payout = func(pot int64, m matchmaking.Match, _ matchmaking.Result) []ledger.PotWin {
+		return []ledger.PotWin{{UserID: stranger, Amount: pot - ledger.FeeOf(pot, m.FeeBP)}}
+	}
+	addQueue(t, e, q)
+	a, b := e.a.User("a"), e.a.User("b")
+	m := start(t, e, stakedReq("outsider", 100), a, b)
+	if err := e.s.Finish(context.Background(), m.ID, wins(m, a)); err == nil {
+		t.Fatal("payout to a non-player accepted")
+	}
+	if m := matchOf(t, e, m.ID); m.Status != "running" || m.Result != nil {
+		t.Fatalf("match %+v", m)
+	}
+	balances(t, e, map[int64]int64{a: 900, b: 900, stranger: 0})
+}
+
+// A match whose holds never got through is cancelled at its deadline like a running one.
+func TestTimeoutForming(t *testing.T) {
+	e := setup(t)
+	q := staked(e, "stuck", matchmaking.Team{1, 1}, matchmaking.Team{1, 1})
+	q.MatchTimeout = time.Second
+	addQueue(t, e, q)
+	restore := matchmaking.SetHoldPot(func(*ledger.Ledger, context.Context, ledger.Game, ledger.Currency, ledger.PotEntry) error {
+		return errors.New("ledger down")
+	})
+	defer restore()
+	a, b := e.a.User("alice"), e.a.User("bob")
+	e.a.Transport.SetOnline(a, b)
+	for _, u := range []int64{a, b} {
+		e.a.Fund(u, "usd", 1000)
+		if _, cerr := queue(e, u, stakedReq("stuck", 100)); cerr != nil {
+			t.Fatal(cerr)
+		}
+	}
+	if err := e.s.MatchNow(context.Background()); err == nil {
+		t.Fatal("transient error not reported")
+	}
+	time.Sleep(1100 * time.Millisecond)
+	e.a.ReconcileNow()
+	if m := onlyMatch(t, e); m.Status != "cancelled" || m.Reason != "timeout" {
+		t.Fatalf("match %+v", m)
+	}
+	balances(t, e, map[int64]int64{a: 1000, b: 1000})
+}

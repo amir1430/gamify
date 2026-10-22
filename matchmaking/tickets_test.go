@@ -489,3 +489,41 @@ func TestFormDropsChangedParty(t *testing.T) {
 		t.Fatalf("replay %+v", r)
 	}
 }
+
+// Prepare only sets Server; Server never reaches a client and survives a re-queue.
+func TestPrepareServer(t *testing.T) {
+	e := setup(t)
+	c := staked(e, "league", matchmaking.Team{1, 1}, matchmaking.Team{1, 1})
+	c.Prepare = func(_ context.Context, tk *matchmaking.Ticket) error {
+		tk.Server["tier"] = "gold"
+		tk.Stake, tk.Users = 1, nil // ignored
+		return nil
+	}
+	addQueue(t, e, c)
+	alice, bob := e.a.User("alice"), e.a.User("bob")
+	e.a.Transport.SetOnline(alice, bob)
+	e.a.Fund(alice, "usd", 1000)
+	e.a.Fund(bob, "usd", 50)
+	raw, cerr := e.a.Call(alice, "match.queue", queueReq{Queue: "league", Currency: "usd", Stake: 100, IdemKey: "a"})
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	var r matchmaking.QueueResult
+	if err := json.Unmarshal(raw, &r); err != nil || r.Ticket == nil || r.Ticket.Stake != 100 || len(r.Ticket.Users) != 1 {
+		t.Fatalf("ticket %s %v", raw, err)
+	}
+	if _, cerr := queue(e, bob, queueReq{Queue: "league", Currency: "usd", Stake: 100, IdemKey: "b"}); cerr != nil {
+		t.Fatal(cerr)
+	}
+	matchNow(t, e) // bob is short: alice is re-queued
+	for _, p := range append(e.a.Pushes(realtime.UserChannel(alice)), raw) {
+		if strings.Contains(string(p), "gold") || strings.Contains(string(p), `"server"`) {
+			t.Fatalf("server data sent to the client: %s", p)
+		}
+	}
+	var server string
+	if err := e.a.Pool.QueryRow(context.Background(), `SELECT server::text FROM mm_tickets t JOIN mm_ticket_users u ON u.ticket_id = t.id
+		WHERE u.user_id = $1`, alice).Scan(&server); err != nil || server != `{"tier": "gold"}` {
+		t.Fatalf("re-queued server %q %v", server, err)
+	}
+}

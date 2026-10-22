@@ -682,19 +682,6 @@ func (q *Queries) PendingOnFinish(ctx context.Context) ([]int64, error) {
 	return items, nil
 }
 
-const pruneRequests = `-- name: PruneRequests :execrows
-DELETE FROM mm_requests WHERE created_at < $1
-`
-
-// Drops idempotency rows older than the cutoff.
-func (q *Queries) PruneRequests(ctx context.Context, createdAt pgtype.Timestamptz) (int64, error) {
-	result, err := q.db.Exec(ctx, pruneRequests, createdAt)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const queueStats = `-- name: QueueStats :many
 SELECT queue, count(*)::bigint AS waiting, min(queued_at)::timestamptz AS oldest FROM mm_tickets GROUP BY queue
 `
@@ -1007,9 +994,10 @@ func (q *Queries) TicketsUsers(ctx context.Context, dollar_1 []int64) ([]MmTicke
 }
 
 const timedOutMatches = `-- name: TimedOutMatches :many
-SELECT id FROM mm_matches WHERE status = 'running' AND deadline < now() ORDER BY id
+SELECT id FROM mm_matches WHERE status IN ('forming', 'running') AND deadline < now() ORDER BY id
 `
 
+// Forming too: a match whose holds or OnMatch never got through by its deadline.
 func (q *Queries) TimedOutMatches(ctx context.Context) ([]int64, error) {
 	rows, err := q.db.Query(ctx, timedOutMatches)
 	if err != nil {

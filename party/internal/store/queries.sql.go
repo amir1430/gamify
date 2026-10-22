@@ -23,7 +23,7 @@ func (q *Queries) AddMember(ctx context.Context, arg AddMemberParams) error {
 	return err
 }
 
-const addRequest = `-- name: AddRequest :exec
+const addRequest = `-- name: AddRequest :execrows
 INSERT INTO party_requests (party_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING
 `
 
@@ -32,9 +32,12 @@ type AddRequestParams struct {
 	UserID  int64
 }
 
-func (q *Queries) AddRequest(ctx context.Context, arg AddRequestParams) error {
-	_, err := q.db.Exec(ctx, addRequest, arg.PartyID, arg.UserID)
-	return err
+func (q *Queries) AddRequest(ctx context.Context, arg AddRequestParams) (int64, error) {
+	result, err := q.db.Exec(ctx, addRequest, arg.PartyID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const createParty = `-- name: CreateParty :one
