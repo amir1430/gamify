@@ -187,6 +187,19 @@ func (s *Service) formQueue(ctx context.Context, q *Queue) (ids []int64, err err
 			}
 			removed = append(removed, removal{users, reason})
 		}
+		if !cfg.Concurrent { // a user in an open match (a direct one) waits for it to end
+			var free []Ticket
+			for _, t := range live {
+				busy, err := qs.UsersBusy(ctx, store.UsersBusyParams{UserIds: t.Users, Queue: cfg.Name})
+				if err != nil {
+					return err
+				}
+				if !busy {
+					free = append(free, t)
+				}
+			}
+			live = free
+		}
 		for _, f := range form(q, live, now) {
 			id, err := s.insertMatch(ctx, qs, cfg, live, f, now)
 			if err != nil {

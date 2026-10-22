@@ -383,6 +383,16 @@ func (q *Queries) LockMatchWait(ctx context.Context, id int64) (MmMatch, error) 
 	return i, err
 }
 
+const lockQueue = `-- name: LockQueue :exec
+SELECT pg_advisory_xact_lock(hashtext('mm:' || $1::text))
+`
+
+// Blocks until the queue's formation pass (TryQueueLock) and other direct creates are done.
+func (q *Queries) LockQueue(ctx context.Context, queue string) error {
+	_, err := q.db.Exec(ctx, lockQueue, queue)
+	return err
+}
+
 const lockRatings = `-- name: LockRatings :many
 SELECT user_id, mu, sigma FROM mm_ratings WHERE key = $1::text AND user_id = ANY($2::bigint[])
 ORDER BY user_id FOR UPDATE
@@ -419,20 +429,37 @@ func (q *Queries) LockRatings(ctx context.Context, arg LockRatingsParams) ([]Loc
 	return items, nil
 }
 
-const matchByRef = `-- name: MatchByRef :one
-SELECT id FROM mm_matches WHERE queue = $1 AND ref = $2
+const matchByRefRow = `-- name: MatchByRefRow :one
+SELECT id, queue, ref, status, currency, stake, fee_bp, result, payouts, refund, on_finish_done, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE queue = $1 AND ref = $2
 `
 
-type MatchByRefParams struct {
+type MatchByRefRowParams struct {
 	Queue string
 	Ref   string
 }
 
-func (q *Queries) MatchByRef(ctx context.Context, arg MatchByRefParams) (int64, error) {
-	row := q.db.QueryRow(ctx, matchByRef, arg.Queue, arg.Ref)
-	var id int64
-	err := row.Scan(&id)
-	return id, err
+func (q *Queries) MatchByRefRow(ctx context.Context, arg MatchByRefRowParams) (MmMatch, error) {
+	row := q.db.QueryRow(ctx, matchByRefRow, arg.Queue, arg.Ref)
+	var i MmMatch
+	err := row.Scan(
+		&i.ID,
+		&i.Queue,
+		&i.Ref,
+		&i.Status,
+		&i.Currency,
+		&i.Stake,
+		&i.FeeBp,
+		&i.Result,
+		&i.Payouts,
+		&i.Refund,
+		&i.OnFinishDone,
+		&i.Reason,
+		&i.Tickets,
+		&i.Deadline,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const matchPlayers = `-- name: MatchPlayers :many

@@ -29,7 +29,7 @@ type NewMatch struct {
 // Create makes a match from n through the same pipeline as a queue-formed one: stakes held, OnMatch,
 // running, match.found pushed. Players need not be online. The Ref makes it idempotent: a repeat
 // returns the existing match in whatever state it is in (a forming one is advanced), with the same
-// error a cancelled-for-funds one first returned. A refused
+// error a cancelled-for-funds one first returned. The other fields of a repeat are ignored. A refused
 // hold cancels and refunds the match and returns ledger.ErrInsufficientFunds with the cancelled
 // match; nobody is re-queued. ErrBusy: the queue is not Concurrent and a player is in one of its
 // open matches. gameconfig.ErrInvalid: bad Ref, teams or stake.
@@ -63,13 +63,25 @@ func (s *Service) Create(ctx context.Context, n NewMatch) (Match, error) {
 	}
 
 	var id int64
+	var status string
 	err = pgx.BeginFunc(ctx, s.a.Pool, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
+		if !cfg.Concurrent {
+			// ponytail: per-queue lock serializes direct creates; per-user xact locks (sorted, formation locking all live users up front) if create throughput matters
+			if err := q.LockQueue(ctx, cfg.Name); err != nil {
+				return err
+			}
+		}
+		status = "forming"
 		id, err = q.InsertDirectMatch(ctx, store.InsertDirectMatchParams{Queue: cfg.Name, Ref: n.Ref, Currency: string(cur),
 			Stake: n.Stake, FeeBp: feeBP, Deadline: pgtype.Timestamptz{Time: time.Now().Add(cfg.MatchTimeout), Valid: true}})
 		if errors.Is(err, pgx.ErrNoRows) { // exists (a concurrent first call waits for its commit)
-			id, err = q.MatchByRef(ctx, store.MatchByRefParams{Queue: cfg.Name, Ref: n.Ref})
-			return err
+			var row store.MmMatch
+			if row, err = q.MatchByRefRow(ctx, store.MatchByRefRowParams{Queue: cfg.Name, Ref: n.Ref}); err != nil {
+				return err
+			}
+			id, status = row.ID, row.Status
+			return nil
 		}
 		if err != nil {
 			return err
@@ -100,8 +112,10 @@ func (s *Service) Create(ctx context.Context, n NewMatch) (Match, error) {
 	if err != nil {
 		return Match{}, err
 	}
-	if err := s.advance(ctx, id); err != nil {
-		return Match{}, err
+	if status == "forming" { // fresh, or an existing one still forming; else just report it
+		if err := s.advance(ctx, id); err != nil {
+			return Match{}, err
+		}
 	}
 	m, err := s.Get(ctx, id)
 	if err == nil && m.Status == "cancelled" && m.Reason == "insufficient_funds" {

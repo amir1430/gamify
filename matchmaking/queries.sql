@@ -151,5 +151,9 @@ UPDATE mm_ratings SET mu = $3, sigma = $4, matches = matches + 1, updated_at = n
 INSERT INTO mm_matches (queue, ref, status, currency, stake, fee_bp, deadline)
 VALUES ($1, $2, 'forming', $3, $4, $5, $6) ON CONFLICT (queue, ref) DO NOTHING RETURNING id;
 
--- name: MatchByRef :one
-SELECT id FROM mm_matches WHERE queue = $1 AND ref = $2;
+-- name: MatchByRefRow :one
+SELECT * FROM mm_matches WHERE queue = $1 AND ref = $2;
+
+-- name: LockQueue :exec
+-- Blocks until the queue's formation pass (TryQueueLock) and other direct creates are done.
+SELECT pg_advisory_xact_lock(hashtext('mm:' || sqlc.arg(queue)::text));
