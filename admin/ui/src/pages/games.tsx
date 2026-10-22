@@ -8,11 +8,11 @@ import { Switch } from '@/components/ui/switch'
 import { parseAmount, plain } from '@/lib/money'
 import { ChangeDialog, DataTable, Faint, Field, Note, OnOff, PageHeader, Pill, Sub, useAction, useMe, useMoney, usePerm } from '../ui'
 
-type Limits = { enabled: boolean; min_bet: number; max_bet: number; max_payout: number }
-type Override = { enabled: boolean; min_bet: number | null; max_bet: number | null; max_payout: number | null }
+type Limits = { enabled: boolean; min_amount: number; max_amount: number; max_payout: number }
+type Override = { enabled: boolean; min_amount: number | null; max_amount: number | null; max_payout: number | null }
 type Game = {
   name: string
-  max_bet: number // code caps, every currency
+  max_amount: number // code caps, every currency
   max_payout: number
   variants: string[]
   pvp: boolean
@@ -26,8 +26,8 @@ type Game = {
 type Row = { variant: string; override?: Override; effective?: Limits }
 
 const FIELDS = [
-  { key: 'min_bet', label: 'Min bet' },
-  { key: 'max_bet', label: 'Max bet', cap: 'max_bet' },
+  { key: 'min_amount', label: 'Min amount' },
+  { key: 'max_amount', label: 'Max amount', cap: 'max_amount' },
   { key: 'max_payout', label: 'Max win', cap: 'max_payout' },
 ] as const
 
@@ -70,7 +70,7 @@ function GameCard({ game: g }: { game: Game }) {
         </div>
         {canEdit && (
           <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            Takes bets
+            Open
             <Switch
               checked={g.enabled}
               disabled={busy}
@@ -198,8 +198,8 @@ function EditLimit({ game, currency, row, onClose }: { game: Game; currency: str
     >
       <label className="flex items-center justify-between gap-4 rounded-lg border px-4 py-3">
         <span>
-          <span className="block text-sm font-medium">Takes bets</span>
-          <span className="block text-xs text-muted-foreground">Off stops new bets here; games in play can finish.</span>
+          <span className="block text-sm font-medium">Open</span>
+          <span className="block text-xs text-muted-foreground">Off stops new play here; games in play can finish.</span>
         </span>
         <Switch checked={enabled} onCheckedChange={setEnabled} />
       </label>

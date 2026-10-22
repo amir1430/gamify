@@ -25,10 +25,10 @@ func (q *Queries) DeleteGameLimit(ctx context.Context, arg DeleteGameLimitParams
 }
 
 const insertGameLimit = `-- name: InsertGameLimit :one
-INSERT INTO game_limits (game, currency, variant, enabled, min_bet, max_bet, max_payout)
+INSERT INTO game_limits (game, currency, variant, enabled, min_amount, max_amount, max_payout)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (game, currency, variant) DO NOTHING
-RETURNING game, currency, variant, enabled, min_bet, max_bet, max_payout, version, updated_at
+RETURNING game, currency, variant, enabled, min_amount, max_amount, max_payout, version, updated_at
 `
 
 type InsertGameLimitParams struct {
@@ -36,8 +36,8 @@ type InsertGameLimitParams struct {
 	Currency  string
 	Variant   string
 	Enabled   bool
-	MinBet    *int64
-	MaxBet    *int64
+	MinAmount *int64
+	MaxAmount *int64
 	MaxPayout *int64
 }
 
@@ -47,8 +47,8 @@ func (q *Queries) InsertGameLimit(ctx context.Context, arg InsertGameLimitParams
 		arg.Currency,
 		arg.Variant,
 		arg.Enabled,
-		arg.MinBet,
-		arg.MaxBet,
+		arg.MinAmount,
+		arg.MaxAmount,
 		arg.MaxPayout,
 	)
 	var i GameLimit
@@ -57,8 +57,8 @@ func (q *Queries) InsertGameLimit(ctx context.Context, arg InsertGameLimitParams
 		&i.Currency,
 		&i.Variant,
 		&i.Enabled,
-		&i.MinBet,
-		&i.MaxBet,
+		&i.MinAmount,
+		&i.MaxAmount,
 		&i.MaxPayout,
 		&i.Version,
 		&i.UpdatedAt,
@@ -90,7 +90,7 @@ func (q *Queries) InsertGameSetting(ctx context.Context, arg InsertGameSettingPa
 }
 
 const listGameLimits = `-- name: ListGameLimits :many
-SELECT game, currency, variant, enabled, min_bet, max_bet, max_payout, version, updated_at FROM game_limits
+SELECT game, currency, variant, enabled, min_amount, max_amount, max_payout, version, updated_at FROM game_limits
 `
 
 func (q *Queries) ListGameLimits(ctx context.Context) ([]GameLimit, error) {
@@ -107,8 +107,8 @@ func (q *Queries) ListGameLimits(ctx context.Context) ([]GameLimit, error) {
 			&i.Currency,
 			&i.Variant,
 			&i.Enabled,
-			&i.MinBet,
-			&i.MaxBet,
+			&i.MinAmount,
+			&i.MaxAmount,
 			&i.MaxPayout,
 			&i.Version,
 			&i.UpdatedAt,
@@ -124,7 +124,7 @@ func (q *Queries) ListGameLimits(ctx context.Context) ([]GameLimit, error) {
 }
 
 const listGameLimitsFor = `-- name: ListGameLimitsFor :many
-SELECT game, currency, variant, enabled, min_bet, max_bet, max_payout, version, updated_at FROM game_limits WHERE game = $1 AND currency = $2
+SELECT game, currency, variant, enabled, min_amount, max_amount, max_payout, version, updated_at FROM game_limits WHERE game = $1 AND currency = $2
 `
 
 type ListGameLimitsForParams struct {
@@ -146,8 +146,8 @@ func (q *Queries) ListGameLimitsFor(ctx context.Context, arg ListGameLimitsForPa
 			&i.Currency,
 			&i.Variant,
 			&i.Enabled,
-			&i.MinBet,
-			&i.MaxBet,
+			&i.MinAmount,
+			&i.MaxAmount,
 			&i.MaxPayout,
 			&i.Version,
 			&i.UpdatedAt,
@@ -192,7 +192,7 @@ func (q *Queries) ListGameSettings(ctx context.Context) ([]GameSetting, error) {
 }
 
 const lockGameLimit = `-- name: LockGameLimit :one
-SELECT game, currency, variant, enabled, min_bet, max_bet, max_payout, version, updated_at FROM game_limits WHERE game = $1 AND currency = $2 AND variant = $3 FOR UPDATE
+SELECT game, currency, variant, enabled, min_amount, max_amount, max_payout, version, updated_at FROM game_limits WHERE game = $1 AND currency = $2 AND variant = $3 FOR UPDATE
 `
 
 type LockGameLimitParams struct {
@@ -209,8 +209,8 @@ func (q *Queries) LockGameLimit(ctx context.Context, arg LockGameLimitParams) (G
 		&i.Currency,
 		&i.Variant,
 		&i.Enabled,
-		&i.MinBet,
-		&i.MaxBet,
+		&i.MinAmount,
+		&i.MaxAmount,
 		&i.MaxPayout,
 		&i.Version,
 		&i.UpdatedAt,
@@ -236,9 +236,9 @@ func (q *Queries) LockGameSetting(ctx context.Context, game string) (GameSetting
 }
 
 const updateGameLimit = `-- name: UpdateGameLimit :one
-UPDATE game_limits SET enabled = $4, min_bet = $5, max_bet = $6, max_payout = $7, version = version + 1, updated_at = now()
+UPDATE game_limits SET enabled = $4, min_amount = $5, max_amount = $6, max_payout = $7, version = version + 1, updated_at = now()
 WHERE game = $1 AND currency = $2 AND variant = $3
-RETURNING game, currency, variant, enabled, min_bet, max_bet, max_payout, version, updated_at
+RETURNING game, currency, variant, enabled, min_amount, max_amount, max_payout, version, updated_at
 `
 
 type UpdateGameLimitParams struct {
@@ -246,8 +246,8 @@ type UpdateGameLimitParams struct {
 	Currency  string
 	Variant   string
 	Enabled   bool
-	MinBet    *int64
-	MaxBet    *int64
+	MinAmount *int64
+	MaxAmount *int64
 	MaxPayout *int64
 }
 
@@ -257,8 +257,8 @@ func (q *Queries) UpdateGameLimit(ctx context.Context, arg UpdateGameLimitParams
 		arg.Currency,
 		arg.Variant,
 		arg.Enabled,
-		arg.MinBet,
-		arg.MaxBet,
+		arg.MinAmount,
+		arg.MaxAmount,
 		arg.MaxPayout,
 	)
 	var i GameLimit
@@ -267,8 +267,8 @@ func (q *Queries) UpdateGameLimit(ctx context.Context, arg UpdateGameLimitParams
 		&i.Currency,
 		&i.Variant,
 		&i.Enabled,
-		&i.MinBet,
-		&i.MaxBet,
+		&i.MinAmount,
+		&i.MaxAmount,
 		&i.MaxPayout,
 		&i.Version,
 		&i.UpdatedAt,

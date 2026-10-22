@@ -84,9 +84,9 @@ func TestReadEndpoints(t *testing.T) {
 	}
 	st, body = get("/api/users/" + id + "/activity?game=nope")
 	wantErr(t, "unknown game", st, body, 400, "unknown_game")
-	bets := ok("/api/users/" + id + "/activity?game=arena&limit=10")
-	if len(bets["items"].([]any)) != 2 || bets["next"] != nil {
-		t.Fatalf("bets = %v", bets)
+	rows := ok("/api/users/" + id + "/activity?game=arena&limit=10")
+	if len(rows["items"].([]any)) != 2 || rows["next"] != nil {
+		t.Fatalf("rows = %v", rows)
 	}
 	p1 := ok("/api/users/" + id + "/activity?game=arena&limit=1")
 	first := p1["items"].([]any)[0].(map[string]any)
@@ -107,7 +107,7 @@ func TestReadEndpoints(t *testing.T) {
 		t.Fatalf("games = %v", games2)
 	}
 	gm := games2[0].(map[string]any)
-	for _, k := range []string{"name", "max_bet", "max_payout", "variants", "pvp", "only", "enabled", "overrides", "effective"} {
+	for _, k := range []string{"name", "max_amount", "max_payout", "variants", "pvp", "only", "enabled", "overrides", "effective"} {
 		if _, has := gm[k]; !has {
 			t.Fatalf("game lacks %q: %v", k, gm)
 		}

@@ -60,7 +60,7 @@ func changeView(v any) any {
 	case bool:
 		return map[string]any{"enabled": v}
 	case gameconfig.LimitOverride:
-		return map[string]any{"enabled": v.Enabled, "min_bet": v.MinBet, "max_bet": v.MaxBet, "max_payout": v.MaxPayout}
+		return map[string]any{"enabled": v.Enabled, "min_amount": v.MinAmount, "max_amount": v.MaxAmount, "max_payout": v.MaxPayout}
 	}
 	return v
 }
@@ -162,8 +162,8 @@ func limitKey(r *http.Request) (game, currency, variant, target string) {
 func (adm *Admin) setLimit(w http.ResponseWriter, r *http.Request, s *session) error {
 	var b struct {
 		Enabled   *bool  `json:"enabled"`
-		MinBet    *int64 `json:"min_bet"`
-		MaxBet    *int64 `json:"max_bet"`
+		MinAmount *int64 `json:"min_amount"`
+		MaxAmount *int64 `json:"max_amount"`
 		MaxPayout *int64 `json:"max_payout"`
 	}
 	if err := decode(w, r, &b); err != nil {
@@ -173,7 +173,7 @@ func (adm *Admin) setLimit(w http.ResponseWriter, r *http.Request, s *session) e
 		return badRequest("enabled is required")
 	}
 	game, currency, variant, target := limitKey(r)
-	o := gameconfig.LimitOverride{Enabled: *b.Enabled, MinBet: b.MinBet, MaxBet: b.MaxBet, MaxPayout: b.MaxPayout}
+	o := gameconfig.LimitOverride{Enabled: *b.Enabled, MinAmount: b.MinAmount, MaxAmount: b.MaxAmount, MaxPayout: b.MaxPayout}
 	return adm.gameWrite(w, r, s, "game.limit.set", target, func(ctx context.Context, tx pgx.Tx) (gameconfig.Change, error) {
 		return adm.a.Games.SetLimit(ctx, tx, game, currency, variant, o)
 	}, http.StatusOK)

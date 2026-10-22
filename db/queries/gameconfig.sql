@@ -22,13 +22,13 @@ RETURNING *;
 SELECT * FROM game_limits WHERE game = $1 AND currency = $2 AND variant = $3 FOR UPDATE;
 
 -- name: InsertGameLimit :one
-INSERT INTO game_limits (game, currency, variant, enabled, min_bet, max_bet, max_payout)
+INSERT INTO game_limits (game, currency, variant, enabled, min_amount, max_amount, max_payout)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (game, currency, variant) DO NOTHING
 RETURNING *;
 
 -- name: UpdateGameLimit :one
-UPDATE game_limits SET enabled = $4, min_bet = $5, max_bet = $6, max_payout = $7, version = version + 1, updated_at = now()
+UPDATE game_limits SET enabled = $4, min_amount = $5, max_amount = $6, max_payout = $7, version = version + 1, updated_at = now()
 WHERE game = $1 AND currency = $2 AND variant = $3
 RETURNING *;
 

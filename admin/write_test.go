@@ -52,7 +52,7 @@ func TestLimitWriteAudited(t *testing.T) {
 	op := loginAs(t, a, srv, "op", RoleOperator)
 	support := loginAs(t, a, srv, "support", RoleSupport)
 
-	st, body := call(t, op, srv, "PUT", "/api/games/arena/limits/usd/_", map[string]any{"enabled": true, "max_bet": 500})
+	st, body := call(t, op, srv, "PUT", "/api/games/arena/limits/usd/_", map[string]any{"enabled": true, "max_amount": 500})
 	if st != 200 {
 		t.Fatalf("set: %d %v", st, body)
 	}
@@ -61,18 +61,18 @@ func TestLimitWriteAudited(t *testing.T) {
 		`SELECT coalesce(before::text, 'null'), after::text, target FROM admin_audit WHERE action = 'game.limit.set'`).Scan(&before, &after, &target); err != nil {
 		t.Fatal(err)
 	}
-	if before != "null" || !strings.Contains(after, `"max_bet": 500`) || target != "game:arena/usd/" {
+	if before != "null" || !strings.Contains(after, `"max_amount": 500`) || target != "game:arena/usd/" {
 		t.Fatalf("audit: before=%s after=%s target=%s", before, after, target)
 	}
 	if n := len(a.Pushes("feed:config")); n != 1 {
 		t.Fatalf("config pushes = %d, want 1", n)
 	}
-	if got := a.Games.Public()["arena"]["usd"].Limits.MaxBet; got != 500 {
-		t.Fatalf("cache not reloaded: max_bet %d", got)
+	if got := a.Games.Public()["arena"]["usd"].Limits.MaxAmount; got != 500 {
+		t.Fatalf("cache not reloaded: max_amount %d", got)
 	}
 
 	// The same write again changes nothing: no audit row.
-	if st, body := call(t, op, srv, "PUT", "/api/games/arena/limits/usd/_", map[string]any{"enabled": true, "max_bet": 500}); st != 200 {
+	if st, body := call(t, op, srv, "PUT", "/api/games/arena/limits/usd/_", map[string]any{"enabled": true, "max_amount": 500}); st != 200 {
 		t.Fatalf("repeat: %d %v", st, body)
 	}
 	// Deleting a row that doesn't exist is fine and silent.
@@ -86,13 +86,13 @@ func TestLimitWriteAudited(t *testing.T) {
 		t.Fatalf("delete audit rows = %d, want 0", n)
 	}
 
-	st, body = call(t, op, srv, "PUT", "/api/games/arena/limits/usd/_", map[string]any{"enabled": true, "max_bet": arenaMax + 1})
+	st, body = call(t, op, srv, "PUT", "/api/games/arena/limits/usd/_", map[string]any{"enabled": true, "max_amount": arenaMax + 1})
 	wantErr(t, "loosen", st, body, 400, "loosens")
-	st, body = call(t, op, srv, "PUT", "/api/games/arena/limits/usd/_", map[string]any{"enabled": true, "max_bet": -5})
+	st, body = call(t, op, srv, "PUT", "/api/games/arena/limits/usd/_", map[string]any{"enabled": true, "max_amount": -5})
 	wantErr(t, "bad override", st, body, 400, "bad_override")
 	st, body = call(t, op, srv, "PUT", "/api/games/nope/limits/usd/_", map[string]any{"enabled": true})
 	wantErr(t, "unknown game", st, body, 404, "not_found")
-	st, body = call(t, op, srv, "PUT", "/api/games/arena/limits/usd/_", map[string]any{"max_bet": 5})
+	st, body = call(t, op, srv, "PUT", "/api/games/arena/limits/usd/_", map[string]any{"max_amount": 5})
 	wantErr(t, "no enabled", st, body, 400, "bad_request")
 	if n := auditRows(t, a, "game.limit.set"); n != 1 {
 		t.Fatalf("audit rows after failures = %d, want 1", n)

@@ -66,8 +66,8 @@ type GameLimit struct {
 	Currency  string
 	Variant   string
 	Enabled   bool
-	MinBet    *int64
-	MaxBet    *int64
+	MinAmount *int64
+	MaxAmount *int64
 	MaxPayout *int64
 	Version   int64
 	UpdatedAt pgtype.Timestamptz

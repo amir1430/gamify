@@ -14,15 +14,15 @@ import (
 var (
 	ErrUnknownGame = errors.New("gameconfig: unknown game")
 	ErrLoosens     = errors.New("gameconfig: override above the game's code cap")
-	// ErrBadOverride covers an unknown currency or variant, a value <= 0, min_bet > max_bet and
-	// max_bet >= max_payout (set together), and an empty game name.
+	// ErrBadOverride covers an unknown currency or variant, a value <= 0, min_amount > max_amount and
+	// max_amount >= max_payout (set together), and an empty game name.
 	ErrBadOverride = errors.New("gameconfig: invalid override")
 )
 
 // LimitOverride is a stored game_limits row; nil = inherit.
 type LimitOverride struct {
-	Enabled                   bool
-	MinBet, MaxBet, MaxPayout *int64
+	Enabled                         bool
+	MinAmount, MaxAmount, MaxPayout *int64
 }
 
 // Change is what a write replaced and what it stored, for the audit row. A nil side means there
@@ -30,13 +30,13 @@ type LimitOverride struct {
 type Change struct{ Before, After any }
 
 func fromRow(l store.GameLimit) LimitOverride {
-	return LimitOverride{Enabled: l.Enabled, MinBet: l.MinBet, MaxBet: l.MaxBet, MaxPayout: l.MaxPayout}
+	return LimitOverride{Enabled: l.Enabled, MinAmount: l.MinAmount, MaxAmount: l.MaxAmount, MaxPayout: l.MaxPayout}
 }
 
 func eq(a, b *int64) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
 
 func (o LimitOverride) equal(p LimitOverride) bool {
-	return o.Enabled == p.Enabled && eq(o.MinBet, p.MinBet) && eq(o.MaxBet, p.MaxBet) && eq(o.MaxPayout, p.MaxPayout)
+	return o.Enabled == p.Enabled && eq(o.MinAmount, p.MinAmount) && eq(o.MaxAmount, p.MaxAmount) && eq(o.MaxPayout, p.MaxPayout)
 }
 
 // SetGame turns a game on or off (the whole game, all variants), inside tx. It does not reload
@@ -81,18 +81,18 @@ func (s *Service) SetLimit(ctx context.Context, tx pgx.Tx, game, currency, varia
 	if err != nil {
 		return Change{}, err
 	}
-	for _, v := range []*int64{o.MinBet, o.MaxBet, o.MaxPayout} {
+	for _, v := range []*int64{o.MinAmount, o.MaxAmount, o.MaxPayout} {
 		if v != nil && *v <= 0 {
 			return Change{}, ErrBadOverride
 		}
 	}
-	if o.MinBet != nil && o.MaxBet != nil && *o.MinBet > *o.MaxBet {
+	if o.MinAmount != nil && o.MaxAmount != nil && *o.MinAmount > *o.MaxAmount {
 		return Change{}, ErrBadOverride
 	}
-	if o.MaxBet != nil && o.MaxPayout != nil && *o.MaxBet >= *o.MaxPayout {
+	if o.MaxAmount != nil && o.MaxPayout != nil && *o.MaxAmount >= *o.MaxPayout {
 		return Change{}, ErrBadOverride
 	}
-	if o.MaxBet != nil && *o.MaxBet > g.MaxBet || o.MaxPayout != nil && *o.MaxPayout > g.MaxPayout {
+	if o.MaxAmount != nil && *o.MaxAmount > g.MaxAmount || o.MaxPayout != nil && *o.MaxPayout > g.MaxPayout {
 		return Change{}, ErrLoosens
 	}
 	if !s.effectiveOK(g, currency, variant, o) {
@@ -101,7 +101,7 @@ func (s *Service) SetLimit(ctx context.Context, tx pgx.Tx, game, currency, varia
 
 	q := store.New(tx)
 	p := store.InsertGameLimitParams{Game: game, Currency: currency, Variant: variant,
-		Enabled: o.Enabled, MinBet: o.MinBet, MaxBet: o.MaxBet, MaxPayout: o.MaxPayout}
+		Enabled: o.Enabled, MinAmount: o.MinAmount, MaxAmount: o.MaxAmount, MaxPayout: o.MaxPayout}
 	row, err := q.LockGameLimit(ctx, store.LockGameLimitParams{Game: game, Currency: currency, Variant: variant})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, err = q.InsertGameLimit(ctx, p); !errors.Is(err, pgx.ErrNoRows) {
@@ -183,7 +183,7 @@ func (s *Service) Overrides() (settings map[string]bool, limits map[string]map[s
 }
 
 // effectiveOK reports whether, with o written for (g, currency, variant) over the cached rows,
-// every limit set it affects still satisfies MinBet <= MaxBet < MaxPayout. A game-level write
+// every limit set it affects still satisfies MinAmount <= MaxAmount < MaxPayout. A game-level write
 // (variant "") also affects every variant, which inherits from it.
 func (s *Service) effectiveOK(g *Game, currency, variant string, o LimitOverride) bool {
 	snap := s.snap.Load()
@@ -192,7 +192,7 @@ func (s *Service) effectiveOK(g *Game, currency, variant string, o LimitOverride
 		limits[k] = v
 	}
 	limits[key{g.Name, currency, variant}] = store.GameLimit{Game: g.Name, Currency: currency, Variant: variant,
-		Enabled: o.Enabled, MinBet: o.MinBet, MaxBet: o.MaxBet, MaxPayout: o.MaxPayout}
+		Enabled: o.Enabled, MinAmount: o.MinAmount, MaxAmount: o.MaxAmount, MaxPayout: o.MaxPayout}
 	next := &snapshot{settings: snap.settings, limits: limits}
 	vs := []string{variant}
 	if variant == "" {
@@ -200,7 +200,7 @@ func (s *Service) effectiveOK(g *Game, currency, variant string, o LimitOverride
 	}
 	for _, v := range vs {
 		l := g.resolve(next, ledger.Currency(currency), v)
-		if l.MinBet > l.MaxBet || l.MaxBet >= l.MaxPayout {
+		if l.MinAmount > l.MaxAmount || l.MaxAmount >= l.MaxPayout {
 			return false
 		}
 	}

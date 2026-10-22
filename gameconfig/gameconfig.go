@@ -1,8 +1,9 @@
 // Package gameconfig holds what admins can change about games without a deploy: whether a game
-// (or one of its variants) takes new bets, and its min bet, max bet and max payout per currency.
-// Each game declares its defaults in code. They are hard caps: a stored override can tighten them,
-// never loosen them, so a typo can't open a bigger exposure than the code allows. Payout tables and
-// house edges are not here; they are pinned to the public verifier.
+// (or one of its variants) accepts play, and its min amount, max amount and max payout per
+// currency. A game that never charges money only uses Enabled. Each game declares its defaults in
+// code. They are hard caps: a stored override can tighten them, never loosen them, so a typo can't
+// open a bigger exposure than the code allows. A game's own rules (payout tables, odds) are not
+// here; the game owns them.
 package gameconfig
 
 import (
@@ -21,7 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ReloadEvery is how soon a change made in the admin reaches the bet path of every instance.
+// ReloadEvery is how soon a change made in the admin reaches the play path of every instance.
 const ReloadEvery = 5 * time.Second
 
 // Channel is where the players' view of the limits (Public) is published after an admin change;
@@ -29,27 +30,27 @@ const ReloadEvery = 5 * time.Second
 const Channel = "feed:config"
 
 var (
-	ErrInvalid     = &realtime.ClientError{Code: 1100, Message: "invalid bet"}
+	ErrInvalid     = &realtime.ClientError{Code: 1100, Message: "invalid amount"}
 	ErrUnavailable = &realtime.ClientError{Code: 1107, Message: "this game is temporarily unavailable"}
 )
 
-// Limits apply to one bet, in its currency's minor units.
+// Limits apply to one operation's amount, in its currency's minor units.
 type Limits struct {
 	Enabled   bool  `json:"enabled"`
-	MinBet    int64 `json:"min_bet"`
-	MaxBet    int64 `json:"max_bet"`
+	MinAmount int64 `json:"min_amount"`
+	MaxAmount int64 `json:"max_amount"`
 	MaxPayout int64 `json:"max_payout"`
 }
 
-// Allows reports whether amount is a valid stake: 0 (demo) or MinBet..MaxBet, and below
-// MaxPayout (a bet capped at its own stake could never win).
+// Allows reports whether amount is valid: 0 (demo) or MinAmount..MaxAmount, and below MaxPayout
+// (an operation capped at its own amount could never win).
 func (l Limits) Allows(amount int64) bool {
-	return amount == 0 || amount >= l.MinBet && amount <= l.MaxBet && amount < l.MaxPayout
+	return amount == 0 || amount >= l.MinAmount && amount <= l.MaxAmount && amount < l.MaxPayout
 }
 
 type key struct{ game, currency, variant string }
 
-// snapshot is the stored config, swapped whole on every reload so bets never wait on Postgres.
+// snapshot is the stored config, swapped whole on every reload so play never waits on Postgres.
 type snapshot struct {
 	settings map[string]store.GameSetting
 	limits   map[key]store.GameLimit
@@ -69,13 +70,13 @@ func newSnapshot(settings []store.GameSetting, limits []store.GameLimit) *snapsh
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *store.Queries
-	ledger *ledger.Ledger // the brand's currencies and their minimum stakes
+	ledger *ledger.Ledger // the brand's currencies and their minimum amounts
 	snap   atomic.Pointer[snapshot]
 
 	mu    sync.Mutex
 	games []*Game // registered by the game services, in wiring order
 
-	off map[ledger.Currency]bool // currencies no game takes bets in (Off), set before serving
+	off map[ledger.Currency]bool // currencies no game accepts play in (Off), set before serving
 }
 
 // NewService starts with no overrides (every game on, code defaults) until the first Load.
@@ -85,7 +86,7 @@ func NewService(pool *pgxpool.Pool, l *ledger.Ledger) *Service {
 	return s
 }
 
-// Off turns off bets in currency c in every game, whatever the stored config says (a currency
+// Off turns off play in currency c in every game, whatever the stored config says (a currency
 // that can't be cashed out, so none can be won from the house). Call before serving.
 func (s *Service) Off(c ledger.Currency) {
 	if s.off == nil {
@@ -145,17 +146,17 @@ func (s *Service) Run(ctx context.Context) {
 // Game is one game's handle on its config: its code defaults (the hard caps) and its variants.
 type Game struct {
 	Name      string
-	MaxBet    int64
+	MaxAmount int64
 	MaxPayout int64
 	Variants  []string        // keys a game_limits row may use; empty for games without options
-	PvP       bool            // takes bets in a currency turned off with Off (PvP pays no winnings out of the house)
+	PvP       bool            // accepts play in a currency turned off with Off (PvP pays no winnings out of the house)
 	Only      ledger.Currency // "" = every currency; else the only one the game takes
 	s         *Service
 }
 
-// Game registers a game and returns the handle its service checks bets with.
-func (s *Service) Game(name string, maxBet, maxPayout int64, variants []string) *Game {
-	g := &Game{Name: name, MaxBet: maxBet, MaxPayout: maxPayout, Variants: variants, s: s}
+// Game registers a game and returns the handle its service checks amounts with.
+func (s *Service) Game(name string, maxAmount, maxPayout int64, variants []string) *Game {
+	g := &Game{Name: name, MaxAmount: maxAmount, MaxPayout: maxPayout, Variants: variants, s: s}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.games = append(s.games, g)
@@ -163,14 +164,14 @@ func (s *Service) Game(name string, maxBet, maxPayout int64, variants []string) 
 }
 
 // PvPGame is Game for a player-vs-player game: exempt from Off, since players win each other's
-// stakes and the house's USD never pays out.
-func (s *Service) PvPGame(name string, maxBet, maxPayout int64, variants []string) *Game {
-	g := s.Game(name, maxBet, maxPayout, variants)
+// amounts and the house's USD never pays out.
+func (s *Service) PvPGame(name string, maxAmount, maxPayout int64, variants []string) *Game {
+	g := s.Game(name, maxAmount, maxPayout, variants)
 	g.PvP = true
 	return g
 }
 
-// off reports whether bets in c are off for this game (Off, never for PvP; or not its Only currency).
+// off reports whether play in c is off for this game (Off, never for PvP; or not its Only currency).
 func (g *Game) off(c ledger.Currency) bool {
 	return (g.Only != "" && c != g.Only) || (!g.PvP && g.s.off[c])
 }
@@ -193,9 +194,9 @@ func (s *Service) lookup(name string) *Game {
 
 // Limits resolves the limits for a currency ("" = the default) and variant ("" = none): the code defaults,
 // then the game's row, then the variant's row (each NULL inherits), clamped to the code defaults
-// and the ledger's minimum stake. A game turned off turns off all its variants, a currency turned
+// and the ledger's minimum amount. A game turned off turns off all its variants, a currency turned
 // off (Off) every game in it. Returns
-// ErrInvalid for an unknown currency and ErrUnavailable when bets are off.
+// ErrInvalid for an unknown currency and ErrUnavailable when play is off.
 func (g *Game) Limits(c ledger.Currency, variant string) (ledger.Currency, Limits, error) {
 	c = cmp.Or(c, g.s.ledger.Default())
 	if !g.s.ledger.Valid(c) {
@@ -210,8 +211,8 @@ func (g *Game) Limits(c ledger.Currency, variant string) (ledger.Currency, Limit
 }
 
 func (g *Game) resolve(snap *snapshot, c ledger.Currency, variant string) Limits {
-	minBet := g.s.ledger.MinAmount(c)
-	l := Limits{Enabled: true, MinBet: minBet, MaxBet: g.MaxBet, MaxPayout: g.MaxPayout}
+	minAmount := g.s.ledger.MinAmount(c)
+	l := Limits{Enabled: true, MinAmount: minAmount, MaxAmount: g.MaxAmount, MaxPayout: g.MaxPayout}
 	if set, ok := snap.settings[g.Name]; ok {
 		l.Enabled = set.Enabled
 	}
@@ -219,8 +220,8 @@ func (g *Game) resolve(snap *snapshot, c ledger.Currency, variant string) Limits
 	if variant != "" {
 		l.apply(snap.limits, key{g.Name, string(c), variant})
 	}
-	l.MinBet = max(l.MinBet, minBet)
-	l.MaxBet = min(l.MaxBet, g.MaxBet)
+	l.MinAmount = max(l.MinAmount, minAmount)
+	l.MaxAmount = min(l.MaxAmount, g.MaxAmount)
 	l.MaxPayout = min(l.MaxPayout, g.MaxPayout)
 	return l
 }
@@ -231,19 +232,19 @@ func (l *Limits) apply(rows map[key]store.GameLimit, k key) {
 		return
 	}
 	l.Enabled = l.Enabled && row.Enabled
-	if row.MinBet != nil {
-		l.MinBet = *row.MinBet
+	if row.MinAmount != nil {
+		l.MinAmount = *row.MinAmount
 	}
-	if row.MaxBet != nil {
-		l.MaxBet = *row.MaxBet
+	if row.MaxAmount != nil {
+		l.MaxAmount = *row.MaxAmount
 	}
 	if row.MaxPayout != nil {
 		l.MaxPayout = *row.MaxPayout
 	}
 }
 
-// Stake is Limits plus the amount check (Allows).
-func (g *Game) Stake(c ledger.Currency, variant string, amount int64) (ledger.Currency, Limits, error) {
+// Check is Limits plus the amount check (Allows).
+func (g *Game) Check(c ledger.Currency, variant string, amount int64) (ledger.Currency, Limits, error) {
 	c, l, err := g.Limits(c, variant)
 	if err == nil && !l.Allows(amount) {
 		err = ErrInvalid

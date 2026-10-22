@@ -214,8 +214,8 @@ func (adm *Admin) seeds(w http.ResponseWriter, r *http.Request, _ *session) erro
 
 type limitView struct {
 	Enabled   bool   `json:"enabled"`
-	MinBet    *int64 `json:"min_bet"`
-	MaxBet    *int64 `json:"max_bet"`
+	MinAmount *int64 `json:"min_amount"`
+	MaxAmount *int64 `json:"max_amount"`
 	MaxPayout *int64 `json:"max_payout"`
 }
 
@@ -237,7 +237,7 @@ func (adm *Admin) games(w http.ResponseWriter, r *http.Request, _ *session) erro
 		for cur, byVariant := range limits[g.Name] {
 			ov.Limits[cur] = map[string]limitView{}
 			for v, o := range byVariant {
-				ov.Limits[cur][v] = limitView{o.Enabled, o.MinBet, o.MaxBet, o.MaxPayout}
+				ov.Limits[cur][v] = limitView{o.Enabled, o.MinAmount, o.MaxAmount, o.MaxPayout}
 			}
 		}
 		variants := g.Variants
@@ -245,7 +245,7 @@ func (adm *Admin) games(w http.ResponseWriter, r *http.Request, _ *session) erro
 			variants = []string{}
 		}
 		out = append(out, map[string]any{
-			"name": g.Name, "max_bet": g.MaxBet, "max_payout": g.MaxPayout, "variants": variants,
+			"name": g.Name, "max_amount": g.MaxAmount, "max_payout": g.MaxPayout, "variants": variants,
 			"pvp": g.PvP, "only": g.Only, "enabled": ov.Enabled == nil || *ov.Enabled,
 			"overrides": ov, "effective": public[g.Name],
 		})
