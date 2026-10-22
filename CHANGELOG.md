@@ -24,6 +24,20 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   and non-negative `FillAfter`/`MatchTimeout`/`MaxWait` (`Forever` allowed). The matcher (internal)
   fills teams anchor first, then larger parties first, oldest first among equal sizes, and falls
   back to a bounded search when that greedy fill misses a feasible packing.
+- `matchmaking`: tickets and RPCs. `match.queue {queue, currency, stake, properties, numbers, idem_key}`
+  returns a `QueueResult` (exactly one of `Ticket`, `MatchID`, `Removed`); `match.cancel {}`;
+  `match.status {}` returns `{ticket, matches}` (the caller's non-final matches); `rating.get {key}`
+  returns `{mu, sigma, ordinal, matches}`, and `Service.Rating(ctx, userID, key)` is the Go side.
+  A queue call must carry every configured `Numbers` key and every declared `Properties` key and
+  nothing else (`gameconfig.ErrInvalid`); `Stakes`/`Game.Check` limits apply (`ErrInvalid`,
+  `ErrUnavailable`). The caller queues alone unless they lead a party of 2+ (then the whole party
+  queues; with `PartiesPerUser` > 1 the oldest such party they lead), a mere member gets
+  `party.ErrNotLeader`, a party larger than every team (FFA: 1) `ErrPartyTooBig`. Unless
+  `Concurrent`, a user in a non-final match of the queue gets `ErrBusy`. `idem_key` (required, at
+  most 64 bytes) replays the stored outcome even after the ticket is gone and whatever the payload.
+  Pushes: `{"type":"match.ticket","ticket"}` and `{"type":"match.ticket_removed","reason"}`
+  (`cancelled`, `party_changed`; a party change of any kind removes its ticket). `Ticket`, `Match`,
+  `Player` and `Result` have JSON tags.
 
 ### Upgrade
 - `party`: new goose table `goose_party` (migrations run in `party.Register`); nothing changes unless you register it.

@@ -85,38 +85,45 @@ type Queue struct{ cfg QueueConfig }
 func (q *Queue) Config() QueueConfig { return q.cfg }
 
 type Ticket struct {
-	ID         int64
-	Queue      string
-	Leader     int64
-	PartyID    int64
-	Users      []int64
-	Currency   ledger.Currency
-	Stake      int64
-	Properties map[string]string
-	Server     map[string]string
-	Numbers    map[string]int64
-	Rating     float64 // mean ordinal of Users under RatingKey
-	QueuedAt   time.Time
+	ID         int64             `json:"id"`
+	Queue      string            `json:"queue"`
+	Leader     int64             `json:"leader"`
+	PartyID    int64             `json:"party_id"`
+	Users      []int64           `json:"users"`
+	Currency   ledger.Currency   `json:"currency"`
+	Stake      int64             `json:"stake"`
+	Properties map[string]string `json:"properties"`
+	Server     map[string]string `json:"server"`
+	Numbers    map[string]int64  `json:"numbers"`
+	Rating     float64           `json:"rating"` // mean ordinal of Users under RatingKey
+	QueuedAt   time.Time         `json:"queued_at"`
 }
 
 type Player struct {
-	EntryID, UserID, PartyID int64
-	Team                     int
+	EntryID int64 `json:"entry_id"`
+	UserID  int64 `json:"user_id"`
+	PartyID int64 `json:"party_id"`
+	Team    int   `json:"team"`
 }
 
 // Result is the placement of each team, 1 = best, ties share a rank.
-type Result struct{ Ranks []int }
+type Result struct {
+	Ranks []int `json:"ranks"`
+}
 
 type Match struct {
-	ID                  int64
-	Queue, Ref          string
-	Status              string // forming, running, finishing, settled, cancelling, cancelled
-	Currency            ledger.Currency
-	Stake, FeeBP        int64
-	Players             []Player
-	Result              *Result
-	Reason              string
-	CreatedAt, Deadline time.Time
+	ID        int64           `json:"id"`
+	Queue     string          `json:"queue"`
+	Ref       string          `json:"ref"`
+	Status    string          `json:"status"` // forming, running, finishing, settled, cancelling, cancelled
+	Currency  ledger.Currency `json:"currency"`
+	Stake     int64           `json:"stake"`
+	FeeBP     int64           `json:"fee_bp"`
+	Players   []Player        `json:"players"`
+	Result    *Result         `json:"result,omitempty"`
+	Reason    string          `json:"reason,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	Deadline  time.Time       `json:"deadline"`
 }
 
 // Config's zero fields take the defaults.
@@ -148,6 +155,8 @@ func Register(ctx context.Context, a *app.App, parties *party.Service, cfg Confi
 	s := &Service{a: a, parties: parties, q: store.New(a.Pool), cfg: cfg}
 	a.Loop(cfg.Tick, s.tick)
 	a.Reconcile(s.Reconcile)
+	s.handle()
+	parties.OnChange(s.onPartyChange)
 	return s, nil
 }
 

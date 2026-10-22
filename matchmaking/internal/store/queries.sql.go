@@ -11,6 +11,240 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteTicket = `-- name: DeleteTicket :execrows
+DELETE FROM mm_tickets WHERE id = $1
+`
+
+func (q *Queries) DeleteTicket(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTicket, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getRating = `-- name: GetRating :one
+SELECT mu, sigma, matches FROM mm_ratings WHERE user_id = $1 AND key = $2
+`
+
+type GetRatingParams struct {
+	UserID int64
+	Key    string
+}
+
+type GetRatingRow struct {
+	Mu      float64
+	Sigma   float64
+	Matches int32
+}
+
+func (q *Queries) GetRating(ctx context.Context, arg GetRatingParams) (GetRatingRow, error) {
+	row := q.db.QueryRow(ctx, getRating, arg.UserID, arg.Key)
+	var i GetRatingRow
+	err := row.Scan(&i.Mu, &i.Sigma, &i.Matches)
+	return i, err
+}
+
+const getRequest = `-- name: GetRequest :one
+SELECT queue, ticket_id, match_id, removed FROM mm_requests WHERE user_id = $1 AND idem_key = $2
+`
+
+type GetRequestParams struct {
+	UserID  int64
+	IdemKey string
+}
+
+type GetRequestRow struct {
+	Queue    string
+	TicketID int64
+	MatchID  int64
+	Removed  string
+}
+
+func (q *Queries) GetRequest(ctx context.Context, arg GetRequestParams) (GetRequestRow, error) {
+	row := q.db.QueryRow(ctx, getRequest, arg.UserID, arg.IdemKey)
+	var i GetRequestRow
+	err := row.Scan(
+		&i.Queue,
+		&i.TicketID,
+		&i.MatchID,
+		&i.Removed,
+	)
+	return i, err
+}
+
+const getTicket = `-- name: GetTicket :one
+SELECT id, queue, leader_id, party_id, currency, stake, properties, server, numbers, rating, queued_at
+FROM mm_tickets WHERE id = $1
+`
+
+type GetTicketRow struct {
+	ID         int64
+	Queue      string
+	LeaderID   int64
+	PartyID    int64
+	Currency   string
+	Stake      int64
+	Properties []byte
+	Server     []byte
+	Numbers    []byte
+	Rating     float64
+	QueuedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetTicket(ctx context.Context, id int64) (GetTicketRow, error) {
+	row := q.db.QueryRow(ctx, getTicket, id)
+	var i GetTicketRow
+	err := row.Scan(
+		&i.ID,
+		&i.Queue,
+		&i.LeaderID,
+		&i.PartyID,
+		&i.Currency,
+		&i.Stake,
+		&i.Properties,
+		&i.Server,
+		&i.Numbers,
+		&i.Rating,
+		&i.QueuedAt,
+	)
+	return i, err
+}
+
+const insertRequest = `-- name: InsertRequest :execrows
+INSERT INTO mm_requests (user_id, idem_key, queue) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING
+`
+
+type InsertRequestParams struct {
+	UserID  int64
+	IdemKey string
+	Queue   string
+}
+
+// 0 rows: the key was used before (a concurrent first call waits for the winner to commit).
+func (q *Queries) InsertRequest(ctx context.Context, arg InsertRequestParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertRequest, arg.UserID, arg.IdemKey, arg.Queue)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertTicket = `-- name: InsertTicket :one
+INSERT INTO mm_tickets (queue, leader_id, party_id, currency, stake, properties, server, numbers, rating)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, queued_at
+`
+
+type InsertTicketParams struct {
+	Queue      string
+	LeaderID   int64
+	PartyID    int64
+	Currency   string
+	Stake      int64
+	Properties []byte
+	Server     []byte
+	Numbers    []byte
+	Rating     float64
+}
+
+type InsertTicketRow struct {
+	ID       int64
+	QueuedAt pgtype.Timestamptz
+}
+
+func (q *Queries) InsertTicket(ctx context.Context, arg InsertTicketParams) (InsertTicketRow, error) {
+	row := q.db.QueryRow(ctx, insertTicket,
+		arg.Queue,
+		arg.LeaderID,
+		arg.PartyID,
+		arg.Currency,
+		arg.Stake,
+		arg.Properties,
+		arg.Server,
+		arg.Numbers,
+		arg.Rating,
+	)
+	var i InsertTicketRow
+	err := row.Scan(&i.ID, &i.QueuedAt)
+	return i, err
+}
+
+const insertTicketUser = `-- name: InsertTicketUser :exec
+INSERT INTO mm_ticket_users (user_id, ticket_id) VALUES ($1, $2)
+`
+
+type InsertTicketUserParams struct {
+	UserID   int64
+	TicketID int64
+}
+
+func (q *Queries) InsertTicketUser(ctx context.Context, arg InsertTicketUserParams) error {
+	_, err := q.db.Exec(ctx, insertTicketUser, arg.UserID, arg.TicketID)
+	return err
+}
+
+const matchPlayers = `-- name: MatchPlayers :many
+SELECT id, match_id, user_id, team, party_id FROM mm_match_players WHERE match_id = ANY($1::bigint[]) ORDER BY id
+`
+
+type MatchPlayersRow struct {
+	ID      int64
+	MatchID int64
+	UserID  int64
+	Team    int32
+	PartyID int64
+}
+
+func (q *Queries) MatchPlayers(ctx context.Context, dollar_1 []int64) ([]MatchPlayersRow, error) {
+	rows, err := q.db.Query(ctx, matchPlayers, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MatchPlayersRow
+	for rows.Next() {
+		var i MatchPlayersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.MatchID,
+			&i.UserID,
+			&i.Team,
+			&i.PartyID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const partyTicketIDs = `-- name: PartyTicketIDs :many
+SELECT id FROM mm_tickets WHERE party_id = $1
+`
+
+func (q *Queries) PartyTicketIDs(ctx context.Context, partyID int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, partyTicketIDs, partyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneRequests = `-- name: PruneRequests :execrows
 DELETE FROM mm_requests WHERE created_at < $1
 `
@@ -22,4 +256,177 @@ func (q *Queries) PruneRequests(ctx context.Context, createdAt pgtype.Timestampt
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setRequestRemoved = `-- name: SetRequestRemoved :exec
+UPDATE mm_requests SET removed = $2 WHERE ticket_id = $1
+`
+
+type SetRequestRemovedParams struct {
+	TicketID int64
+	Removed  string
+}
+
+// Records why the ticket went; the request keeps its ticket_id.
+func (q *Queries) SetRequestRemoved(ctx context.Context, arg SetRequestRemovedParams) error {
+	_, err := q.db.Exec(ctx, setRequestRemoved, arg.TicketID, arg.Removed)
+	return err
+}
+
+const setRequestTicket = `-- name: SetRequestTicket :exec
+UPDATE mm_requests SET ticket_id = $3 WHERE user_id = $1 AND idem_key = $2
+`
+
+type SetRequestTicketParams struct {
+	UserID   int64
+	IdemKey  string
+	TicketID int64
+}
+
+func (q *Queries) SetRequestTicket(ctx context.Context, arg SetRequestTicketParams) error {
+	_, err := q.db.Exec(ctx, setRequestTicket, arg.UserID, arg.IdemKey, arg.TicketID)
+	return err
+}
+
+const ticketUsers = `-- name: TicketUsers :many
+SELECT user_id FROM mm_ticket_users WHERE ticket_id = $1 ORDER BY user_id
+`
+
+func (q *Queries) TicketUsers(ctx context.Context, ticketID int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, ticketUsers, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var user_id int64
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const userActiveMatches = `-- name: UserActiveMatches :many
+SELECT m.id, m.queue, m.ref, m.status, m.currency, m.stake, m.fee_bp, m.result, m.reason, m.deadline, m.created_at
+FROM mm_matches m WHERE m.status IN ('forming', 'running', 'finishing', 'cancelling')
+  AND EXISTS (SELECT 1 FROM mm_match_players p WHERE p.match_id = m.id AND p.user_id = $1)
+ORDER BY m.id
+`
+
+type UserActiveMatchesRow struct {
+	ID        int64
+	Queue     string
+	Ref       string
+	Status    string
+	Currency  string
+	Stake     int64
+	FeeBp     int64
+	Result    []byte
+	Reason    string
+	Deadline  pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) UserActiveMatches(ctx context.Context, userID int64) ([]UserActiveMatchesRow, error) {
+	rows, err := q.db.Query(ctx, userActiveMatches, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserActiveMatchesRow
+	for rows.Next() {
+		var i UserActiveMatchesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Queue,
+			&i.Ref,
+			&i.Status,
+			&i.Currency,
+			&i.Stake,
+			&i.FeeBp,
+			&i.Result,
+			&i.Reason,
+			&i.Deadline,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const userRatings = `-- name: UserRatings :many
+SELECT user_id, mu, sigma FROM mm_ratings WHERE key = $1::text AND user_id = ANY($2::bigint[])
+`
+
+type UserRatingsParams struct {
+	Key     string
+	UserIds []int64
+}
+
+type UserRatingsRow struct {
+	UserID int64
+	Mu     float64
+	Sigma  float64
+}
+
+func (q *Queries) UserRatings(ctx context.Context, arg UserRatingsParams) ([]UserRatingsRow, error) {
+	rows, err := q.db.Query(ctx, userRatings, arg.Key, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserRatingsRow
+	for rows.Next() {
+		var i UserRatingsRow
+		if err := rows.Scan(&i.UserID, &i.Mu, &i.Sigma); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const userTicketID = `-- name: UserTicketID :one
+SELECT ticket_id FROM mm_ticket_users WHERE user_id = $1
+`
+
+func (q *Queries) UserTicketID(ctx context.Context, userID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, userTicketID, userID)
+	var ticket_id int64
+	err := row.Scan(&ticket_id)
+	return ticket_id, err
+}
+
+const usersBusy = `-- name: UsersBusy :one
+SELECT EXISTS (
+    SELECT 1 FROM mm_match_players p JOIN mm_matches m ON m.id = p.match_id
+    WHERE p.user_id = ANY($1::bigint[]) AND m.queue = $2::text
+      AND m.status IN ('forming', 'running', 'finishing', 'cancelling'))
+`
+
+type UsersBusyParams struct {
+	UserIds []int64
+	Queue   string
+}
+
+// True if any user is in a non-final match of the queue.
+func (q *Queries) UsersBusy(ctx context.Context, arg UsersBusyParams) (bool, error) {
+	row := q.db.QueryRow(ctx, usersBusy, arg.UserIds, arg.Queue)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
