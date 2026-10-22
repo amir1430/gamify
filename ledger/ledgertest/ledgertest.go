@@ -555,6 +555,25 @@ func potSuite(t *testing.T, d ledger.Driver) {
 		want(t, "back", usd(a), 1000)
 	})
 
+	t.Run("winner cap", func(t *testing.T) {
+		a := f.user()
+		e := entry(a, 1000)
+		must(t, f.l.HoldPot(ctx, lottery, "usd", e))
+		// 248 winners sharing pot - fee (950): one past the cap, otherwise a valid settle.
+		winners := make([]ledger.PotWin, ledger.MaxPotWinners+1)
+		for i := range winners {
+			winners[i] = ledger.PotWin{UserID: a, Amount: 3}
+		}
+		winners[0].Amount = 950 - 3*int64(len(winners)-1)
+		p := pot()
+		if _, err := f.l.SettlePot(ctx, lottery, "usd", p, []ledger.PotEntry{e}, winners); !errors.Is(err, ledger.ErrTooManyWinners) {
+			t.Fatalf("248 winners: %v", err)
+		}
+		want(t, "still held", usd(a), 0)
+		must(t, f.l.VoidPot(ctx, lottery, "usd", []ledger.PotEntry{e}))
+		want(t, "back", usd(a), 1000)
+	})
+
 	t.Run("welcome stays play-only", func(t *testing.T) {
 		a := f.user()
 		e := entry(a, 10)

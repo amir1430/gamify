@@ -14,3 +14,10 @@ func TestFee(t *testing.T) {
 		}
 	}
 }
+
+// Winner i's prize leg is legPotWinner+i, inside the 8-bit leg of a transfer ID.
+func TestMaxPotWinners(t *testing.T) {
+	if MaxPotWinners != 247 || int(legPotWinner)+MaxPotWinners > 255 {
+		t.Fatalf("MaxPotWinners = %d", MaxPotWinners)
+	}
+}

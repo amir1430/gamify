@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -26,6 +27,13 @@ const (
 	legPotShare  uint64 = 7 // SettlePool: a winning entry's share, keyed by entry ID
 	legPotWinner uint64 = 8
 )
+
+// MaxPotWinners is the most winners one pot pays (SettlePot): winner i's prize is leg
+// legPotWinner+i, which has to fit the transfer ID's 8-bit leg.
+const MaxPotWinners = 255 - int(legPotWinner)
+
+// ErrTooManyWinners: a SettlePot with more than MaxPotWinners winners.
+var ErrTooManyWinners = errors.New("ledger: too many pot winners")
 
 // PotEntry is one player's amount in a pot; ID is unique per game.
 type PotEntry struct{ ID, UserID, Amount int64 }
@@ -77,6 +85,9 @@ func (l *Ledger) HoldPot(ctx context.Context, g Game, c Currency, e PotEntry) er
 func (l *Ledger) SettlePot(ctx context.Context, g Game, c Currency, potID int64, entries []PotEntry, winners []PotWin) (int64, error) {
 	if err := g.check(); err != nil {
 		return 0, err
+	}
+	if len(winners) > MaxPotWinners {
+		return 0, fmt.Errorf("%w: pot %d: %d", ErrTooManyWinners, potID, len(winners))
 	}
 	var pot, won int64
 	for _, e := range entries {
