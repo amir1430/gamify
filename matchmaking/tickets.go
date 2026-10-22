@@ -125,16 +125,21 @@ func (c QueueConfig) check(r queueReq) (ledger.Currency, error) {
 			return "", gameconfig.ErrInvalid
 		}
 	}
+	return c.checkStake(r.Currency, r.Stake)
+}
+
+// checkStake validates a stake against the queue's allowed ones and its game's limits.
+func (c QueueConfig) checkStake(cur ledger.Currency, stake int64) (ledger.Currency, error) {
 	if c.Stakes == nil {
-		if r.Currency != "" || r.Stake != 0 {
+		if cur != "" || stake != 0 {
 			return "", gameconfig.ErrInvalid
 		}
 		return "", nil
 	}
-	if !slices.Contains(c.Stakes[r.Currency], r.Stake) {
+	if !slices.Contains(c.Stakes[cur], stake) {
 		return "", gameconfig.ErrInvalid
 	}
-	cur, _, err := c.Game.Check(r.Currency, "", r.Stake)
+	cur, _, err := c.Game.Check(cur, "", stake)
 	return cur, err
 }
 

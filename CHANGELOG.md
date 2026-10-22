@@ -51,6 +51,12 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   the reconcile pass (`Service.Reconcile`) finishes `forming` and `cancelling` matches. A
   `match.queue` replay of a matched ticket returns `{match_id}`. `Service.Get(ctx, id)` returns a
   match (`ErrNotFound`).
+- `matchmaking`: `Service.Create(ctx, NewMatch{Queue, Teams, Currency, Stake, Ref})` builds a match without
+  tickets (tournament rounds, "challenge a friend") through the same pipeline: stakes held, `OnMatch`,
+  running, `match.found`. Teams and stake are validated like a ticket; players need not be online. `Ref`
+  (not empty, not `ticket:`-prefixed) makes it idempotent per queue: a repeat returns the existing match.
+  A refused hold cancels and refunds it and returns `ledger.ErrInsufficientFunds` (nobody is re-queued);
+  `ErrBusy` if the queue is not `Concurrent` and a player is in an open match of it.
 - `matchmaking`: results, cancel, ratings, timeouts. `Service.Finish(ctx, id, Result)` (ranks per
   team, one per team, each >= 1) computes the payouts once and stores them with the result
   (`finishing`); settling and every retry pay exactly those, never re-reading the queue config.

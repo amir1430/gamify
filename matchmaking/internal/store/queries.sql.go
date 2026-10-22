@@ -169,6 +169,35 @@ func (q *Queries) GetTicket(ctx context.Context, id int64) (MmTicket, error) {
 	return i, err
 }
 
+const insertDirectMatch = `-- name: InsertDirectMatch :one
+INSERT INTO mm_matches (queue, ref, status, currency, stake, fee_bp, deadline)
+VALUES ($1, $2, 'forming', $3, $4, $5, $6) ON CONFLICT (queue, ref) DO NOTHING RETURNING id
+`
+
+type InsertDirectMatchParams struct {
+	Queue    string
+	Ref      string
+	Currency string
+	Stake    int64
+	FeeBp    int64
+	Deadline pgtype.Timestamptz
+}
+
+// No rows: the (queue, ref) match exists already. No tickets: nothing is ever re-queued.
+func (q *Queries) InsertDirectMatch(ctx context.Context, arg InsertDirectMatchParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertDirectMatch,
+		arg.Queue,
+		arg.Ref,
+		arg.Currency,
+		arg.Stake,
+		arg.FeeBp,
+		arg.Deadline,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertMatch = `-- name: InsertMatch :one
 INSERT INTO mm_matches (queue, ref, status, currency, stake, fee_bp, deadline, tickets)
 VALUES ($1, $2, 'forming', $3, $4, $5, $6, $7) RETURNING id
@@ -388,6 +417,22 @@ func (q *Queries) LockRatings(ctx context.Context, arg LockRatingsParams) ([]Loc
 		return nil, err
 	}
 	return items, nil
+}
+
+const matchByRef = `-- name: MatchByRef :one
+SELECT id FROM mm_matches WHERE queue = $1 AND ref = $2
+`
+
+type MatchByRefParams struct {
+	Queue string
+	Ref   string
+}
+
+func (q *Queries) MatchByRef(ctx context.Context, arg MatchByRefParams) (int64, error) {
+	row := q.db.QueryRow(ctx, matchByRef, arg.Queue, arg.Ref)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const matchPlayers = `-- name: MatchPlayers :many

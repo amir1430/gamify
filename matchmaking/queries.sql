@@ -145,3 +145,11 @@ ORDER BY user_id FOR UPDATE;
 
 -- name: SetRating :exec
 UPDATE mm_ratings SET mu = $3, sigma = $4, matches = matches + 1, updated_at = now() WHERE user_id = $1 AND key = $2;
+
+-- name: InsertDirectMatch :one
+-- No rows: the (queue, ref) match exists already. No tickets: nothing is ever re-queued.
+INSERT INTO mm_matches (queue, ref, status, currency, stake, fee_bp, deadline)
+VALUES ($1, $2, 'forming', $3, $4, $5, $6) ON CONFLICT (queue, ref) DO NOTHING RETURNING id;
+
+-- name: MatchByRef :one
+SELECT id FROM mm_matches WHERE queue = $1 AND ref = $2;
