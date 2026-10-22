@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/amir1430/gamify/apptest"
@@ -244,5 +245,40 @@ func TestPartyOnChange(t *testing.T) {
 	n := len(seen)
 	if n < 2 || !slices.Equal(seen[n-2], []int64{alice, bob}) || !slices.Equal(seen[n-1], []int64{alice}) {
 		t.Fatalf("hook saw %v", seen)
+	}
+}
+
+// join and accept on the same party and user race: the lock order (user, then party) must not deadlock.
+func TestPartyJoinAcceptConcurrent(t *testing.T) {
+	a, _ := setup(t, party.Config{})
+	alice, bob := a.User("alice"), a.User("bob")
+	for i := range 50 {
+		p, cerr := call(t, a, alice, "party.create", map[string]any{"max": 4})
+		must(t, cerr)
+		_, cerr = call(t, a, bob, "party.join", map[string]any{"party_id": p.ID})
+		must(t, cerr)
+		var wg sync.WaitGroup
+		errs := make([]*realtime.ClientError, 2)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, errs[0] = a.Call(bob, "party.join", map[string]any{"party_id": p.ID})
+		}()
+		go func() {
+			defer wg.Done()
+			_, errs[1] = a.Call(alice, "party.accept", map[string]any{"party_id": p.ID, "user_id": bob})
+		}()
+		wg.Wait()
+		for _, e := range errs {
+			if e != nil && e.Code == realtime.CodeInternal {
+				t.Fatalf("iteration %d: internal error %v", i, e)
+			}
+		}
+		for _, u := range []int64{bob, alice} {
+			_, cerr = call(t, a, u, "party.leave", map[string]any{"party_id": p.ID})
+			if cerr != nil && cerr != party.ErrNotMember {
+				t.Fatal(cerr)
+			}
+		}
 	}
 }

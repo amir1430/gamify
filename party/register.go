@@ -167,13 +167,19 @@ func (s *Service) mine(ctx context.Context, user, partyID int64, notIn error) (i
 }
 
 // leaderAct locks the caller's party and runs f as its leader; the party is then reloaded.
-func (s *Service) leaderAct(ctx context.Context, user, partyID int64, f func(q *store.Queries, p Party) error) (Party, error) {
+// Lock order everywhere: a user's advisory lock (lockUser, if not 0) before the party row.
+func (s *Service) leaderAct(ctx context.Context, user, partyID, lockUser int64, f func(q *store.Queries, p Party) error) (Party, error) {
 	id, err := s.mine(ctx, user, partyID, ErrNotLeader)
 	if err != nil {
 		return Party{}, err
 	}
 	var p Party
 	err = s.tx(ctx, func(q *store.Queries) (err error) {
+		if lockUser != 0 {
+			if err = q.LockUserParties(ctx, int32(lockUser)); err != nil {
+				return err
+			}
+		}
 		if p, err = load(ctx, q, id, true); err != nil {
 			return err
 		}
@@ -190,7 +196,7 @@ func (s *Service) leaderAct(ctx context.Context, user, partyID int64, f func(q *
 }
 
 func (s *Service) accept(ctx context.Context, user int64, r partyReq) (Party, error) {
-	p, err := s.leaderAct(ctx, user, r.PartyID, func(q *store.Queries, p Party) error {
+	p, err := s.leaderAct(ctx, user, r.PartyID, r.UserID, func(q *store.Queries, p Party) error {
 		if p.Locked != "" {
 			return ErrLocked
 		}
@@ -217,7 +223,7 @@ func (s *Service) accept(ctx context.Context, user int64, r partyReq) (Party, er
 }
 
 func (s *Service) kick(ctx context.Context, user int64, r partyReq) (Party, error) {
-	p, err := s.leaderAct(ctx, user, r.PartyID, func(q *store.Queries, p Party) error {
+	p, err := s.leaderAct(ctx, user, r.PartyID, 0, func(q *store.Queries, p Party) error {
 		if p.Locked != "" {
 			return ErrLocked
 		}
@@ -241,7 +247,7 @@ func (s *Service) kick(ctx context.Context, user int64, r partyReq) (Party, erro
 }
 
 func (s *Service) lead(ctx context.Context, user int64, r partyReq) (Party, error) {
-	p, err := s.leaderAct(ctx, user, r.PartyID, func(q *store.Queries, p Party) error {
+	p, err := s.leaderAct(ctx, user, r.PartyID, 0, func(q *store.Queries, p Party) error {
 		if !slices.Contains(p.Members, r.UserID) {
 			return ErrNotMember
 		}
