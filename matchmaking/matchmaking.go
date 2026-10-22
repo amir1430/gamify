@@ -77,9 +77,16 @@ type QueueConfig struct {
 	// OnMatch runs once the stakes are held, before the match is running (Match.Status forming); an
 	// error cancels the match and refunds it (reason "on_match"). It may run again for the same
 	// match (a retry after a crash, two instances), so it must be idempotent.
-	OnMatch  func(ctx context.Context, m Match) error
+	OnMatch func(ctx context.Context, m Match) error
+	// OnFinish runs after the match is settled (money paid, ratings saved, match.finished pushed),
+	// outside any transaction or lock, so it may Finish, Cancel or create other matches. It is at
+	// least once: an error or a crash before it is recorded as done makes the reconciler call it
+	// again, so it must be idempotent.
 	OnFinish func(ctx context.Context, m Match) error
-	Payout   func(pot int64, m Match, r Result) []ledger.PotWin
+	// Payout decides a staked match's winners when its result is reported; they must add up to pot
+	// less the fee, at most ledger.MaxPotWinners of them paid, or Finish refuses the result. Its
+	// answer is stored with the result: settling never calls it again.
+	Payout func(pot int64, m Match, r Result) []ledger.PotWin
 }
 
 // Queue is a validated queue. Config returns its QueueConfig with the defaults filled.
@@ -225,8 +232,8 @@ func (c QueueConfig) validate() (QueueConfig, error) {
 	if c.FillAfter < 0 || c.MatchTimeout < 0 || c.MaxWait < 0 && c.MaxWait != Forever {
 		return c, errors.New("negative FillAfter, MatchTimeout or MaxWait")
 	}
-	if c.FeeBP < 0 || c.FeeBP > 10_000 {
-		return c, fmt.Errorf("FeeBP %d outside 0..10000", c.FeeBP)
+	if c.FeeBP < 0 || c.FeeBP >= 10_000 { // the whole pot as fee would leave no winner to pay
+		return c, fmt.Errorf("FeeBP %d outside 0..9999", c.FeeBP)
 	}
 	if c.FeeBP == 0 && !c.NoFee {
 		c.FeeBP = ledger.FeeBP

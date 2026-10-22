@@ -108,10 +108,17 @@ UPDATE mm_matches SET status = 'cancelling', reason = $2, tickets = '[]', update
 WHERE id = $1 AND status IN ('forming', 'running');
 
 -- name: SetMatchFinishing :execrows
-UPDATE mm_matches SET status = 'finishing', result = $2, updated_at = now() WHERE id = $1 AND status = 'running';
+UPDATE mm_matches SET status = 'finishing', result = $2, payouts = $3, refund = $4, updated_at = now()
+WHERE id = $1 AND status = 'running';
 
 -- name: SetMatchSettled :execrows
-UPDATE mm_matches SET status = 'settled', updated_at = now() WHERE id = $1 AND status = 'finishing';
+UPDATE mm_matches SET status = 'settled', on_finish_done = $2, updated_at = now() WHERE id = $1 AND status = 'finishing';
+
+-- name: SetOnFinishDone :exec
+UPDATE mm_matches SET on_finish_done = true, updated_at = now() WHERE id = $1 AND status = 'settled' AND NOT on_finish_done;
+
+-- name: PendingOnFinish :many
+SELECT id FROM mm_matches WHERE status = 'settled' AND NOT on_finish_done ORDER BY id;
 
 -- name: SetMatchCancelled :execrows
 UPDATE mm_matches SET status = 'cancelled', tickets = '[]', updated_at = now() WHERE id = $1 AND status = 'cancelling';

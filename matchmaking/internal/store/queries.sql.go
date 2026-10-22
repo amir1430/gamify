@@ -68,7 +68,7 @@ func (q *Queries) EnsureRatings(ctx context.Context, arg EnsureRatingsParams) er
 }
 
 const getMatch = `-- name: GetMatch :one
-SELECT id, queue, ref, status, currency, stake, fee_bp, result, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE id = $1
+SELECT id, queue, ref, status, currency, stake, fee_bp, result, payouts, refund, on_finish_done, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE id = $1
 `
 
 func (q *Queries) GetMatch(ctx context.Context, id int64) (MmMatch, error) {
@@ -83,6 +83,9 @@ func (q *Queries) GetMatch(ctx context.Context, id int64) (MmMatch, error) {
 		&i.Stake,
 		&i.FeeBp,
 		&i.Result,
+		&i.Payouts,
+		&i.Refund,
+		&i.OnFinishDone,
 		&i.Reason,
 		&i.Tickets,
 		&i.Deadline,
@@ -294,7 +297,7 @@ func (q *Queries) InsertTicketUser(ctx context.Context, arg InsertTicketUserPara
 }
 
 const lockMatch = `-- name: LockMatch :one
-SELECT id, queue, ref, status, currency, stake, fee_bp, result, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE id = $1 AND status IN ('forming', 'finishing', 'cancelling') FOR UPDATE SKIP LOCKED
+SELECT id, queue, ref, status, currency, stake, fee_bp, result, payouts, refund, on_finish_done, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE id = $1 AND status IN ('forming', 'finishing', 'cancelling') FOR UPDATE SKIP LOCKED
 `
 
 // The match while it has a step to take, unless another transaction is advancing it.
@@ -310,6 +313,9 @@ func (q *Queries) LockMatch(ctx context.Context, id int64) (MmMatch, error) {
 		&i.Stake,
 		&i.FeeBp,
 		&i.Result,
+		&i.Payouts,
+		&i.Refund,
+		&i.OnFinishDone,
 		&i.Reason,
 		&i.Tickets,
 		&i.Deadline,
@@ -320,7 +326,7 @@ func (q *Queries) LockMatch(ctx context.Context, id int64) (MmMatch, error) {
 }
 
 const lockMatchWait = `-- name: LockMatchWait :one
-SELECT id, queue, ref, status, currency, stake, fee_bp, result, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE id = $1 FOR UPDATE
+SELECT id, queue, ref, status, currency, stake, fee_bp, result, payouts, refund, on_finish_done, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE id = $1 FOR UPDATE
 `
 
 // The match in any status, waiting for a transaction advancing it.
@@ -336,6 +342,9 @@ func (q *Queries) LockMatchWait(ctx context.Context, id int64) (MmMatch, error) 
 		&i.Stake,
 		&i.FeeBp,
 		&i.Result,
+		&i.Payouts,
+		&i.Refund,
+		&i.OnFinishDone,
 		&i.Reason,
 		&i.Tickets,
 		&i.Deadline,
@@ -440,6 +449,30 @@ SELECT id FROM mm_tickets WHERE party_id = $1
 
 func (q *Queries) PartyTicketIDs(ctx context.Context, partyID int64) ([]int64, error) {
 	rows, err := q.db.Query(ctx, partyTicketIDs, partyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pendingOnFinish = `-- name: PendingOnFinish :many
+SELECT id FROM mm_matches WHERE status = 'settled' AND NOT on_finish_done ORDER BY id
+`
+
+func (q *Queries) PendingOnFinish(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.Query(ctx, pendingOnFinish)
 	if err != nil {
 		return nil, err
 	}
@@ -577,16 +610,24 @@ func (q *Queries) SetMatchCancelling(ctx context.Context, arg SetMatchCancelling
 }
 
 const setMatchFinishing = `-- name: SetMatchFinishing :execrows
-UPDATE mm_matches SET status = 'finishing', result = $2, updated_at = now() WHERE id = $1 AND status = 'running'
+UPDATE mm_matches SET status = 'finishing', result = $2, payouts = $3, refund = $4, updated_at = now()
+WHERE id = $1 AND status = 'running'
 `
 
 type SetMatchFinishingParams struct {
-	ID     int64
-	Result []byte
+	ID      int64
+	Result  []byte
+	Payouts []byte
+	Refund  bool
 }
 
 func (q *Queries) SetMatchFinishing(ctx context.Context, arg SetMatchFinishingParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setMatchFinishing, arg.ID, arg.Result)
+	result, err := q.db.Exec(ctx, setMatchFinishing,
+		arg.ID,
+		arg.Result,
+		arg.Payouts,
+		arg.Refund,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -606,15 +647,29 @@ func (q *Queries) SetMatchRunning(ctx context.Context, id int64) (int64, error) 
 }
 
 const setMatchSettled = `-- name: SetMatchSettled :execrows
-UPDATE mm_matches SET status = 'settled', updated_at = now() WHERE id = $1 AND status = 'finishing'
+UPDATE mm_matches SET status = 'settled', on_finish_done = $2, updated_at = now() WHERE id = $1 AND status = 'finishing'
 `
 
-func (q *Queries) SetMatchSettled(ctx context.Context, id int64) (int64, error) {
-	result, err := q.db.Exec(ctx, setMatchSettled, id)
+type SetMatchSettledParams struct {
+	ID           int64
+	OnFinishDone bool
+}
+
+func (q *Queries) SetMatchSettled(ctx context.Context, arg SetMatchSettledParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setMatchSettled, arg.ID, arg.OnFinishDone)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setOnFinishDone = `-- name: SetOnFinishDone :exec
+UPDATE mm_matches SET on_finish_done = true, updated_at = now() WHERE id = $1 AND status = 'settled' AND NOT on_finish_done
+`
+
+func (q *Queries) SetOnFinishDone(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, setOnFinishDone, id)
+	return err
 }
 
 const setRating = `-- name: SetRating :exec
@@ -790,7 +845,7 @@ func (q *Queries) UnfinishedMatches(ctx context.Context) ([]int64, error) {
 }
 
 const userActiveMatches = `-- name: UserActiveMatches :many
-SELECT m.id, m.queue, m.ref, m.status, m.currency, m.stake, m.fee_bp, m.result, m.reason, m.tickets, m.deadline, m.created_at, m.updated_at FROM mm_matches m WHERE m.status IN ('forming', 'running', 'finishing', 'cancelling')
+SELECT m.id, m.queue, m.ref, m.status, m.currency, m.stake, m.fee_bp, m.result, m.payouts, m.refund, m.on_finish_done, m.reason, m.tickets, m.deadline, m.created_at, m.updated_at FROM mm_matches m WHERE m.status IN ('forming', 'running', 'finishing', 'cancelling')
   AND EXISTS (SELECT 1 FROM mm_match_players p WHERE p.match_id = m.id AND p.user_id = $1)
 ORDER BY m.id
 `
@@ -813,6 +868,9 @@ func (q *Queries) UserActiveMatches(ctx context.Context, userID int64) ([]MmMatc
 			&i.Stake,
 			&i.FeeBp,
 			&i.Result,
+			&i.Payouts,
+			&i.Refund,
+			&i.OnFinishDone,
 			&i.Reason,
 			&i.Tickets,
 			&i.Deadline,

@@ -52,22 +52,25 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   `match.queue` replay of a matched ticket returns `{match_id}`. `Service.Get(ctx, id)` returns a
   match (`ErrNotFound`).
 - `matchmaking`: results, cancel, ratings, timeouts. `Service.Finish(ctx, id, Result)` (ranks per
-  team, one per team, each >= 1) stores the result (`finishing`), then settles: staked, the pot
-  (stake x players) less the fee (`FeeOf(pot, FeeBP)`, 0 with `NoFee`) goes to the best rank's
-  players in equal shares, the remainder one unit each in `EntryID` order (`SettlePotFee`, at most
-  `ledger.MaxPotWinners` winners, else refused before storing), or to `QueueConfig.Payout`'s winners
-  (must add up to the pot less the fee; a wrong one leaves the match `finishing`); an all-equal
-  result in a `DrawRefund` queue refunds instead. Ranked: ratings (from `mm_ratings` as they are
-  at settlement, not the formation snapshot) are updated with `matches + 1` in the transaction that
-  marks the match `settled`, which also calls `OnFinish` (must be idempotent: it runs again if that
-  transaction fails, and an error leaves the match `finishing`; it must not Finish or Cancel the
-  same match). Push `{"type":"match.finished","match","payouts":[{user_id,amount}],"ratings":{user_id:{mu,sigma,ordinal}}}`.
-  The same result again is a no-op, a different one `ErrResultConflict`, a cancelled match `ErrClosed`.
-  `Service.Cancel(ctx, id, reason)` refunds a forming or running match (`match.cancelled` with the
-  reason); a finishing or settled match is `ErrClosed`. `Service.Report(ctx, tx, id, Result)` and
-  `Service.MarkCancel(ctx, tx, id, reason)` only record, in the caller's transaction (admin
-  actions); the reconcile pass moves the money, settles `finishing` matches and cancels running
-  matches past their `MatchTimeout` deadline (reason `timeout`).
+  team, one per team, each >= 1) computes the payouts once and stores them with the result
+  (`finishing`); settling and every retry pay exactly those, never re-reading the queue config.
+  Staked: the pot (stake x players) less the fee (`FeeOf(pot, FeeBP)`, 0 with `NoFee`) goes to the
+  best rank's players in equal shares, the remainder one unit each in `EntryID` order, or to
+  `QueueConfig.Payout`'s winners (must add up to the pot less the fee); an all-equal result in a
+  `DrawRefund` queue refunds instead. A payout with no winner or more than `ledger.MaxPotWinners`
+  is refused before anything is stored. Then `SettlePotFee`, and in the transaction that marks the
+  match `settled`, ranked ratings (from `mm_ratings` as they are at settlement, not the formation
+  snapshot) with `matches + 1`. After commit, push
+  `{"type":"match.finished","match","payouts":[{user_id,amount}],"ratings":{user_id:{mu,sigma,ordinal}}}`
+  (once), then `OnFinish` outside any transaction: at least once (an error or crash makes the
+  reconcile pass call it again until it returns nil), must be idempotent, may Finish, Cancel or
+  create other matches. The same result again is a no-op, a different one `ErrResultConflict`, a
+  cancelled match `ErrClosed`. `Service.Cancel(ctx, id, reason)` refunds a forming or running match
+  (`match.cancelled` with the reason); a finishing or settled match is `ErrClosed` (the result
+  stands). `Service.Report(ctx, tx, id, Result)` and `Service.MarkCancel(ctx, tx, id, reason)` only
+  record, in the caller's transaction (admin actions); the reconcile pass moves the money, settles
+  `finishing` matches and cancels running matches past their `MatchTimeout` deadline (reason
+  `timeout`). `QueueConfig.FeeBP` must be below 10000.
 
 ### Upgrade
 - `party`: new goose table `goose_party` (migrations run in `party.Register`); nothing changes unless you register it.

@@ -13,12 +13,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Finish records r as the result of running match id, then settles it: the pot paid out (fee to
-// the house), ratings updated (Ranked), OnFinish called and {"type":"match.finished", match,
-// payouts, ratings} pushed to every player. The same result again is a no-op (and finishes a
-// settlement left undone); a different one is ErrResultConflict; a cancelled match is ErrClosed.
-// The result is stored first: when the settlement fails (a ledger outage, a wrong Payout, an
-// OnFinish error) Finish returns the error, the match stays finishing and the reconciler retries.
+// Finish records r as the result of running match id, with its payouts (Payout's or the default,
+// computed once: a wrong Payout or a payout with no winner is refused before anything is stored),
+// then settles it: the pot paid out (fee to the house), ratings updated (Ranked), the match settled
+// and {"type":"match.finished", match, payouts, ratings} pushed to every player, then OnFinish.
+// The same result again is a no-op (and finishes a settlement left undone); a different one is
+// ErrResultConflict; a cancelled match is ErrClosed. When the settlement fails (a ledger outage)
+// Finish returns the error, the match stays finishing and the reconciler retries with the stored
+// payouts. An OnFinish error is returned too; the match stays settled and the reconciler calls
+// OnFinish again until it returns nil.
 func (s *Service) Finish(ctx context.Context, id int64, r Result) error {
 	if err := pgx.BeginFunc(ctx, s.a.Pool, func(tx pgx.Tx) error { return s.Report(ctx, tx, id, r) }); err != nil {
 		return err
@@ -55,22 +58,30 @@ func (s *Service) Report(ctx context.Context, tx pgx.Tx, id int64, r Result) err
 		return err
 	}
 	m.Result = &r
-	if queue.cfg.Payout == nil { // the default payout can be refused now; a hook's is checked when settling
-		if _, _, err := payouts(queue.cfg, m); err != nil {
-			return err
-		}
+	wins, refund, err := payouts(queue.cfg, m)
+	if err != nil {
+		return err
+	}
+	paid := []payout{}
+	for _, w := range wins {
+		paid = append(paid, payout{w.UserID, w.Amount})
 	}
 	raw, err := json.Marshal(r)
 	if err != nil {
 		return err
 	}
-	_, err = q.SetMatchFinishing(ctx, store.SetMatchFinishingParams{ID: id, Result: raw})
+	rawPaid, err := json.Marshal(paid)
+	if err != nil {
+		return err
+	}
+	_, err = q.SetMatchFinishing(ctx, store.SetMatchFinishingParams{ID: id, Result: raw, Payouts: rawPaid, Refund: refund})
 	return err
 }
 
 // Cancel cancels match id and refunds every stake; each player gets {"type":"match.cancelled",
-// match, reason}. A forming or running match can be cancelled, a cancelled one again is a no-op, a
-// finishing or settled one is ErrClosed (its result stands). When the refund fails Cancel returns
+// match, reason}. A forming or running match can be cancelled, a cancelled one again is a no-op. A
+// finishing or settled one is ErrClosed: its result stands (a finishing match's payout may already
+// be in the ledger). When the refund fails Cancel returns
 // the error, the match stays cancelling and the reconciler retries.
 func (s *Service) Cancel(ctx context.Context, id int64, reason string) error {
 	if err := pgx.BeginFunc(ctx, s.a.Pool, func(tx pgx.Tx) error { return s.MarkCancel(ctx, tx, id, reason) }); err != nil {
@@ -182,6 +193,9 @@ func payouts(c QueueConfig, m Match) (wins []ledger.PotWin, refund bool, err err
 			}
 		}
 	}
+	if len(wins) == 0 {
+		return nil, false, fmt.Errorf("matchmaking: match %d: the pot less the fee leaves %d to pay", m.ID, left)
+	}
 	if len(wins) > ledger.MaxPotWinners {
 		return nil, false, fmt.Errorf("matchmaking: match %d: %w: %d", m.ID, ledger.ErrTooManyWinners, len(wins))
 	}
@@ -197,24 +211,28 @@ func potEntries(m Match) []ledger.PotEntry {
 	return entries
 }
 
-// settle pays out a finishing match under its row lock (tx), then, in tx, updates the ratings,
-// marks it settled and calls OnFinish. An error rolls tx back: the match stays finishing and the
-// next try repeats the ledger call (a no-op once it went through) and OnFinish (which must be
-// idempotent). OnFinish runs holding the match's lock: it must not Finish or Cancel the same match.
-func (s *Service) settle(ctx context.Context, tx pgx.Tx, m Match) error {
+// settle pays a finishing match's stored payouts under its row lock (tx), then, in tx, updates the
+// ratings and marks it settled. An error rolls tx back: the match stays finishing and the next try
+// repeats the same ledger call (a no-op once it went through). Only the call that marks it settled
+// pushes match.finished and calls OnFinish, after commit.
+func (s *Service) settle(ctx context.Context, tx pgx.Tx, m Match, row store.MmMatch) error {
 	queue, err := s.queueOf(m.Queue)
 	if err != nil {
 		return err
 	}
-	wins, refund, err := payouts(queue.cfg, m)
-	if err != nil {
+	var paid []payout
+	if err := json.Unmarshal(row.Payouts, &paid); err != nil {
 		return err
 	}
 	if m.Stake > 0 {
-		if refund {
+		if row.Refund {
 			err = s.a.Ledger.VoidPot(ctx, Game, m.Currency, potEntries(m))
 		} else {
-			_, err = s.a.Ledger.SettlePotFee(ctx, Game, m.Currency, m.ID, m.FeeBP, potEntries(m), wins)
+			wins := make([]ledger.PotWin, len(paid))
+			for i, p := range paid {
+				wins[i] = ledger.PotWin{UserID: p.UserID, Amount: p.Amount}
+			}
+			_, err = settlePot(s.a.Ledger, ctx, Game, m.Currency, m.ID, m.FeeBP, potEntries(m), wins)
 		}
 		if err != nil {
 			return err
@@ -227,26 +245,42 @@ func (s *Service) settle(ctx context.Context, tx pgx.Tx, m Match) error {
 			return err
 		}
 	}
-	if n, err := q.SetMatchSettled(ctx, m.ID); err != nil || n == 0 {
+	n, err := q.SetMatchSettled(ctx, store.SetMatchSettledParams{ID: m.ID, OnFinishDone: queue.cfg.OnFinish == nil})
+	if err != nil || n == 0 {
 		return err
-	}
-	m.Status = "settled"
-	if f := queue.cfg.OnFinish; f != nil {
-		if err := f(ctx, m); err != nil {
-			return fmt.Errorf("OnFinish: %w", err)
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	paid := []payout{}
-	for _, w := range wins {
-		paid = append(paid, payout{w.UserID, w.Amount})
-	}
+	m.Status = "settled"
 	for _, p := range m.Players {
 		s.push(ctx, p.UserID, map[string]any{"type": "match.finished", "match": m, "payouts": paid, "ratings": ratings})
 	}
-	return nil
+	return s.onFinish(ctx, queue, m)
+}
+
+// finished calls OnFinish for settled match id again (the reconciler).
+func (s *Service) finished(ctx context.Context, id int64) error {
+	m, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	queue, err := s.queueOf(m.Queue)
+	if err != nil {
+		return err
+	}
+	return s.onFinish(ctx, queue, m)
+}
+
+// onFinish calls the queue's OnFinish for settled m, outside any transaction, and records that it
+// returned nil. It is at least once: a crash or an error before the record calls it again.
+func (s *Service) onFinish(ctx context.Context, queue *Queue, m Match) error {
+	if f := queue.cfg.OnFinish; f != nil {
+		if err := f(ctx, m); err != nil {
+			return fmt.Errorf("matchmaking: match %d: OnFinish: %w", m.ID, err)
+		}
+	}
+	return s.q.SetOnFinishDone(ctx, m.ID)
 }
 
 // rateMatch updates the players' ratings under key from m's result. Teams are rated from the

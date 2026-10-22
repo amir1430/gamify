@@ -13,3 +13,11 @@ func SetHoldPot(f func(l *ledger.Ledger, ctx context.Context, g ledger.Game, c l
 	holdPot = f
 	return func() { holdPot = old }
 }
+
+// SetSettlePot replaces the ledger settlement of a finishing match, as SetHoldPot.
+func SetSettlePot(f func(l *ledger.Ledger, ctx context.Context, g ledger.Game, c ledger.Currency, potID, feeBP int64,
+	entries []ledger.PotEntry, winners []ledger.PotWin) (int64, error)) func() {
+	old := settlePot
+	settlePot = f
+	return func() { settlePot = old }
+}

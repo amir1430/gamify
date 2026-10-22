@@ -25,6 +25,7 @@ func TestQueueValidation(t *testing.T) {
 		"stake<=0":          {Name: "q", Teams: duel, Game: g, Stakes: map[ledger.Currency][]int64{"coin": {0}}},
 		"empty stakes":      {Name: "q", Teams: duel, Game: g, Stakes: map[ledger.Currency][]int64{"coin": {}}},
 		"fee>10000":         {Name: "q", Teams: duel, FeeBP: 10_001},
+		"fee=10000":         {Name: "q", Teams: duel, FeeBP: 10_000},
 		"fill<0":            {Name: "q", Teams: duel, FillAfter: -1},
 		"timeout<0":         {Name: "q", Teams: duel, MatchTimeout: -1},
 		"maxwait<0":         {Name: "q", Teams: duel, MaxWait: -2},

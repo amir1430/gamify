@@ -21,6 +21,9 @@ import (
 // holdPot is the ledger hold; tests swap it for a failing one.
 var holdPot = (*ledger.Ledger).HoldPot
 
+// settlePot is the ledger settlement of a finishing match; tests swap it for a failing one.
+var settlePot = (*ledger.Ledger).SettlePotFee
+
 func (s *Service) tick(ctx context.Context) {
 	if err := s.MatchNow(ctx); err != nil {
 		slog.ErrorContext(ctx, "matchmaking: tick", "err", err)
@@ -50,8 +53,9 @@ func (s *Service) MatchNow(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Reconcile cancels running matches past their deadline (reason "timeout") and finishes matches a
-// crash, a ledger outage or an admin action left forming, finishing or cancelling.
+// Reconcile cancels running matches past their deadline (reason "timeout"), finishes matches a
+// crash, a ledger outage or an admin action left forming, finishing or cancelling, and calls
+// OnFinish again for settled matches it has not yet succeeded for.
 func (s *Service) Reconcile(ctx context.Context) {
 	ids, err := s.q.TimedOutMatches(ctx)
 	if err != nil {
@@ -68,6 +72,15 @@ func (s *Service) Reconcile(ctx context.Context) {
 	}
 	for _, id := range ids {
 		if err := s.advance(ctx, id); err != nil {
+			slog.ErrorContext(ctx, "matchmaking: reconcile", "match", id, "err", err)
+		}
+	}
+	ids, err = s.q.PendingOnFinish(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "matchmaking: reconcile", "err", err)
+	}
+	for _, id := range ids {
+		if err := s.finished(ctx, id); err != nil {
 			slog.ErrorContext(ctx, "matchmaking: reconcile", "match", id, "err", err)
 		}
 	}
@@ -321,7 +334,7 @@ func (s *Service) step(ctx context.Context, id int64) (again bool, err error) {
 	case "cancelling":
 		return false, s.cancelled(ctx, tx, m, row.Tickets)
 	case "finishing":
-		return false, s.settle(ctx, tx, m)
+		return false, s.settle(ctx, tx, m, row)
 	}
 
 	if m.Stake > 0 {

@@ -211,12 +211,14 @@ func TestFinishPayoutHook(t *testing.T) {
 	if err := e.s.Finish(context.Background(), m.ID, r); err == nil {
 		t.Fatal("bad payout accepted")
 	}
-	if m := matchOf(t, e, m.ID); m.Status != "finishing" {
+	if m := matchOf(t, e, m.ID); m.Status != "running" || m.Result != nil { // refused before storing
 		t.Fatalf("match %+v", m)
 	}
 	balances(t, e, map[int64]int64{a: 900, b: 900, c: 900})
 	bad = false
-	e.a.ReconcileNow()
+	if err := e.s.Finish(context.Background(), m.ID, r); err != nil {
+		t.Fatal(err)
+	}
 	// pot 300, fee 15, 285: 199 + 86
 	balances(t, e, map[int64]int64{a: 1099, b: 986, c: 900})
 	if m := matchOf(t, e, m.ID); m.Status != "settled" {
@@ -385,4 +387,169 @@ func TestMarkCancelRowOnly(t *testing.T) {
 		t.Fatalf("match %+v", m)
 	}
 	balances(t, e, map[int64]int64{a: 1000, b: 1000})
+}
+
+func TestFinishNoWinners(t *testing.T) {
+	e := setup(t)
+	q := staked(e, "allfee", matchmaking.Team{1, 1}, matchmaking.Team{1, 1})
+	q.Stakes, q.FeeBP = map[ledger.Currency][]int64{"usd": {1}}, 9999 // pot 2, fee 2
+	addQueue(t, e, q)
+	a, b := e.a.User("alice"), e.a.User("bob")
+	m := start(t, e, stakedReq("allfee", 1), a, b)
+	if err := e.s.Finish(context.Background(), m.ID, wins(m, a)); err == nil {
+		t.Fatal("zero winners accepted")
+	}
+	if m := matchOf(t, e, m.ID); m.Status != "running" {
+		t.Fatalf("match %+v", m)
+	}
+	if err := e.s.Cancel(context.Background(), m.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	balances(t, e, map[int64]int64{a: 1000, b: 1000})
+}
+
+func onFinishDone(t *testing.T, e env, id int64) (done bool) {
+	t.Helper()
+	if err := e.a.Pool.QueryRow(context.Background(), `SELECT on_finish_done FROM mm_matches WHERE id = $1`, id).Scan(&done); err != nil {
+		t.Fatal(err)
+	}
+	return
+}
+
+func TestOnFinishRetried(t *testing.T) {
+	e := setup(t)
+	calls, fail := 0, true
+	q := staked(e, "hooked", matchmaking.Team{1, 1}, matchmaking.Team{1, 1})
+	q.Ranked = true
+	q.OnFinish = func(_ context.Context, m matchmaking.Match) error {
+		calls++
+		if m.Status != "settled" {
+			t.Errorf("OnFinish got %+v", m)
+		}
+		if fail {
+			return errors.New("bracket down")
+		}
+		return nil
+	}
+	addQueue(t, e, q)
+	a, b := e.a.User("alice"), e.a.User("bob")
+	m := start(t, e, stakedReq("hooked", 100), a, b)
+	_ = e.s.Finish(context.Background(), m.ID, wins(m, b))
+	if m := matchOf(t, e, m.ID); m.Status != "settled" || onFinishDone(t, e, m.ID) || calls != 1 {
+		t.Fatalf("match %+v calls %d", m, calls)
+	}
+	balances(t, e, map[int64]int64{a: 900, b: 1090})
+	if r, _ := e.s.Rating(context.Background(), b, "hooked"); r.Mu <= 25 {
+		t.Fatalf("rating %+v", r)
+	}
+	if n := len(pushesOf(e, a, "match.finished")); n != 1 {
+		t.Fatalf("finished pushed %d times", n)
+	}
+	fail = false
+	e.a.ReconcileNow()
+	if calls != 2 || !onFinishDone(t, e, m.ID) {
+		t.Fatalf("calls %d", calls)
+	}
+	e.a.ReconcileNow()
+	if calls != 2 || len(pushesOf(e, a, "match.finished")) != 1 {
+		t.Fatalf("calls %d after done", calls)
+	}
+	// a queue without OnFinish is done at once
+	m2 := start2(t, e, "bet", e.a.User("carol"), e.a.User("dave"))
+	if err := e.s.Finish(context.Background(), m2.ID, matchmaking.Result{Ranks: []int{1, 2}}); err != nil || !onFinishDone(t, e, m2.ID) {
+		t.Fatalf("no hook: %v", err)
+	}
+}
+
+// start2 is start for a test that already has matches: it returns the newest one.
+func start2(t *testing.T, e env, q string, users ...int64) matchmaking.Match {
+	t.Helper()
+	e.a.Transport.SetOnline(users...)
+	for _, u := range users {
+		e.a.Fund(u, "usd", 1000)
+		if _, cerr := queue(e, u, queueReq{Queue: q, Currency: "usd", Stake: 100, IdemKey: q}); cerr != nil {
+			t.Fatal(cerr)
+		}
+	}
+	matchNow(t, e)
+	var id int64
+	if err := e.a.Pool.QueryRow(context.Background(), `SELECT max(id) FROM mm_matches`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	m := matchOf(t, e, id)
+	if m.Status != "running" {
+		t.Fatalf("match %+v", m)
+	}
+	return m
+}
+
+func TestOnFinishFinishesOther(t *testing.T) {
+	e := setup(t)
+	var second int64
+	one := staked(e, "one", matchmaking.Team{1, 1}, matchmaking.Team{1, 1})
+	one.Ranked, one.RatingKey = true, "shared"
+	one.OnFinish = func(ctx context.Context, m matchmaking.Match) error {
+		return e.s.Finish(ctx, second, matchmaking.Result{Ranks: []int{1, 2}})
+	}
+	two := staked(e, "two", matchmaking.Team{1, 1}, matchmaking.Team{1, 1})
+	two.Ranked, two.RatingKey = true, "shared"
+	addQueue(t, e, one)
+	addQueue(t, e, two)
+	a, b, c := e.a.User("alice"), e.a.User("bob"), e.a.User("carol")
+	m1 := start2(t, e, "one", a, b)
+	m2 := start2(t, e, "two", a, c)
+	if m2.ID == m1.ID {
+		t.Fatal("one match")
+	}
+	second = m2.ID
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := e.s.Finish(ctx, m1.ID, wins(m1, a)); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{m1.ID, m2.ID} {
+		if m := matchOf(t, e, id); m.Status != "settled" || !onFinishDone(t, e, id) {
+			t.Fatalf("match %+v", m)
+		}
+	}
+	got, _ := apptest.Call[struct{ Matches int }](e.a, a, "rating.get", map[string]string{"key": "shared"})
+	if got.Matches != 2 {
+		t.Fatalf("alice matches %d", got.Matches)
+	}
+}
+
+func TestPayoutStored(t *testing.T) {
+	e := setup(t)
+	q := staked(e, "hooked", matchmaking.Team{1, 1}, matchmaking.Team{1, 1})
+	share := int64(150) // of 190
+	q.Payout = func(pot int64, m matchmaking.Match, r matchmaking.Result) []ledger.PotWin {
+		left := pot - ledger.FeeOf(pot, m.FeeBP)
+		return []ledger.PotWin{{UserID: m.Players[0].UserID, Amount: share}, {UserID: m.Players[1].UserID, Amount: left - share}}
+	}
+	addQueue(t, e, q)
+	failed := false
+	restore := matchmaking.SetSettlePot(func(l *ledger.Ledger, ctx context.Context, g ledger.Game, c ledger.Currency, potID, feeBP int64,
+		entries []ledger.PotEntry, winners []ledger.PotWin) (int64, error) {
+		if !failed {
+			failed = true
+			return 0, errors.New("ledger down")
+		}
+		return l.SettlePotFee(ctx, g, c, potID, feeBP, entries, winners)
+	})
+	defer restore()
+	a, b := e.a.User("alice"), e.a.User("bob")
+	m := start(t, e, stakedReq("hooked", 100), a, b)
+	if err := e.s.Finish(context.Background(), m.ID, matchmaking.Result{Ranks: []int{1, 2}}); err == nil {
+		t.Fatal("ledger error not returned")
+	}
+	if m := matchOf(t, e, m.ID); m.Status != "finishing" {
+		t.Fatalf("match %+v", m)
+	}
+	share = 40 // a changed hook doesn't change a stored result's payouts
+	e.a.ReconcileNow()
+	p0, p1 := m.Players[0].UserID, m.Players[1].UserID
+	balances(t, e, map[int64]int64{p0: 900 + 150, p1: 900 + 40})
+	if m := matchOf(t, e, m.ID); m.Status != "settled" {
+		t.Fatalf("match %+v", m)
+	}
 }

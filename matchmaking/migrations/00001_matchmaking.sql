@@ -45,6 +45,11 @@ CREATE TABLE mm_matches (
     stake      bigint      NOT NULL DEFAULT 0 CHECK (stake >= 0),
     fee_bp     bigint      NOT NULL DEFAULT 0,
     result     jsonb,
+    -- stored with the result: what settling pays ([{user_id, amount}]), or refund (a refunded draw)
+    payouts    jsonb       NOT NULL DEFAULT '[]',
+    refund     boolean     NOT NULL DEFAULT false,
+    -- settled and OnFinish returned nil (or the queue has none)
+    on_finish_done boolean NOT NULL DEFAULT false,
     reason     text        NOT NULL DEFAULT '',
     -- forming: the tickets it was formed from; cancelling: the ones to re-queue; else [].
     tickets    jsonb       NOT NULL DEFAULT '[]',
@@ -54,6 +59,7 @@ CREATE TABLE mm_matches (
     UNIQUE (queue, ref)
 );
 CREATE INDEX mm_matches_status ON mm_matches (status, deadline);
+CREATE INDEX mm_matches_on_finish ON mm_matches (id) WHERE status = 'settled' AND NOT on_finish_done;
 
 -- id is the pot entry ID.
 CREATE TABLE mm_match_players (

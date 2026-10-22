@@ -28,19 +28,22 @@ type GameSetting struct {
 }
 
 type MmMatch struct {
-	ID        int64
-	Queue     string
-	Ref       string
-	Status    string
-	Currency  string
-	Stake     int64
-	FeeBp     int64
-	Result    []byte
-	Reason    string
-	Tickets   []byte
-	Deadline  pgtype.Timestamptz
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	ID           int64
+	Queue        string
+	Ref          string
+	Status       string
+	Currency     string
+	Stake        int64
+	FeeBp        int64
+	Result       []byte
+	Payouts      []byte
+	Refund       bool
+	OnFinishDone bool
+	Reason       string
+	Tickets      []byte
+	Deadline     pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type MmMatchPlayer struct {
