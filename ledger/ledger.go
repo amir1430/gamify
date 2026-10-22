@@ -40,6 +40,7 @@ const (
 	codeRewards  uint16 = 8  // promotions are paid from here
 	codePot      uint16 = 9  // PvP pots: entries wait here until the winner is paid
 	codeAdjust   uint16 = 17 // admin balance adjustments come from and go to here
+	codeSales    uint16 = 19 // spends (a shop item, an extra life) go here
 )
 
 // Transfer codes.
@@ -52,6 +53,7 @@ const (
 	codeSwap       uint16 = 15
 	codeReward     uint16 = 16
 	codeAdjustment uint16 = 18
+	codeSpend      uint16 = 20
 )
 
 // Game is an ID space for one table of operation IDs: it namespaces the transfer ID, so row IDs
@@ -101,6 +103,7 @@ const (
 	nsReward  uint64 = 4
 	nsTopUp   uint64 = 5
 	nsAdjust  uint64 = 6
+	nsSpend   uint64 = 7 // keyed by game: ns<<32 | game<<8 | leg
 )
 
 // System accounts, one of each per currency: ID (0, ledger<<8 | kind).
@@ -114,12 +117,13 @@ const (
 	kindFloor
 	kindRewards
 	kindAdjust
+	kindSales
 )
 
 // systemKinds names each system account, as SystemBalances keys them.
 var systemKinds = map[uint64]string{kindHouse: "house", kindPot: "pot", kindExchange: "exchange",
 	kindInflow: "inflow", kindFaucet: "faucet", kindGrant: "grant", kindFloor: "floor", kindRewards: "rewards",
-	kindAdjust: "adjust"}
+	kindAdjust: "adjust", kindSales: "sales"}
 
 var ErrInsufficientFunds = errors.New("ledger: insufficient funds")
 
@@ -210,6 +214,12 @@ func userAccountID(c CurrencyConfig, userID int64) ID { return ID{uint64(c.Ledge
 // opTransferID is deterministic: the same operation leg always gets the same ID, so retries can't double-move money.
 func opTransferID(g Game, leg uint64, opID int64) ID { return ID{uint64(g)<<8 | leg, uint64(opID)} }
 
+// nsOpID is a game's operation ID in namespace ns, apart from the game legs that pots and holds
+// share: ns<<32 | game<<8 | leg (Game <= MaxGame keeps it below bit 32).
+func nsOpID(ns uint64, g Game, leg uint64, opID int64) ID {
+	return ID{ns<<32 | uint64(g)<<8 | leg, uint64(opID)}
+}
+
 func (l *Ledger) currency(c Currency) (CurrencyConfig, error) {
 	cur, ok := l.cur[c]
 	if !ok {
@@ -225,7 +235,7 @@ func (l *Ledger) Init(ctx context.Context) error {
 		c := l.cur[code]
 		for kind, acc := range map[uint64]uint16{kindHouse: codeHouse, kindPot: codePot, kindExchange: codeExchange,
 			kindInflow: codeInflow, kindFaucet: codeFaucet, kindGrant: codeGrant, kindFloor: codeFloor, kindRewards: codeRewards,
-			kindAdjust: codeAdjust} {
+			kindAdjust: codeAdjust, kindSales: codeSales} {
 			accounts = append(accounts, Account{ID: system(c, kind), Ledger: c.Ledger, Code: acc, NoOverdraft: kind == kindPot})
 		}
 	}
@@ -543,6 +553,25 @@ func (l *Ledger) Adjust(ctx context.Context, c Currency, adjustmentID, userID, a
 	}
 	return l.createTransfers(ctx, []Transfer{{ID: ID{nsAdjust << 32, uint64(adjustmentID)},
 		Debit: debit, Credit: credit, Amount: uint64(amount), Ledger: cur.Ledger, Code: codeAdjustment}})
+}
+
+// Spend charges a user for something the brand sells (a shop item, an extra life): user -> c's
+// sales account. The transfer ID comes from (g, opID), so a retry charges once; a refused spend
+// stays refused (ErrAlreadyFailed). The welcome grant may be spent: spending is play, not cash-out.
+// Amount 0 moves nothing; a negative amount is an error.
+func (l *Ledger) Spend(ctx context.Context, g Game, c Currency, opID, userID, amount int64) error {
+	if err := g.check(); err != nil {
+		return err
+	}
+	if amount < 0 {
+		return fmt.Errorf("ledger: negative spend %d", amount)
+	}
+	cur, err := l.currency(c)
+	if err != nil || amount == 0 {
+		return err
+	}
+	return l.createTransfers(ctx, []Transfer{{ID: nsOpID(nsSpend, g, 1, opID), Debit: userAccountID(cur, userID),
+		Credit: system(cur, kindSales), Amount: uint64(amount), Ledger: cur.Ledger, Code: codeSpend}})
 }
 
 // Swap exchanges currencies for the user: `from` user -> exchange and exchange -> `to` user, linked,

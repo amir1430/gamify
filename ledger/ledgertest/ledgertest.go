@@ -28,6 +28,7 @@ const (
 	duel    ledger.Game = 4
 	lottery ledger.Game = 5
 	predict ledger.Game = 6
+	shop    ledger.Game = 7
 )
 
 // Run runs the whole suite on drivers from newDriver.
@@ -395,7 +396,7 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 		sb, err := f.l.SystemBalances(ctx, "usd")
 		must(t, err)
 		want(t, "adjust account", sb["adjust"]-sb0["adjust"], -300)
-		for _, k := range []string{"house", "pot", "exchange", "inflow", "faucet", "grant", "floor", "rewards", "adjust"} {
+		for _, k := range []string{"house", "pot", "exchange", "inflow", "faucet", "grant", "floor", "rewards", "adjust", "sales"} {
 			if _, ok := sb[k]; !ok {
 				t.Fatalf("system balances: no %q in %v", k, sb)
 			}
@@ -404,6 +405,41 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 			t.Fatal("zero adjust accepted")
 		}
 		if err := f.l.Adjust(ctx, "eur", id+4, u, 1); err == nil {
+			t.Fatal("unknown currency accepted")
+		}
+	})
+
+	t.Run("spend", func(t *testing.T) {
+		u := f.user()
+		sb0, err := f.l.SystemBalances(ctx, "usd")
+		must(t, err)
+		op := int64(rid())
+		for range 2 { // retry: charged once
+			must(t, f.l.Spend(ctx, shop, "usd", op, u, 300))
+		}
+		want(t, "spent", f.bal(u, "usd"), 700)
+		sb, err := f.l.SystemBalances(ctx, "usd")
+		must(t, err)
+		want(t, "sales account", sb["sales"]-sb0["sales"], 300)
+		must(t, f.l.Spend(ctx, shop, "usd", int64(rid()), u, 0))
+		want(t, "zero moves nothing", f.bal(u, "usd"), 700)
+		refused := int64(rid())
+		if err := f.l.Spend(ctx, shop, "usd", refused, u, 701); !errors.Is(err, ledger.ErrInsufficientFunds) {
+			t.Fatalf("overdraft: %v", err)
+		}
+		must(t, f.l.TopUp(ctx, "usd", u, 1000))
+		if err := f.l.Spend(ctx, shop, "usd", refused, u, 701); !errors.Is(err, ledger.ErrAlreadyFailed) {
+			t.Fatalf("retried overdraft: %v", err)
+		}
+		if err := f.l.Spend(ctx, shop, "usd", int64(rid()), u, -1); err == nil {
+			t.Fatal("negative spend accepted")
+		}
+		want(t, "refused", f.bal(u, "usd"), 1700)
+		// Spending is play, not cash-out: the welcome tickets may be spent.
+		v := f.user()
+		must(t, f.l.Spend(ctx, shop, "tickets", int64(rid()), v, 1000))
+		want(t, "welcome spent", f.bal(v, "tickets"), 0)
+		if err := f.l.Spend(ctx, shop, "eur", int64(rid()), u, 1); err == nil {
 			t.Fatal("unknown currency accepted")
 		}
 	})

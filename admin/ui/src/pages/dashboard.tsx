@@ -5,8 +5,8 @@ type Dashboard = { online: number; currencies: Record<string, { system: Record<s
 
 const REFRESH_MS = 15_000
 // System accounts in the order an operator reads them; any other the ledger adds goes after.
-const ACCOUNTS = ['house', 'rewards', 'adjust', 'pot', 'exchange', 'inflow', 'faucet', 'grant', 'floor']
-const LABEL: Record<string, string> = { house: 'House', rewards: 'Rewards', adjust: 'Adjustments' }
+const ACCOUNTS = ['house', 'rewards', 'sales', 'adjust', 'pot', 'exchange', 'inflow', 'faucet', 'grant', 'floor']
+const LABEL: Record<string, string> = { house: 'House', rewards: 'Rewards', sales: 'Sales', adjust: 'Adjustments' }
 const label = (a: string) => LABEL[a] ?? a[0].toUpperCase() + a.slice(1)
 
 // The platform at a glance: who's online and, per currency, the system accounts' balances (the
