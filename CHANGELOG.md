@@ -12,6 +12,13 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   its own transfer-ID namespace.
 - `app`: `App.Loop(every, f)`, a periodic job `Run` ticks until it ends (like the reconcile ticker).
 - `apptest`: `Transport.SetOnline(ids...)` sets who `Online` reports (default nobody).
+- `party`: new opt-in module: parties with a leader, closed-party join requests, chat/data messages
+  and `Lock`/`Unlock` for other modules. `party.Register(ctx, app, party.Config{})` adds the
+  `party.*` RPCs and the `Service` (`Get`, `Of`, `OnChange`). Config: `PartiesPerUser`, `MaxSize`,
+  `MessageBytes`, `MessagesPerSec`. Client errors 1020-1026.
+
+### Upgrade
+- `party`: new goose table `goose_party` (migrations run in `party.Register`); nothing changes unless you register it.
 
 ## [1.0.0] - 2026-10-22
 

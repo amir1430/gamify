@@ -45,3 +45,12 @@ sql:
         out: admin/internal/store
         sql_package: pgx/v5
         emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: [db/migrations, party/migrations]
+    queries: party/queries.sql
+    gen:
+      go:
+        package: store
+        out: party/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
