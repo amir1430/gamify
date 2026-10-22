@@ -206,6 +206,125 @@ Test at least: a request without money (`ErrInsufficientFunds` path), a win and 
 `a.Balance`, a retry with the same idempotency key charging once, a row left pending finished by
 `a.ReconcileNow()`, and (games of chance) the revealed seed reproducing the outcome.
 
+## 9. Multiplayer: parties and matchmaking
+
+`party` (groups with a leader) and `matchmaking` (queues, matches, ratings, staked pots) are opt-in
+modules. Matchmaking forms and settles matches; your game plays them and reports the result.
+
+```go
+// your main, after app.New
+parties, err := party.Register(ctx, a, party.Config{})              // before matchmaking
+mm, err := matchmaking.Register(ctx, a, parties, matchmaking.Config{}) // claims ledger game 1
+duel, err := mm.Queue(arenaDuel(g))                                  // your queues, at startup
+// after admin.Register: partyadmin.Register(adm, parties); matchmakingadmin.Register(adm, mm)
+```
+
+`Service.Queue` validates a `QueueConfig`, fills the defaults and rejects a duplicate name. Keep
+the `*Queue` for `Create`.
+
+**A ranked 1v1** (no money; the rating key defaults to the queue name):
+
+```go
+matchmaking.QueueConfig{
+	Name: "duel", Teams: []matchmaking.Team{{1, 1}, {1, 1}}, Ranked: true,
+	OnMatch: s.startMatch, OnFinish: s.matchDone,
+}
+```
+
+A queue needs two teams, or a free-for-all: `Teams: {{1, 1}}, FFA: &matchmaking.Team{Min: 2, Max: 8}`.
+
+**A staked 5v5 with parties** (a party of 1..5 queues together and plays on one team):
+
+```go
+matchmaking.QueueConfig{
+	Name: "arena5", Teams: []matchmaking.Team{{1, 5}, {1, 5}}, Ranked: true,
+	Game:   pvp, // *gameconfig.Game from a.Games.Game(...): Check()s every stake against its limits
+	Stakes: map[ledger.Currency][]int64{"usd": {100, 500, 2_000}},
+	FeeBP:  500, // 5%; the default is ledger.FeeBP, NoFee: true for none
+	OnMatch: s.startMatch, OnFinish: s.matchDone,
+}
+```
+
+### Player flow (RPCs and pushes)
+
+- `party.create {max, name, open}`, `party.join {party_id}`, `party.accept {party_id, user_id}`
+  (a leader approves a request to a closed party), `party.leave`, `party.kick`, `party.lead`
+  (hand over leadership), `party.get`, `party.send {party_id, kind, data}`. Errors 1020-1026. The
+  party pushes its changes to every member.
+- `match.queue {queue, currency, stake, properties, numbers, idem_key}` returns one of
+  `{ticket}`, `{match_id}`, `{removed}`. A party leader queues the whole party; a member gets
+  `party.ErrNotLeader`. A repeat of the `idem_key` returns the stored outcome.
+- `match.cancel {}` leaves the queue; `match.status {}` returns `{ticket, matches}` (what a
+  reconnecting client needs); `rating.get {key}`.
+- Pushes to the user channel, by `type`: `match.ticket`, `match.ticket_removed` (`reason`:
+  `cancelled`, `party_changed`, `expired`, `offline`, `insufficient_funds`), `match.found` (`match`),
+  `match.finished` (`match`, `payouts`, `ratings`), `match.cancelled` (`match`, `reason`).
+- Errors 1030-1036: `ErrQueued`, `ErrBusy`, `ErrUnknownQueue`, `ErrPartyTooBig`, `ErrNotFound`,
+  `ErrResultConflict`, `ErrClosed`.
+
+### The game's side of a match
+
+```go
+func (s *Service) startMatch(ctx context.Context, m matchmaking.Match) error {
+	// m.Players: UserID, Team, PartyID; m.Ref names the match. Stakes are held already.
+	return s.createRoom(ctx, m.ID) // INSERT ... ON CONFLICT (match_id) DO NOTHING
+}
+```
+
+- **`OnMatch`** runs once the stakes are held, while the match is `forming`. Return an error and
+  the match is cancelled and refunded (reason `on_match`). It can run twice for one match (a crash,
+  two instances), so make it **idempotent**.
+- **`Finish(ctx, matchID, matchmaking.Result{Ranks: …})`** reports the result: one rank per team,
+  1 is best, ties share a rank, a forfeiting team simply ranks last. The same result again is a
+  no-op; a different one is `ErrResultConflict`; a cancelled match is `ErrClosed`. It pays the pot,
+  updates ratings, pushes `match.finished`, then calls `OnFinish`. If the ledger is down it returns
+  the error and the reconciler finishes the settlement from the stored result.
+- **`Cancel(ctx, matchID, reason)`** refunds every stake and pushes `match.cancelled` (a player left
+  before the start, the server crashed).
+- **`MatchTimeout`** (default 1 h) is the safety net: a match still running past it is cancelled
+  (reason `timeout`) and refunded. Set it above your longest game.
+- **`OnFinish`** runs after settlement, outside any transaction, so it may `Finish`, `Cancel` or
+  `Create` other matches (a tournament's next round). It is **at least once**: an error or a crash
+  makes the reconciler call it again, so make it idempotent.
+- **`Payout(pot, m, result) []ledger.PotWin`** replaces the default (the best rank's players split
+  the pot less the fee equally). It must pay exactly `pot - ledger.FeeOf(pot, m.FeeBP)`, at most
+  `ledger.MaxPotWinners` winners; it must be deterministic. Its answer is stored when `Finish`
+  records the result, and settling never calls it again; a wrong answer makes `Finish` return an error
+  and store nothing.
+
+### Direct matches
+
+A tournament round or a challenge has no queue wait: `Create` runs the same pipeline (stakes held,
+`OnMatch`, `match.found`) for teams you name. Players need not be online.
+
+```go
+m, err := mm.Create(ctx, matchmaking.NewMatch{
+	Queue: duel, Teams: [][]int64{{alice}, {bob}}, Currency: "usd", Stake: 500,
+	Ref: fmt.Sprintf("round:%d:%d", tournamentID, n), // idempotent; never "ticket:…"
+})
+```
+
+A repeat of a `Ref` returns the existing match whatever its state. `ErrBusy` means a player is in an
+open match of a queue that isn't `Concurrent`; `ledger.ErrInsufficientFunds` comes back with the
+cancelled, refunded match.
+
+### Policy knobs
+
+All in `QueueConfig`, all with defaults:
+
+- `AllowOffline`: queue and match players who are not connected (default: all must be online).
+- `Concurrent`: a player may be in several open matches of the queue (default: one).
+- `FillAfter` (10 s): after this wait a team may fill below its `Max`, down to `Min`.
+- `MaxWait` (2 min): a ticket older than this is removed (`expired`); `matchmaking.Forever` keeps it.
+- `RatingWindow`/`RatingWiden`: rating gap allowed, and how much it grows per 10 s of waiting.
+- `DrawRefund`: a result where every team ties refunds the stakes instead of splitting the pot.
+- `NoFee`: a real 0% fee (`FeeBP: 0` means the default).
+- `Properties`: client-sent strings that must be equal (`{"region"}`); `Numbers`: client-sent
+  numbers that may differ by `Diff`, plus `Widen` per `Every` of waiting.
+- `Prepare(ctx, *Ticket)`: set `t.Server[...]` from your own data (a league tier); equal `Server`
+  maps are required to match. The client can't send these.
+- `Compatible(a, b Ticket) bool`: a last veto on any two tickets in a match.
+
 ## Checklist
 
 - [ ] One game ID per table of operation IDs, in `FirstBrandGame..MaxGame`, registered with
@@ -220,3 +339,6 @@ Test at least: a request without money (`ErrInsufficientFunds` path), a win and 
 - [ ] User ID from the connection, never the payload
 - [ ] Tested through its RPCs with `apptest`
 - [ ] Admin view, if any, in a `<game>admin` subpackage; actions change rows, never money
+- [ ] Multiplayer: `OnMatch` and `OnFinish` idempotent (both can run again); `Payout` deterministic
+      and summing to pot less fee; `MatchTimeout` above the longest game; `Create` Refs unique per
+      match; every match ends in `Finish` or `Cancel`
