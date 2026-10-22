@@ -5,6 +5,15 @@ sample). See README.md for the layout, drivers and commands.
 
 ## Rules
 
+- Breadth: gamify makes online game development easy for any kind of game. A platform feature
+  serves every shape a brand might build (solo, 1v1, free-for-all, teams, parties; real money,
+  free, ranked), not just the first game that needs it. Model the general case; when one shape
+  is deferred, say so and keep the design open to it without a breaking change.
+- No imposed policy: gamify never hard-codes a product rule on the brands that use it (scoring,
+  limits, who may do what, tie and draw handling, timeouts, sizes). Every such rule is config
+  with a sensible default, settable in Go and, where operators run it, in the admin console.
+  Invariants are not policy and stay enforced: money safety, ledger semantics, identity from the
+  connection, idempotency, provable fairness, audit.
 - Money: integer minor units (`int64`), never floats; multiplier math with `math/big`, rounded down.
   The ledger driver is the source of truth for balances. Game tables hold game metadata
   only. No app-side balance checks: drivers refuse overdrafts.
