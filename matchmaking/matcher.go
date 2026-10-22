@@ -15,7 +15,9 @@ type formed struct {
 
 // form groups a queue's tickets (sorted by QueuedAt, ties by ID) into matches. The oldest unused
 // ticket anchors a group; an anchor that cannot form stays queued and the next one is tried.
-// ponytail: O(n²) per queue per tick; bucket by properties if a queue outgrows it.
+// ponytail: O(n²) per queue per tick; bucket by properties if a queue outgrows it. When the greedy
+// fill misses, a backtracking search capped at searchBudget nodes per anchor runs; a packing that
+// needs more nodes is missed until the queue changes. Raise the budget or use a real solver if needed.
 func form(q *Queue, tickets []Ticket, now time.Time) []formed {
 	used := make([]bool, len(tickets))
 	var out []formed
@@ -33,9 +35,15 @@ func form(q *Queue, tickets []Ticket, now time.Time) []formed {
 	return out
 }
 
+// searchBudget caps the fallback search's nodes per anchor.
+const searchBudget = 10_000
+
 // build fills teams around anchor a with whole tickets: the anchor first, then larger parties
 // first (oldest first among equals) so small parties don't strand a big one. Each unit goes to the
 // team with the most room it fits in, or in a ranked queue the fitting team with the lowest rating.
+// If that greedy fill can't form, a backtracking search tries every placement (each candidate on a
+// team it fits, or skipped; the anchor always in) and takes the first that forms; it may be less
+// balanced than the greedy.
 func build(c QueueConfig, ts []Ticket, used []bool, a int, now time.Time) (formed, []int) {
 	anchor, wait := ts[a], now.Sub(ts[a].QueuedAt)
 	cand := []int{a}
@@ -52,6 +60,7 @@ func build(c QueueConfig, ts []Ticket, used []bool, a int, now time.Time) (forme
 	}
 	members := make([][]int, len(teams))
 	size, sum := make([]int, len(teams)), make([]float64, len(teams))
+	var group []int
 	full := func() bool {
 		for t := range teams {
 			if size[t] < teams[t].Max {
@@ -60,12 +69,42 @@ func build(c QueueConfig, ts []Ticket, used []bool, a int, now time.Time) (forme
 		}
 		return true
 	}
-	var group []int
+	ready := func() bool {
+		if full() {
+			return true
+		}
+		if wait < c.FillAfter {
+			return false
+		}
+		if c.FFA != nil {
+			return len(group) >= c.FFA.Min
+		}
+		for t := range teams {
+			if size[t] < teams[t].Min {
+				return false
+			}
+		}
+		return true
+	}
+	compatible := func(i int) bool {
+		return !slices.ContainsFunc(group, func(j int) bool { return c.Compatible != nil && !c.Compatible(ts[j], ts[i]) })
+	}
+	place := func(i, t, sign int) {
+		n := len(ts[i].Users)
+		if sign > 0 {
+			members[t], group = append(members[t], i), append(group, i)
+		} else {
+			members[t], group = members[t][:len(members[t])-1], group[:len(group)-1]
+		}
+		size[t] += sign * n
+		sum[t] += float64(sign*n) * ts[i].Rating
+	}
+
 	for _, i := range cand {
 		if full() {
 			break
 		}
-		if slices.ContainsFunc(group, func(j int) bool { return c.Compatible != nil && !c.Compatible(ts[j], ts[i]) }) {
+		if !compatible(i) {
 			continue
 		}
 		n, best := len(ts[i].Users), -1
@@ -78,27 +117,51 @@ func build(c QueueConfig, ts []Ticket, used []bool, a int, now time.Time) (forme
 				best = t
 			}
 		}
-		if best < 0 {
-			continue
+		if best >= 0 {
+			place(i, best, 1)
 		}
-		members[best] = append(members[best], i)
-		size[best] += n
-		sum[best] += ts[i].Rating * float64(n)
-		group = append(group, i)
 	}
 
-	ready := full()
-	if !ready && wait >= c.FillAfter {
-		if c.FFA != nil {
-			ready = len(group) >= c.FFA.Min
-		} else {
-			ready = true
-			for t := range teams {
-				ready = ready && size[t] >= teams[t].Min
-			}
+	if !ready() {
+		for t := range teams {
+			members[t], size[t], sum[t] = nil, 0, 0
 		}
+		group = nil
+		nodes := 0
+		var search func(k int) bool
+		search = func(k int) bool {
+			if ready() {
+				return true
+			}
+			if k == len(cand) || nodes >= searchBudget {
+				return false
+			}
+			nodes++
+			i := cand[k]
+			if compatible(i) {
+			next:
+				for t := range teams {
+					if size[t]+len(ts[i].Users) > teams[t].Max {
+						continue
+					}
+					// Teams with the same bounds and fill are interchangeable: try the first only.
+					for u := range t {
+						if teams[u] == teams[t] && size[u] == size[t] {
+							continue next
+						}
+					}
+					place(i, t, 1)
+					if search(k + 1) {
+						return true
+					}
+					place(i, t, -1)
+				}
+			}
+			return k > 0 && search(k+1) // the anchor can't be skipped
+		}
+		search(0)
 	}
-	if !ready {
+	if !ready() {
 		return formed{}, nil
 	}
 	var f formed

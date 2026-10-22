@@ -22,7 +22,8 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   `Rating`/`DefaultRating`/`Ordinal`. The ledger game ID `matchmaking.Game = 1` is claimed by `Register`.
   A queue needs 2+ teams unless FFA, a non-empty stake list per currency, `NumberRule.Every > 0`,
   and non-negative `FillAfter`/`MatchTimeout`/`MaxWait` (`Forever` allowed). The matcher (internal)
-  fills teams anchor first, then larger parties first, oldest first among equal sizes.
+  fills teams anchor first, then larger parties first, oldest first among equal sizes, and falls
+  back to a bounded search when that greedy fill misses a feasible packing.
 
 ### Upgrade
 - `party`: new goose table `goose_party` (migrations run in `party.Register`); nothing changes unless you register it.

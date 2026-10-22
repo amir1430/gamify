@@ -162,3 +162,21 @@ func TestFormAsymmetric(t *testing.T) {
 		t.Fatalf("teams %v", got[0].Teams)
 	}
 }
+
+func TestFormPackingFallback(t *testing.T) {
+	// Greedy: solo→A, 3→B, 2→A, the last 2 fits nowhere. The search finds {1,3} vs {2,2}.
+	q := queue(t, QueueConfig{Teams: []Team{{4, 4}, {4, 4}}})
+	got := form(q, []Ticket{tk(1, 1), tk(2, 3), tk(3, 2), tk(4, 2)}, t0)
+	wantIDs(t, got, []int64{1, 2, 3, 4})
+	if !reflect.DeepEqual(got[0].Teams, [][]int64{{101, 201, 202, 203}, {301, 302, 401, 402}}) {
+		t.Fatalf("teams %v", got[0].Teams)
+	}
+
+	// Greedy already succeeds here: solo→B (more room), 2→A, 2→B.
+	q = queue(t, QueueConfig{Name: "q23", Teams: []Team{{2, 2}, {3, 3}}})
+	got = form(q, []Ticket{tk(1, 1), tk(2, 2), tk(3, 2)}, t0)
+	wantIDs(t, got, []int64{1, 2, 3})
+	if !reflect.DeepEqual(got[0].Teams, [][]int64{{201, 202}, {101, 301, 302}}) {
+		t.Fatalf("teams %v", got[0].Teams)
+	}
+}
