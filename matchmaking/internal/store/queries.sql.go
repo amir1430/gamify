@@ -11,6 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelMatch = `-- name: CancelMatch :execrows
+UPDATE mm_matches SET status = 'cancelling', reason = $2, tickets = '[]', updated_at = now()
+WHERE id = $1 AND status IN ('forming', 'running')
+`
+
+type CancelMatchParams struct {
+	ID     int64
+	Reason string
+}
+
+// Nothing is re-queued.
+func (q *Queries) CancelMatch(ctx context.Context, arg CancelMatchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelMatch, arg.ID, arg.Reason)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteTicket = `-- name: DeleteTicket :execrows
 DELETE FROM mm_tickets WHERE id = $1
 `
@@ -21,6 +40,31 @@ func (q *Queries) DeleteTicket(ctx context.Context, id int64) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const ensureRatings = `-- name: EnsureRatings :exec
+INSERT INTO mm_ratings (user_id, key, mu, sigma)
+SELECT u, $1::text, $2::float8, $3::float8 FROM unnest($4::bigint[]) AS u
+ORDER BY u
+ON CONFLICT DO NOTHING
+`
+
+type EnsureRatingsParams struct {
+	Key     string
+	Mu      float64
+	Sigma   float64
+	UserIds []int64
+}
+
+// Gives the users without a rating under key the default one, so LockRatings locks every user.
+func (q *Queries) EnsureRatings(ctx context.Context, arg EnsureRatingsParams) error {
+	_, err := q.db.Exec(ctx, ensureRatings,
+		arg.Key,
+		arg.Mu,
+		arg.Sigma,
+		arg.UserIds,
+	)
+	return err
 }
 
 const getMatch = `-- name: GetMatch :one
@@ -250,10 +294,10 @@ func (q *Queries) InsertTicketUser(ctx context.Context, arg InsertTicketUserPara
 }
 
 const lockMatch = `-- name: LockMatch :one
-SELECT id, queue, ref, status, currency, stake, fee_bp, result, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE id = $1 AND status IN ('forming', 'cancelling') FOR UPDATE SKIP LOCKED
+SELECT id, queue, ref, status, currency, stake, fee_bp, result, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE id = $1 AND status IN ('forming', 'finishing', 'cancelling') FOR UPDATE SKIP LOCKED
 `
 
-// The match while it is forming or cancelling, unless another transaction is advancing it.
+// The match while it has a step to take, unless another transaction is advancing it.
 func (q *Queries) LockMatch(ctx context.Context, id int64) (MmMatch, error) {
 	row := q.db.QueryRow(ctx, lockMatch, id)
 	var i MmMatch
@@ -273,6 +317,68 @@ func (q *Queries) LockMatch(ctx context.Context, id int64) (MmMatch, error) {
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const lockMatchWait = `-- name: LockMatchWait :one
+SELECT id, queue, ref, status, currency, stake, fee_bp, result, reason, tickets, deadline, created_at, updated_at FROM mm_matches WHERE id = $1 FOR UPDATE
+`
+
+// The match in any status, waiting for a transaction advancing it.
+func (q *Queries) LockMatchWait(ctx context.Context, id int64) (MmMatch, error) {
+	row := q.db.QueryRow(ctx, lockMatchWait, id)
+	var i MmMatch
+	err := row.Scan(
+		&i.ID,
+		&i.Queue,
+		&i.Ref,
+		&i.Status,
+		&i.Currency,
+		&i.Stake,
+		&i.FeeBp,
+		&i.Result,
+		&i.Reason,
+		&i.Tickets,
+		&i.Deadline,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockRatings = `-- name: LockRatings :many
+SELECT user_id, mu, sigma FROM mm_ratings WHERE key = $1::text AND user_id = ANY($2::bigint[])
+ORDER BY user_id FOR UPDATE
+`
+
+type LockRatingsParams struct {
+	Key     string
+	UserIds []int64
+}
+
+type LockRatingsRow struct {
+	UserID int64
+	Mu     float64
+	Sigma  float64
+}
+
+func (q *Queries) LockRatings(ctx context.Context, arg LockRatingsParams) ([]LockRatingsRow, error) {
+	rows, err := q.db.Query(ctx, lockRatings, arg.Key, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockRatingsRow
+	for rows.Next() {
+		var i LockRatingsRow
+		if err := rows.Scan(&i.UserID, &i.Mu, &i.Sigma); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const matchPlayers = `-- name: MatchPlayers :many
@@ -470,6 +576,23 @@ func (q *Queries) SetMatchCancelling(ctx context.Context, arg SetMatchCancelling
 	return result.RowsAffected(), nil
 }
 
+const setMatchFinishing = `-- name: SetMatchFinishing :execrows
+UPDATE mm_matches SET status = 'finishing', result = $2, updated_at = now() WHERE id = $1 AND status = 'running'
+`
+
+type SetMatchFinishingParams struct {
+	ID     int64
+	Result []byte
+}
+
+func (q *Queries) SetMatchFinishing(ctx context.Context, arg SetMatchFinishingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setMatchFinishing, arg.ID, arg.Result)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setMatchRunning = `-- name: SetMatchRunning :execrows
 UPDATE mm_matches SET status = 'running', tickets = '[]', updated_at = now() WHERE id = $1 AND status = 'forming'
 `
@@ -480,6 +603,39 @@ func (q *Queries) SetMatchRunning(ctx context.Context, id int64) (int64, error) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setMatchSettled = `-- name: SetMatchSettled :execrows
+UPDATE mm_matches SET status = 'settled', updated_at = now() WHERE id = $1 AND status = 'finishing'
+`
+
+func (q *Queries) SetMatchSettled(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, setMatchSettled, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setRating = `-- name: SetRating :exec
+UPDATE mm_ratings SET mu = $3, sigma = $4, matches = matches + 1, updated_at = now() WHERE user_id = $1 AND key = $2
+`
+
+type SetRatingParams struct {
+	UserID int64
+	Key    string
+	Mu     float64
+	Sigma  float64
+}
+
+func (q *Queries) SetRating(ctx context.Context, arg SetRatingParams) error {
+	_, err := q.db.Exec(ctx, setRating,
+		arg.UserID,
+		arg.Key,
+		arg.Mu,
+		arg.Sigma,
+	)
+	return err
 }
 
 const setRequestRemoved = `-- name: SetRequestRemoved :exec
@@ -574,6 +730,30 @@ func (q *Queries) TicketsUsers(ctx context.Context, dollar_1 []int64) ([]MmTicke
 	return items, nil
 }
 
+const timedOutMatches = `-- name: TimedOutMatches :many
+SELECT id FROM mm_matches WHERE status = 'running' AND deadline < now() ORDER BY id
+`
+
+func (q *Queries) TimedOutMatches(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.Query(ctx, timedOutMatches)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const tryQueueLock = `-- name: TryQueueLock :one
 SELECT pg_try_advisory_xact_lock(hashtext('mm:' || $1::text))
 `
@@ -586,7 +766,7 @@ func (q *Queries) TryQueueLock(ctx context.Context, queue string) (bool, error) 
 }
 
 const unfinishedMatches = `-- name: UnfinishedMatches :many
-SELECT id FROM mm_matches WHERE status IN ('forming', 'cancelling') ORDER BY id
+SELECT id FROM mm_matches WHERE status IN ('forming', 'finishing', 'cancelling') ORDER BY id
 `
 
 func (q *Queries) UnfinishedMatches(ctx context.Context) ([]int64, error) {

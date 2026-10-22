@@ -82,11 +82,18 @@ INSERT INTO mm_match_players (match_id, user_id, team, party_id, rating_mu, rati
 SELECT * FROM mm_matches WHERE id = $1;
 
 -- name: LockMatch :one
--- The match while it is forming or cancelling, unless another transaction is advancing it.
-SELECT * FROM mm_matches WHERE id = $1 AND status IN ('forming', 'cancelling') FOR UPDATE SKIP LOCKED;
+-- The match while it has a step to take, unless another transaction is advancing it.
+SELECT * FROM mm_matches WHERE id = $1 AND status IN ('forming', 'finishing', 'cancelling') FOR UPDATE SKIP LOCKED;
+
+-- name: LockMatchWait :one
+-- The match in any status, waiting for a transaction advancing it.
+SELECT * FROM mm_matches WHERE id = $1 FOR UPDATE;
 
 -- name: UnfinishedMatches :many
-SELECT id FROM mm_matches WHERE status IN ('forming', 'cancelling') ORDER BY id;
+SELECT id FROM mm_matches WHERE status IN ('forming', 'finishing', 'cancelling') ORDER BY id;
+
+-- name: TimedOutMatches :many
+SELECT id FROM mm_matches WHERE status = 'running' AND deadline < now() ORDER BY id;
 
 -- name: SetMatchCancelling :execrows
 UPDATE mm_matches SET status = 'cancelling', reason = $2, tickets = $3, updated_at = now()
@@ -94,6 +101,17 @@ WHERE id = $1 AND status = 'forming';
 
 -- name: SetMatchRunning :execrows
 UPDATE mm_matches SET status = 'running', tickets = '[]', updated_at = now() WHERE id = $1 AND status = 'forming';
+
+-- name: CancelMatch :execrows
+-- Nothing is re-queued.
+UPDATE mm_matches SET status = 'cancelling', reason = $2, tickets = '[]', updated_at = now()
+WHERE id = $1 AND status IN ('forming', 'running');
+
+-- name: SetMatchFinishing :execrows
+UPDATE mm_matches SET status = 'finishing', result = $2, updated_at = now() WHERE id = $1 AND status = 'running';
+
+-- name: SetMatchSettled :execrows
+UPDATE mm_matches SET status = 'settled', updated_at = now() WHERE id = $1 AND status = 'finishing';
 
 -- name: SetMatchCancelled :execrows
 UPDATE mm_matches SET status = 'cancelled', tickets = '[]', updated_at = now() WHERE id = $1 AND status = 'cancelling';
@@ -106,3 +124,17 @@ SELECT user_id, mu, sigma FROM mm_ratings WHERE key = sqlc.arg(key)::text AND us
 
 -- name: GetRating :one
 SELECT mu, sigma, matches FROM mm_ratings WHERE user_id = $1 AND key = $2;
+
+-- name: EnsureRatings :exec
+-- Gives the users without a rating under key the default one, so LockRatings locks every user.
+INSERT INTO mm_ratings (user_id, key, mu, sigma)
+SELECT u, sqlc.arg(key)::text, sqlc.arg(mu)::float8, sqlc.arg(sigma)::float8 FROM unnest(sqlc.arg(user_ids)::bigint[]) AS u
+ORDER BY u
+ON CONFLICT DO NOTHING;
+
+-- name: LockRatings :many
+SELECT user_id, mu, sigma FROM mm_ratings WHERE key = sqlc.arg(key)::text AND user_id = ANY(sqlc.arg(user_ids)::bigint[])
+ORDER BY user_id FOR UPDATE;
+
+-- name: SetRating :exec
+UPDATE mm_ratings SET mu = $3, sigma = $4, matches = matches + 1, updated_at = now() WHERE user_id = $1 AND key = $2;

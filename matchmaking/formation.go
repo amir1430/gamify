@@ -50,9 +50,19 @@ func (s *Service) MatchNow(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Reconcile finishes matches a crash or a ledger outage left forming or cancelling.
+// Reconcile cancels running matches past their deadline (reason "timeout") and finishes matches a
+// crash, a ledger outage or an admin action left forming, finishing or cancelling.
 func (s *Service) Reconcile(ctx context.Context) {
-	ids, err := s.q.UnfinishedMatches(ctx)
+	ids, err := s.q.TimedOutMatches(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "matchmaking: reconcile", "err", err)
+	}
+	for _, id := range ids {
+		if err := s.Cancel(ctx, id, "timeout"); err != nil && !errors.Is(err, ErrClosed) { // ErrClosed: finished meanwhile
+			slog.ErrorContext(ctx, "matchmaking: timeout", "match", id, "err", err)
+		}
+	}
+	ids, err = s.q.UnfinishedMatches(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "matchmaking: reconcile", "err", err)
 	}
@@ -264,8 +274,18 @@ func (s *Service) insertMatch(ctx context.Context, q *store.Queries, cfg QueueCo
 	return id, q.SetRequestsMatch(ctx, store.SetRequestsMatchParams{MatchID: id, TicketIds: f.Tickets})
 }
 
-// advance takes a forming match through its holds, OnMatch and running, or a cancelling one
-// through its refunds to cancelled. Every step is idempotent and the ledger steps run under the
+// queueOf is the registered queue called name.
+func (s *Service) queueOf(name string) (*Queue, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if q := s.queues[name]; q != nil {
+		return q, nil
+	}
+	return nil, fmt.Errorf("matchmaking: queue %q not registered", name)
+}
+
+// advance takes a forming match through its holds, OnMatch and running, a finishing one through
+// its settlement to settled, or a cancelling one through its refunds to cancelled. Every step is idempotent and the ledger steps run under the
 // match's row lock, so the tick and the reconciler (on any instance) may advance the same match at
 // once: a hold never lands after the refund. OnMatch runs outside the lock and may run again.
 func (s *Service) advance(ctx context.Context, id int64) error {
@@ -297,8 +317,11 @@ func (s *Service) step(ctx context.Context, id int64) (again bool, err error) {
 		return false, err
 	}
 	m := ms[0]
-	if m.Status == "cancelling" {
+	switch m.Status {
+	case "cancelling":
 		return false, s.cancelled(ctx, tx, m, row.Tickets)
+	case "finishing":
+		return false, s.settle(ctx, tx, m)
 	}
 
 	if m.Stake > 0 {
@@ -320,11 +343,9 @@ func (s *Service) step(ctx context.Context, id int64) (again bool, err error) {
 		return false, err
 	}
 
-	s.mu.Lock()
-	queue := s.queues[m.Queue]
-	s.mu.Unlock()
-	if queue == nil {
-		return false, fmt.Errorf("queue %q not registered", m.Queue)
+	queue, err := s.queueOf(m.Queue)
+	if err != nil {
+		return false, err
 	}
 	if f := queue.cfg.OnMatch; f != nil {
 		if err := f(ctx, m); err != nil {
@@ -388,11 +409,7 @@ func (s *Service) broke(ctx context.Context, tx pgx.Tx, m Match, raw []byte, sho
 // their original queue time. Without tickets to re-queue, the players get match.cancelled.
 func (s *Service) cancelled(ctx context.Context, tx pgx.Tx, m Match, raw []byte) error {
 	if m.Stake > 0 {
-		entries := make([]ledger.PotEntry, len(m.Players))
-		for i, p := range m.Players {
-			entries[i] = ledger.PotEntry{ID: p.EntryID, UserID: p.UserID, Amount: m.Stake}
-		}
-		if err := s.a.Ledger.VoidPot(ctx, Game, m.Currency, entries); err != nil {
+		if err := s.a.Ledger.VoidPot(ctx, Game, m.Currency, potEntries(m)); err != nil {
 			return err
 		}
 	}
