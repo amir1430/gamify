@@ -63,7 +63,7 @@ const (
 // Game is an ID space for one table of operation IDs: it namespaces the transfer ID, so row IDs
 // from different tables never collide (a module with two such tables registers two). Each game picks
 // its own constant, unique in the deployment, in 1..MaxGame; never reuse or change one. The
-// platform's games use 1..FirstBrandGame-1, a brand's own games FirstBrandGame..MaxGame. Register it
+// platform's games use 1..FirstBrandGame-1 (1: matchmaking), a brand's own games FirstBrandGame..MaxGame. Register it
 // with RegisterGame so a duplicate fails at startup.
 type Game uint64
 
@@ -109,6 +109,7 @@ const (
 	nsAdjust   uint64 = 6
 	nsSpend    uint64 = 7 // keyed by game: ns<<32 | game<<8 | leg
 	nsTransfer uint64 = 8 // keyed by game, as nsSpend
+	nsPrize    uint64 = 9 // keyed by game, as nsSpend
 )
 
 // System accounts, one of each per currency: ID (0, ledger<<8 | kind).
@@ -539,6 +540,21 @@ func (l *Ledger) Reward(ctx context.Context, c Currency, claimID, userID, amount
 		return err
 	}
 	return l.createTransfers(ctx, []Transfer{{ID: ID{nsReward << 32, uint64(claimID)},
+		Debit: system(cur, kindRewards), Credit: userAccountID(cur, userID), Amount: uint64(amount),
+		Ledger: cur.Ledger, Code: codeReward}})
+}
+
+// RewardPrize pays a prize in c from its rewards account, keyed by game and claim ID (a tournament's
+// prize row): a retry can't pay twice, and the ID never collides with Reward's.
+func (l *Ledger) RewardPrize(ctx context.Context, g Game, c Currency, claimID, userID, amount int64) error {
+	if err := g.check(); err != nil {
+		return err
+	}
+	cur, err := l.currency(c)
+	if err != nil {
+		return err
+	}
+	return l.createTransfers(ctx, []Transfer{{ID: nsOpID(nsPrize, g, 1, claimID),
 		Debit: system(cur, kindRewards), Credit: userAccountID(cur, userID), Amount: uint64(amount),
 		Ledger: cur.Ledger, Code: codeReward}})
 }

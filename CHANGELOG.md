@@ -5,6 +5,12 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+### Added
+- `ledger`: `FeeOf(pot, bp)`, `SettlePotFee` and `SettlePoolFee` (the house's cut set per pot, 0..10_000
+  basis points; `SettlePot`/`SettlePool` are the `FeeBP` case, transfer IDs unchanged), and
+  `RewardPrize(ctx, game, currency, claimID, userID, amount)`, a prize from the rewards account in
+  its own transfer-ID namespace.
+
 ## [1.0.0] - 2026-10-22
 
 First public version, extracted from the casino's core and made game-neutral: the platform ships

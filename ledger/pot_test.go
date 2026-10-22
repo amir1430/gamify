@@ -21,3 +21,16 @@ func TestMaxPotWinners(t *testing.T) {
 		t.Fatalf("MaxPotWinners = %d", MaxPotWinners)
 	}
 }
+
+func TestFeeOf(t *testing.T) {
+	for _, c := range []struct{ pot, bp, want int64 }{{1000, 0, 0}, {1000, 250, 25}, {1001, 250, 26}} {
+		if got := FeeOf(c.pot, c.bp); got != c.want {
+			t.Errorf("FeeOf(%d, %d) = %d, want %d", c.pot, c.bp, got, c.want)
+		}
+	}
+	for p := int64(1); p <= 10_000; p++ {
+		if FeeOf(p, FeeBP) != Fee(p) {
+			t.Fatalf("FeeOf(%d, FeeBP) != Fee", p)
+		}
+	}
+}

@@ -31,6 +31,7 @@ const (
 	predict ledger.Game = 6
 	shop    ledger.Game = 7
 	gift    ledger.Game = 8
+	prize   ledger.Game = 9
 )
 
 // Run runs the whole suite on drivers from newDriver.
@@ -377,6 +378,23 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 		want(t, "usd end", f.bal(u, "usd"), 1050)
 	})
 
+	t.Run("prize", func(t *testing.T) {
+		u := f.user()
+		paid0, err := f.l.RewardsPaid(ctx, "tickets")
+		must(t, err)
+		claim := int64(rid())
+		for range 2 {
+			must(t, f.l.RewardPrize(ctx, prize, "tickets", claim, u, 250))
+		}
+		want(t, "prized", f.bal(u, "tickets"), 1250)
+		// The same ID through Reward is another transfer: the namespaces don't collide.
+		must(t, f.l.Reward(ctx, "tickets", claim, u, 250))
+		want(t, "both paid", f.bal(u, "tickets"), 1500)
+		paid, err := f.l.RewardsPaid(ctx, "tickets")
+		must(t, err)
+		want(t, "rewards paid", paid-paid0, 500)
+	})
+
 	t.Run("adjust", func(t *testing.T) {
 		u := f.user()
 		sb0, err := f.l.SystemBalances(ctx, "usd")
@@ -525,6 +543,58 @@ func potSuite(t *testing.T, d ledger.Driver) {
 			want(t, "A", usd(a), 500)
 			want(t, "B", usd(b), 1450)
 		}
+	})
+
+	t.Run("fee per pot", func(t *testing.T) {
+		a, b := f.user(), f.user()
+		ea, eb := entry(a, 500), entry(b, 500)
+		must(t, f.l.HoldPot(ctx, duel, "usd", ea))
+		must(t, f.l.HoldPot(ctx, duel, "usd", eb))
+		p := pot()
+		for range 2 {
+			fee, err := f.l.SettlePotFee(ctx, duel, "usd", p, 0, []ledger.PotEntry{ea, eb}, []ledger.PotWin{{UserID: b, Amount: 1000}})
+			must(t, err)
+			want(t, "fee", fee, 0)
+			want(t, "A", usd(a), 500)
+			want(t, "B", usd(b), 1500)
+		}
+	})
+
+	t.Run("fee per pot refuses bad bp", func(t *testing.T) {
+		a, b := f.user(), f.user()
+		ea, eb := entry(a, 500), entry(b, 500)
+		must(t, f.l.HoldPot(ctx, duel, "usd", ea))
+		must(t, f.l.HoldPot(ctx, duel, "usd", eb))
+		for _, bp := range []int64{-1, 10_001} {
+			if _, err := f.l.SettlePotFee(ctx, duel, "usd", pot(), bp, []ledger.PotEntry{ea, eb}, []ledger.PotWin{{UserID: b, Amount: 1000}}); err == nil {
+				t.Fatalf("bp %d accepted", bp)
+			}
+			es := []ledger.PotShare{{EntryID: eb.ID, UserID: b, Amount: 1000}}
+			if _, err := f.l.SettlePoolFee(ctx, duel, "usd", pot(), bp, []ledger.PotEntry{ea, eb}, es); err == nil {
+				t.Fatalf("pool bp %d accepted", bp)
+			}
+		}
+		want(t, "A", usd(a), 500)
+		want(t, "B", usd(b), 500)
+	})
+
+	t.Run("pool fee", func(t *testing.T) {
+		var es []ledger.PotEntry
+		for range 3 {
+			e := entry(f.user(), 100)
+			must(t, f.l.HoldPot(ctx, predict, "usd", e))
+			es = append(es, e)
+		}
+		share := func(n int64) []ledger.PotShare {
+			return []ledger.PotShare{{EntryID: es[0].ID, UserID: es[0].UserID, Amount: n}}
+		}
+		if _, err := f.l.SettlePoolFee(ctx, predict, "usd", pot(), 1000, es, share(271)); err == nil {
+			t.Fatal("271 accepted")
+		}
+		fee, err := f.l.SettlePoolFee(ctx, predict, "usd", pot(), 1000, es, share(270))
+		must(t, err)
+		want(t, "fee", fee, 30)
+		want(t, "winner", usd(es[0].UserID), 900+270)
 	})
 
 	t.Run("lottery", func(t *testing.T) {

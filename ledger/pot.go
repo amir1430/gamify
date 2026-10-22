@@ -13,7 +13,21 @@ import (
 const FeeBP = 500
 
 // Fee is the house's cut of a pot, rounded up so it is never below FeeBP.
-func Fee(pot int64) int64 { return (pot*FeeBP + 9999) / 10000 }
+func Fee(pot int64) int64 { return FeeOf(pot, FeeBP) }
+
+// FeeOf is the house's cut of a pot at bp basis points, rounded up. A product that sets its own cut
+// per pot (SettlePotFee, SettlePoolFee) passes bp; 0 is no fee.
+func FeeOf(pot, bp int64) int64 { return (pot*bp + 9999) / 10000 }
+
+// ErrBadFee: a fee outside 0..10_000 basis points.
+var ErrBadFee = errors.New("ledger: fee basis points outside 0..10000")
+
+func checkFeeBP(bp int64) error {
+	if bp < 0 || bp > 10_000 {
+		return fmt.Errorf("%w: %d", ErrBadFee, bp)
+	}
+	return nil
+}
 
 // Pot legs. Entry legs use the entry ID, pot legs the pot ID. Leg 8+i is the prize of winner i
 // (i > 0 only for lottery prizes).
@@ -83,7 +97,16 @@ func (l *Ledger) HoldPot(ctx context.Context, g Game, c Currency, e PotEntry) er
 // SettlePot posts every entry, pays the fee to the house and the winners from the pot, in one
 // linked batch (nothing is sent if the winners don't add up to the pot less Fee). Safe to repeat.
 func (l *Ledger) SettlePot(ctx context.Context, g Game, c Currency, potID int64, entries []PotEntry, winners []PotWin) (int64, error) {
+	return l.SettlePotFee(ctx, g, c, potID, FeeBP, entries, winners)
+}
+
+// SettlePotFee is SettlePot with the house's cut set per pot: feeBP basis points (0..10_000), rounded
+// up as FeeOf. Transfer IDs don't depend on feeBP.
+func (l *Ledger) SettlePotFee(ctx context.Context, g Game, c Currency, potID, feeBP int64, entries []PotEntry, winners []PotWin) (int64, error) {
 	if err := g.check(); err != nil {
+		return 0, err
+	}
+	if err := checkFeeBP(feeBP); err != nil {
 		return 0, err
 	}
 	if len(winners) > MaxPotWinners {
@@ -96,7 +119,7 @@ func (l *Ledger) SettlePot(ctx context.Context, g Game, c Currency, potID int64,
 	for _, w := range winners {
 		won += w.Amount
 	}
-	fee := Fee(pot)
+	fee := FeeOf(pot, feeBP)
 	if len(winners) == 0 || won != pot-fee {
 		return 0, fmt.Errorf("ledger: pot %d: winners get %d, want %d", potID, won, pot-fee)
 	}
@@ -165,7 +188,15 @@ var poolChunk = 8000
 // SettlePool is SettlePot for big pools (Predict): same checks, but sent in unlinked chunks, each
 // transfer keyed by entry so a crash between chunks is finished by repeating the call.
 func (l *Ledger) SettlePool(ctx context.Context, g Game, c Currency, potID int64, entries []PotEntry, shares []PotShare) (int64, error) {
+	return l.SettlePoolFee(ctx, g, c, potID, FeeBP, entries, shares)
+}
+
+// SettlePoolFee is SettlePool with the house's cut set per pot, as SettlePotFee.
+func (l *Ledger) SettlePoolFee(ctx context.Context, g Game, c Currency, potID, feeBP int64, entries []PotEntry, shares []PotShare) (int64, error) {
 	if err := g.check(); err != nil {
+		return 0, err
+	}
+	if err := checkFeeBP(feeBP); err != nil {
 		return 0, err
 	}
 	var pot, won int64
@@ -175,7 +206,7 @@ func (l *Ledger) SettlePool(ctx context.Context, g Game, c Currency, potID int64
 	for _, s := range shares {
 		won += s.Amount
 	}
-	fee := Fee(pot)
+	fee := FeeOf(pot, feeBP)
 	if len(shares) == 0 || won != pot-fee {
 		return 0, fmt.Errorf("ledger: pot %d: winners get %d, want %d", potID, won, pot-fee)
 	}
