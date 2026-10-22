@@ -1,8 +1,9 @@
 # gamify
 
-A white-label game platform for Telegram Mini Apps, extracted from the casino's core. A brand picks
-its drivers, configures its currencies and registers games. The platform does login, money,
-provable fairness, game limits, realtime and ops.
+A white-label game platform for Telegram Mini Apps, for any kind of game: casino, battle-and-build,
+endless runners. A brand picks its drivers, configures its currencies and registers its games. The
+platform does login, money, provable fairness (opt-in randomness for games of chance), game limits,
+realtime and ops. It holds no game logic: each game brings its own rules.
 
 ```
 module github.com/amir1430/gamify
@@ -13,7 +14,7 @@ module github.com/amir1430/gamify
 | Package | What |
 |---|---|
 | `app/` | Wiring: migrations, ledger init, login (`POST /auth/{provider}` → realtime token, `auth.link`), `/healthz` `/readyz`, core RPCs (`wallet.*`, `games.config`), reconcile loop, `Run` |
-| `ledger/` | All money logic (instant bets, held bets, extra holds, PvP pots and pools, deposits, rewards, swaps, play-only welcome grants), written once on `ledger.Driver` |
+| `ledger/` | All money logic (instant settles, holds, extra holds, PvP pots and pools, spends, user-to-user transfers, deposits, rewards, swaps, play-only welcome grants), written once on `ledger.Driver` |
 | `ledger/tigerbeetle/` | Driver: TigerBeetle 0.16.46 (client version must equal the server's) |
 | `ledger/postgres/` | Driver: double-entry Postgres with TigerBeetle's semantics, for brands without TigerBeetle |
 | `ledger/ledgertest/` | Conformance suite every ledger driver must pass |
@@ -27,7 +28,6 @@ module github.com/amir1430/gamify
 | `gameconfig/` | Admin-set limits per game × currency × variant (code defaults are hard caps) |
 | `metrics/` | Prometheus metrics and request logs |
 | `db/` | Platform migrations + `Migrate` (each module migrates with its own goose table) |
-| `games/dice/` | Sample game: shows the plug-in contract (`Register`); `apptest_test.go` shows how to test one |
 | `apptest/` | A real `App` for tests: fresh Postgres database per test, Postgres ledger, in-memory transport; `User`, `Fund`, `Call`, `Pushes`, `ReconcileNow` |
 | `config/` | `gamify.yaml`: infra settings (Postgres, ledger driver, Centrifugo, addresses), secrets as `${VAR}`, Centrifugo's `config.json` generated from it. No cgo |
 | `config/drivers/` | Builds the pool, ledger driver and Centrifugo transport a `config.Config` describes |
@@ -71,7 +71,7 @@ and a `Register(ctx, *app.App, …)` that migrates, builds its service, register
 `*fairness.Service` that `fairness.Register` returns and, if it's multi-step, adds a seed rotation
 guard (`fair.Guard`); its sqlc schema lists `fairness/migrations` too. It claims a `ledger.Game`
 ID with `a.Ledger.RegisterGame` (platform games below `ledger.FirstBrandGame`, a brand's own
-`FirstBrandGame..MaxGame`); the ID never changes. See `games/dice` and, for brands,
+`FirstBrandGame..MaxGame`), one per table of operation IDs; the ID never changes. See
 [docs/writing-a-game.md](docs/writing-a-game.md).
 
 ## Versioning
@@ -84,14 +84,17 @@ with upgrade notes.
 
 ## Currencies
 
-Configured per brand: `ledger.CurrencyConfig{Code, Ledger, MinBet, Welcome, Decimals}`. The first
-currency is the default. `Welcome` > 0 grants that much once per user and keeps it play-only: sales and PvP
-entries can't take the balance below it. The sample binary reads
-`CURRENCIES=usd:1:1,tickets:2:10:1000` (code:ledger:minbet[:welcome[:decimals]]; `Decimals` is
-display only, ≤ 18).
+Configured per brand: `ledger.CurrencyConfig{Code, Ledger, MinAmount, Welcome, Decimals,
+Transferable}`. The first currency is the default. `Welcome` > 0 grants that much once per user and
+keeps it play-only: sales, PvP entries and transfers can't take the balance below it.
+`Transferable` lets users send the currency to each other (`Ledger.Transfer`); off by default, so
+real money doesn't move between players unless the brand opts in. The sample binary reads
+`CURRENCIES=usd:1:1,tickets:2:10:1000` (code:ledger:minamount[:welcome[:decimals[:transferable]]];
+`Decimals` is display only, ≤ 18; `transferable` is `t` or omitted).
 
 ID layout, the same on every driver: user account `(ledger, user)`, system account
-`(0, ledger<<8 | kind)`, bet transfer `(game<<8 | leg, bet)`, others `(ns<<32 …, row)`. The
+`(0, ledger<<8 | kind)`, game operation transfer `(game<<8 | leg, row)`, spends and transfers
+`(ns<<32 | game<<8 | leg, row)`, others `(ns<<32 …, row)`. The
 casino's TigerBeetle data uses fixed system account IDs and other namespaces, so moving the casino
 onto this platform needs a balance migration (or a compat layout); it can't reuse its cluster as-is.
 
@@ -101,7 +104,7 @@ onto this platform needs a balance migration (or a compat layout); it can't reus
 sqlc generate                    # after editing queries or migrations
 go test ./...
 # integration: real Postgres (+ TigerBeetle), skipped otherwise
-TEST_DATABASE_URL=postgres://... TEST_TB_ADDRESS=127.0.0.1:3000 go test ./ledger/... ./games/... -run Integration
+TEST_DATABASE_URL=postgres://... TEST_TB_ADDRESS=127.0.0.1:3000 go test ./ledger/... -run Integration
 e2e/run.sh                       # fresh Postgres + TigerBeetle + Centrifugo in Docker; plays over the real path, per ledger driver
 ```
 

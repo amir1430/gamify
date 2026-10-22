@@ -65,9 +65,13 @@ assert.equal((await c.rpc('nope.nope')).error.code, 1001, 'unknown method')
 const usd = (await c.rpc('wallet.faucet')).usd
 assert.equal(usd, 10000, 'faucet')
 
-// Fairness (opt-in, registered by the sample): rotating reveals the old server seed.
+// Fairness (opt-in, registered by the sample): the committed hash is shown first, and rotating
+// reveals the seed behind it.
+const info = await c.rpc('seed.info')
+assert.ok(info.server_seed_hash, `info: ${JSON.stringify(info)}`)
 const rev = await c.rpc('seed.rotate', { client_seed: 'smoke' })
-assert.ok(rev.server_seed && rev.client_seed === 'smoke', `rotate: ${JSON.stringify(rev)}`)
+assert.ok(rev.server_seed, `rotate: ${JSON.stringify(rev)}`)
+assert.equal(rev.server_seed_hash, info.server_seed_hash, 'rotate reveals the committed seed')
 
 // Linked logins: a brand JWT attached to this account logs into it; nobody else can take it.
 const sub = `smoke-${randomUUID()}`

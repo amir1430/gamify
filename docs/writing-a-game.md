@@ -1,26 +1,38 @@
 # Writing a game
 
-A game is a Go package in your brand's repo, next to your `main`. It owns its tables, registers its
-RPCs on the app, and moves money only through `*ledger.Ledger`. `games/dice` is the worked
-example; read it alongside this guide.
+gamify ships no games. It gives every game the same parts: users and logins, money
+(`*ledger.Ledger`), realtime RPCs, limits, the admin console and, for games of chance, provable
+fairness. Your game is a Go package in your brand's repo, next to your `main`. It owns its rules
+and its tables, registers its RPCs on the app, and moves money only through the ledger. A casino
+round, a paid tournament, a battle-and-build match, an endless runner: all of them follow the
+same steps.
 
 ```go
 // your main, after app.New
-fair, err := fairness.Register(ctx, a, sealer) // only if any game draws random outcomes
-_, err = crash.Register(ctx, a, fair)
+fair, err := fairness.Register(ctx, a, sealer) // only if a game draws random outcomes
+_, err = runner.Register(ctx, a)
+_, err = arena.Register(ctx, a, fair)
 ```
 
 ## 1. Pick a game ID, once, forever
 
 ```go
-const Game ledger.Game = ledger.FirstBrandGame + 1 // your games: FirstBrandGame..MaxGame
+const (
+	Game     ledger.Game = ledger.FirstBrandGame + 1 // matches (one table of operation IDs)
+	ShopGame ledger.Game = ledger.FirstBrandGame + 2 // the arena's shop (a second table)
+)
 ```
 
-The ID is part of every transfer ID your game creates. Changing it, or reusing another game's ID,
-makes retries and reconciliation move money twice. IDs below `ledger.FirstBrandGame` belong to the
-platform's games. Call `a.Ledger.RegisterGame(Game, "crash")` first thing in `Register`: a
-duplicate ID in the deployment then fails at startup. The ledger refuses IDs outside
-`1..ledger.MaxGame`.
+A `ledger.Game` is an ID space for **one table** of operation IDs: every transfer ID your game
+creates is built from it and the row ID. A module with two tables of money-moving rows (matches
+and shop purchases) registers two IDs, so their row IDs never collide. Pots are the one shared
+case: a pot's entries and the pot itself may come from two tables under one ID, because their legs
+never overlap.
+
+Changing an ID, or reusing another game's, makes retries and reconciliation move money twice. IDs
+below `ledger.FirstBrandGame` are the platform's; yours are `FirstBrandGame..MaxGame`. Call
+`a.Ledger.RegisterGame(Game, "arena")` first thing in `Register`: a duplicate ID in the deployment
+then fails at startup.
 
 ## 2. Own your tables
 
@@ -28,45 +40,75 @@ duplicate ID in the deployment then fails at startup. The ledger refuses IDs out
   After your first release, never edit a migration: add a new one.
 - Queries with sqlc. List the platform's schemas your tables reference in `sqlc.yaml` (`users` is
   in gamify's `db/migrations`, `seed_pairs` in `fairness/migrations`).
-- A bet row holds metadata only: amount, currency, outcome, payout, status. The ledger holds the
-  balances. Never store or check a balance yourself; the ledger refuses overdrafts
+- A row holds game metadata only: amount, currency, outcome, payout, status, score. The ledger
+  holds the balances. Never store or check a balance yourself; the ledger refuses overdrafts
   (`ledger.ErrInsufficientFunds`).
 - Money is `int64` minor units. Never a float. Multiplier math with `math/big`, rounded down.
 
-## 3. Every bet is idempotent
+## 3. Every money move is idempotent
 
-The client sends an idempotency key with every bet (`idem_key`, at most 64 bytes). Put
-`UNIQUE (user_id, idempotency_key)` on the bet table and insert with `ON CONFLICT DO NOTHING`; on
-conflict, return the bet that's already there. A retried request must return the same bet and
-never charge twice.
+The client sends an idempotency key with every RPC that moves money (`idem_key`, at most 64
+bytes). Put `UNIQUE (user_id, idempotency_key)` on the table and insert with
+`ON CONFLICT DO NOTHING`; on conflict, return the row that's already there. A retried request
+returns the same row and never charges twice.
 
 The user ID comes from the RPC handler's `userID` argument (the authenticated connection), never
 from the payload.
 
 ## 4. Record first, then move money
 
-Dice's order, which every game follows:
-
-1. **Create** the bet in one transaction: draw the outcome (`fair.Next(ctx, tx, userID, n)`, see
-   below), insert the bet row as `pending`. Commit.
-2. **Settle**: call the ledger with the bet's row ID. Transfer IDs are derived from
-   `(game, leg, bet ID)`, so calling it again for the same bet is a no-op.
-   - `ledger.ErrInsufficientFunds`: mark the bet `voided`.
+1. **Create** the row in one transaction, as `pending`. Commit.
+2. **Move money** with the row's ID as the operation ID. Transfer IDs come from `(game, leg, ID)`,
+   so calling again for the same row is a no-op.
+   - `ledger.ErrInsufficientFunds`: mark the row `voided`.
    - Any other error: leave it `pending` and return the error.
    - Success: mark it `settled`.
-3. **Reconcile**: register `a.Reconcile(s.Reconcile)`. Every 15 s it settles bets still `pending`
-   after a crash or a ledger outage, through the same settle function.
+3. **Reconcile**: register `a.Reconcile(s.Reconcile)`. Every 15 s it finishes rows still
+   `pending` after a crash or a ledger outage, through the same function.
 
-Multi-step games (Mines, Blackjack) hold the stake first (`HoldStake`, `HoldExtra`) and post or
-void it at the end (`SettleHeld`, `SettleHolds`). PvP games use pots (`HoldPot`, `SettlePot`,
-`VoidPot`, `SettlePool`).
+Pick the ledger call by how money moves in your game:
+
+| Money shape | Calls |
+|---|---|
+| Outcome known at once (a spin, a dice roll) | `SettleInstant(ctx, g, c, opID, user, amount, payout)` |
+| Multi-step (a round with decisions, a single-player run with an entry fee) | `Hold`, more with `HoldExtra`, then `SettleHeld` or `SettleHolds` |
+| Players against each other (a duel, a battle with an entry fee, a tournament) | `HoldPot` per entry, then `SettlePot` (at most `ledger.MaxPotWinners` winners), `SettlePool`, or `VoidPot` |
+| The brand sells something (a skin, an extra life) | `Spend(ctx, g, c, opID, user, amount)` |
+| A player gives to a player (a gift, a trade) | `Transfer(ctx, g, c, opID, from, to, amount)` |
+| The game gives something (coins picked up in a run, a daily reward) | `Reward(ctx, c, claimID, user, amount)` |
+
+An amount of 0 moves nothing (demo play).
+
+**A shop** (its own table, its own `Game` ID):
+
+```go
+// purchases row inserted as pending with its idempotency key, then:
+err := a.Ledger.Spend(ctx, ShopGame, "gems", p.ID, userID, item.Price)
+```
+
+The welcome grant may be spent: spending is play, not cash-out.
+
+**Gifts** only work in a currency the brand marked `Transferable` (in `cmd/gamify`, the sixth
+`CURRENCIES` field: `gems:3:1:0:0:t`); in any other currency `Transfer` returns
+`ledger.ErrNotTransferable`. Real money stays non-transferable unless the brand opts in. A
+transfer never dips into the sender's welcome grant.
+
+**An endless runner** that pays coins collected in a run:
+
+```go
+// a reward claim row (run ID, coins) inserted as pending at the end of the run, then:
+err := a.Ledger.Reward(ctx, "coins", claim.ID, userID, claim.Coins)
+```
+
+`Reward` isn't keyed by game: claim IDs share one namespace across the deployment, so take them
+from one claims table the brand owns, not from each game's own rows.
 
 ## 5. Games of chance: provable fairness
 
 - Take the `*fairness.Service` that `fairness.Register` returns. Draw with
-  `fair.Next(ctx, tx, userID, n)` **in the same transaction as the bet row**: the nonce increment
-  and the bet commit or roll back together.
-- Store the draw's `SeedPairID` and `Nonce` on the bet (`UNIQUE (seed_pair_id, nonce)`), so the
+  `fair.Next(ctx, tx, userID, n)` **in the same transaction as the row**: the nonce increment
+  and the row commit or roll back together.
+- Store the draw's `SeedPairID` and `Nonce` on the row (`UNIQUE (seed_pair_id, nonce)`), so the
   player can verify it after `seed.rotate`.
 - Turn the draw into an outcome only with `fairness` functions (`SlideWindow`, `Floats`). No
   `math/rand` anywhere in a game. Publish your outcome formula: players verify with it.
@@ -74,25 +116,33 @@ void it at the end (`SettleHeld`, `SettleHolds`). PvP games use pots (`HoldPot`,
 - A multi-step game registers `fair.Guard(...)` so the seed can't rotate (and reveal the outcome)
   while a game is live.
 
-## Bet history
+## 6. Activity history
 
-Register `a.Bets("crash", s.History)` so the admin can list your bets. The `app.BetSource` lists
-newest first (`beforeID` keyset, `userID` 0 = every user) and fills `app.Bet`: the row's amount,
-payout, status and a `Detail` JSON with your game's own fields. `Detail` never holds the server
-seed, nor outcomes the player hasn't seen yet (e.g. a live round's future steps). See
-`games/dice/service.go`.
+Register `a.History("arena", s.History)` so the admin can list what players did. The
+`app.HistorySource` lists newest first (`beforeID` keyset, `userID` 0 = every user) and fills
+`app.Activity`: the row's amount, payout, status and a `Detail` JSON with your game's own fields
+(score, level, outcome). A game without money leaves amount and payout 0. `Detail` never holds the
+server seed, nor outcomes the player hasn't seen yet (a live round's future steps).
+
+```go
+func (s *Service) History(ctx context.Context, userID, beforeID int64, limit int32) ([]app.Activity, error) {
+	rows, err := s.q.ListMatches(ctx, store.ListMatchesParams{UserID: userID, BeforeID: beforeID, Limit: limit})
+	// map each row: app.Activity{Game: "arena", ID: r.ID, UserID: r.UserID, Currency: …, Amount: …,
+	// Payout: …, Status: r.Status, Detail: json.RawMessage(`{"kills":3}`), At: r.CreatedAt}
+}
+```
 
 ## Admin view
 
 A game can add its own page to the admin console, described in Go; the console's UI draws it. Put
-it in a `<game>admin` subpackage (`crash/crashadmin`) that imports `admin` and your game, so the
+it in a `<game>admin` subpackage (`arena/arenaadmin`) that imports `admin` and your game, so the
 game itself never imports `admin` and brands without the console don't pull it in. Export from the
-game only what the view needs (Dice: `Service.ListBets` and `BetRow`). The brand calls
-`crashadmin.Register(adm, s)` after `admin.Register` and before `a.Run`.
+game only what the view needs. The brand calls `arenaadmin.Register(adm, s)` after
+`admin.Register` and before `a.Run`.
 
 ```go
 return adm.View(admin.View{
-	Name: "crash-rounds", Title: "Crash rounds", Group: "Crash", Perm: admin.PermView,
+	Name: "arena-matches", Title: "Arena matches", Group: "Arena", Perm: admin.PermView,
 	UserFilter: "user_id", // also a tab on the player page
 	Columns: []admin.Column{
 		{Key: "id", Type: admin.Int},
@@ -102,7 +152,7 @@ return adm.View(admin.View{
 	},
 	Filters: []admin.Filter{{Key: "user_id", Type: admin.UserID}},
 	List:    func(ctx context.Context, q admin.Query) (admin.Page, error) { … }, // keyset: q.Before, q.Limit
-	Actions: []admin.Action{{Name: "void", Title: "Void round", Perm: "crash.void", Reason: true,
+	Actions: []admin.Action{{Name: "void", Title: "Void match", Perm: "arena.void", Reason: true,
 		Run: func(ctx context.Context, tx pgx.Tx, c admin.Call) (before, after any, err error) { … }}},
 })
 ```
@@ -113,56 +163,55 @@ return adm.View(admin.View{
   same type; action inputs (`Fields`) use the same types, `Money`/`Decimal` as integers.
 - `View` checks the description and returns an error; register views at startup.
 - Actions never move money: the ledger isn't in `Run`'s transaction. Change your game's row (mark
-  the round void) and let your reconciler do the ledger part, as for a bet left by a crash. The
+  the match void) and let your reconciler do the ledger part, as for a row left by a crash. The
   console writes the audit row in the same transaction; an error or a panic rolls both back.
 - Permissions: a built-in (`admin.PermView`, …) or one of the brand's in
-  `admin.Config.Perms` (`"crash.void": {admin.RoleOperator}`); owners hold them all. Name yours
+  `admin.Config.Perms` (`"arena.void": {admin.RoleOperator}`); owners hold them all. Name yours
   `<game>.<verb>` so they can't clash with a built-in.
-- Worked example: `games/dice/diceadmin`.
 
-## 6. Limits and errors
+## 7. Limits and errors
 
-- Declare your limits with `a.Games.Game("crash", maxBet, maxPayout, variants)`; admins can lower
-  them. Check every new bet with `Stake` before creating it; reject a bet that could pay more than
-  the limit, never cap it silently.
+- Declare your limits with `a.Games.Game("arena", maxAmount, maxPayout, variants)`; admins can
+  lower them. Check every new amount with `Check` before creating the row; reject one that could
+  pay more than the limit, never cap it silently. A game that never charges money only uses the
+  admin's on/off switch (`Limits` returns `gameconfig.ErrUnavailable` when it's off).
 - Client errors are `*realtime.ClientError` with codes from 1100 up; reuse
   `gameconfig.ErrInvalid` (1100) for bad requests. Any other error reaches the client as a generic
   internal error.
 
-## 7. Test it through its RPCs
+## 8. Test it through its RPCs
 
 `apptest` runs a real App in a test: a fresh Postgres database per test (dropped afterwards), the
 Postgres ledger and an in-memory transport instead of Centrifugo. Set `TEST_DATABASE_URL` to any
 database on a Postgres server you can create databases on; tests skip without it.
 
 ```go
-func TestCrash(t *testing.T) {
+func TestArena(t *testing.T) {
 	a, ctx := apptest.New(t), context.Background()
-	fair, _ := fairness.Register(ctx, a.App, apptest.Sealer(t))
-	if _, err := crash.Register(ctx, a.App, fair); err != nil {
+	if _, err := arena.Register(ctx, a.App); err != nil {
 		t.Fatal(err)
 	}
 	alice := a.User("alice")
 	a.Fund(alice, "usd", 1_000)
-	res, cerr := apptest.Call[crash.BetResult](a, alice, "crash.bet", crash.BetRequest{…})
+	res, cerr := apptest.Call[arena.JoinResult](a, alice, "arena.join", arena.JoinRequest{…})
 	// a.Balance, a.Pushes(realtime.UserChannel(alice)), a.ReconcileNow()
 }
 ```
 
-Test at least: a bet without money (`ErrInsufficientFunds` path), a winning and a losing bet
-against `a.Balance`, a retry with the same idempotency key charging once, a bet left pending
-finished by `a.ReconcileNow()`, and (games of chance) the revealed seed reproducing the outcome.
-`games/dice/apptest_test.go` is the worked example.
+Test at least: a request without money (`ErrInsufficientFunds` path), a win and a loss against
+`a.Balance`, a retry with the same idempotency key charging once, a row left pending finished by
+`a.ReconcileNow()`, and (games of chance) the revealed seed reproducing the outcome.
 
 ## Checklist
 
-- [ ] Game ID in `FirstBrandGame..MaxGame`, registered with `RegisterGame`, never changed
+- [ ] One game ID per table of operation IDs, in `FirstBrandGame..MaxGame`, registered with
+      `RegisterGame`, never changed
 - [ ] Own migrations and goose table; sqlc for every query
-- [ ] `UNIQUE (user_id, idempotency_key)`; retries return the same bet
-- [ ] Bet row before money; settle by bet ID; reconciler registered
+- [ ] `UNIQUE (user_id, idempotency_key)`; retries return the same row
+- [ ] Row before money; money moved by row ID; reconciler registered
 - [ ] No balance stored or checked in the game
 - [ ] Integer minor units; `math/big` for multipliers, rounded down
-- [ ] Chance games: `fair.Next` in the bet's transaction, seed pair and nonce on the bet, no
+- [ ] Chance games: `fair.Next` in the row's transaction, seed pair and nonce on the row, no
       `math/rand`, guard for multi-step games
 - [ ] User ID from the connection, never the payload
 - [ ] Tested through its RPCs with `apptest`
