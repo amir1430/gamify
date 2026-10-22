@@ -5,6 +5,8 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.0.0] - 2026-10-22
+
 First public version, extracted from the casino's core and made game-neutral: the platform ships
 no game and holds no game logic; every game, casino or not, brings its own rules.
 
