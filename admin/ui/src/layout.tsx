@@ -14,9 +14,9 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { setAccent, setTheme, useTheme, type Theme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
-import { useMe, usePerm } from './ui'
+import { useMe, usePaged, usePerm } from './ui'
 
-type Item = { to: string; label: string; icon: typeof Users; perm: string }
+type Item = { to: string; label: string; icon: typeof Users; perm: string; count?: number }
 
 // Brand views join Operations by their Group (Task 15).
 const GROUPS: { label: string; items: Item[] }[] = [
@@ -49,7 +49,7 @@ export function Mark({ logo }: { logo?: string | null }) {
   )
 }
 
-function NavItem({ to, label, icon: Icon, count }: Item & { count?: number }) {
+function NavItem({ to, label, icon: Icon, count }: Item) {
   return (
     <NavLink
       to={to}
@@ -133,10 +133,17 @@ function Account({ compact }: { compact?: boolean }) {
   )
 }
 
-// The nav items this admin may open.
+// The nav items this admin may open, with a count of adjustments waiting for an approver.
 function useGroups() {
   const can = { view: usePerm('view'), admins: usePerm('admins') } as Record<string, boolean>
-  return GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can[i.perm]) })).filter((g) => g.items.length)
+  const approver = usePerm('approve')
+  const me = useMe()
+  const waiting = usePaged<{ requested_by: number }>('adjustments', { status: 'pending_approval' }, { enabled: approver, quiet: true })
+  const count = waiting.rows?.filter((a) => a.requested_by !== me?.user.id).length
+  return GROUPS.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => can[i.perm]).map((i) => (i.to === '/adjustments' && approver ? { ...i, count } : i)),
+  })).filter((g) => g.items.length)
 }
 
 // Sidebar on desktop; a top bar with the same links on narrow screens.

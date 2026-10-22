@@ -165,8 +165,9 @@ type meBrand struct {
 }
 
 type meCurrency struct {
-	Code     ledger.Currency `json:"code"`
-	Decimals uint8           `json:"decimals"`
+	Code         ledger.Currency `json:"code"`
+	Decimals     uint8           `json:"decimals"`
+	ApproveAbove *int64          `json:"approve_above"` // Config.ApproveAbove; null: adjustments never wait
 }
 
 // me is the UI's start: who's logged in, what they may do, how the console looks, and the
@@ -180,7 +181,11 @@ func (adm *Admin) me(w http.ResponseWriter, r *http.Request, s *session) error {
 	}
 	cur := []meCurrency{}
 	for _, c := range adm.a.Ledger.Currencies() {
-		cur = append(cur, meCurrency{c, adm.a.Ledger.Decimals(c)})
+		m := meCurrency{Code: c, Decimals: adm.a.Ledger.Decimals(c)}
+		if n, ok := adm.cfg.ApproveAbove[c]; ok {
+			m.ApproveAbove = &n
+		}
+		cur = append(cur, m)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user":        meUser{s.AdminID, s.Email, s.Role},

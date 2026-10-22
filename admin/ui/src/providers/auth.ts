@@ -3,7 +3,7 @@ import { api, ApiError } from '@/lib/api'
 
 // /api/me: who's logged in, what they may do, how the console looks, the currencies.
 export type Role = 'owner' | 'operator' | 'support' | 'viewer'
-export type Currency = { code: string; decimals: number }
+export type Currency = { code: string; decimals: number; approve_above: number | null } // null: adjustments never wait
 export type Me = {
   user: { id: number; email: string; role: Role }
   permissions: string[]

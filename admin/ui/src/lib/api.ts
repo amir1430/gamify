@@ -16,7 +16,10 @@ export class ApiError extends Error {
   }
 }
 
-export type ApiInit = Omit<RequestInit, 'body'> & { body?: unknown } // body: sent as JSON
+export type ApiInit = Omit<RequestInit, 'body'> & { body?: unknown } // body: sent as JSON, bigints as integers
+
+// JSON with bigints written as plain integers (an int64 amount above 2^53 stays exact).
+export const toJSON = (v: unknown) => JSON.stringify(v, (_, x) => (typeof x === 'bigint' ? `\u0000${x}\u0000` : x)).replace(/"\\u0000(-?\d+)\\u0000"/g, '$1')
 
 export async function api<T = unknown>(path: string, init: ApiInit = {}): Promise<T> {
   const { body, headers, ...rest } = init
@@ -33,7 +36,7 @@ export async function api<T = unknown>(path: string, init: ApiInit = {}): Promis
         ...(method !== 'GET' && method !== 'HEAD' && { 'X-Admin': '1' }),
         ...(headers as Record<string, string>),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : toJSON(body),
     })
   } catch (e) {
     if ((e as Error).name === 'AbortError') throw e

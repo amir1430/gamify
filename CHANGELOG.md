@@ -57,7 +57,16 @@ First public version, extracted from the casino's core.
   brands need no Node): sign-in with TOTP and first-login enrolment (QR), the shell (grouped
   sidebar, account menu), light, dark and system themes, `Brand.Accent` as its accent. Every
   non-`/api` path serves the app (client-side routes); unknown `/api` paths answer a JSON 404
-  `not_found`. `Config.UI` replaces it whole and gets the same routing. Pages come next.
+  `not_found`. `Config.UI` replaces it whole and gets the same routing. Pages: dashboard
+  (players online, system balances per currency), players and the player page (profile, linked
+  identities with unlink, wallet and adjustments, bets per game, seed pairs, disconnect), games
+  (on/off, per-currency limits with caps and overrides, edit/clear), adjustments (request with a
+  confirmation step, approve/reject; the sidebar counts those waiting), audit log (filters,
+  before/after view), console users (create, role, disable, reset TOTP or password), account
+  (password change). Amounts are typed as decimal text and parsed exactly; anything else
+  (`1.005` with 2 decimals, `1e3`, `-0`, spaces, grouping) is refused, never rounded.
+- `admin`: `/api/me` currencies carry `approve_above` (`Config.ApproveAbove`, `null` = never
+  waits), so the console says before sending whether an adjustment needs approval.
 - `admin`: `ErrEmailTaken`, returned (wrapped) by `CreateUser` for an email in use; it was a
   plain error before, so match it with `errors.Is`.
 - `ledger`: `Ledger.Decimals(c)` (a currency's display decimals).

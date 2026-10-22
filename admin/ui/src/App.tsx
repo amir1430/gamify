@@ -9,25 +9,25 @@ import { Login } from './pages/login'
 import { accessControlProvider } from './providers/access'
 import { authProvider } from './providers/auth'
 import { dataProvider } from './providers/data'
-import { Note, PageHeader, notificationProvider, useMe } from './ui'
+import { Account } from './pages/account'
+import { Adjustments } from './pages/adjustments'
+import { Admins } from './pages/admins'
+import { Audit } from './pages/audit'
+import { Dashboard } from './pages/dashboard'
+import { Games } from './pages/games'
+import { Player } from './pages/player'
+import { Players } from './pages/players'
+import { notificationProvider, useMe } from './ui'
 
 // meta.perm: what the resource's pages need (the access provider checks it).
 const RESOURCES = [
   { name: 'dashboard', list: '/dashboard', meta: { label: 'Dashboard', perm: 'view' } },
-  { name: 'games', list: '/games', show: '/games/:id', meta: { label: 'Games', perm: 'view' } },
+  { name: 'games', list: '/games', meta: { label: 'Games', perm: 'view' } },
   { name: 'users', list: '/players', show: '/players/:id', meta: { label: 'Players', perm: 'view' } },
   { name: 'adjustments', list: '/adjustments', meta: { label: 'Adjustments', perm: 'view' } },
   { name: 'audit', list: '/audit', meta: { label: 'Audit log', perm: 'view' } },
   { name: 'admins', list: '/admins', meta: { label: 'Console users', perm: 'admins' } },
 ]
-
-// Pages still to come (Tasks 14–15): the shell's links land here meanwhile.
-const Placeholder = ({ title }: { title: string }) => (
-  <>
-    <PageHeader title={title} />
-    <Note>Not built yet.</Note>
-  </>
-)
 
 function NotFound() {
   return (
@@ -67,14 +67,14 @@ export function App() {
             }
           >
             <Route index element={<NavigateToResource resource="dashboard" />} />
-            <Route path="/dashboard" element={<Placeholder title="Dashboard" />} />
-            <Route path="/games" element={<Placeholder title="Games" />} />
-            <Route path="/players" element={<Placeholder title="Players" />} />
-            <Route path="/players/:id" element={<Placeholder title="Player" />} />
-            <Route path="/adjustments" element={<Placeholder title="Adjustments" />} />
-            <Route path="/audit" element={<Placeholder title="Audit log" />} />
-            <Route path="/admins" element={<Placeholder title="Console users" />} />
-            <Route path="/account" element={<Placeholder title="Account" />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/games" element={<Games />} />
+            <Route path="/players" element={<Players />} />
+            <Route path="/players/:id" element={<Player />} />
+            <Route path="/adjustments" element={<Adjustments />} />
+            <Route path="/audit" element={<Audit />} />
+            <Route path="/admins" element={<Admins />} />
+            <Route path="/account" element={<Account />} />
             <Route path="*" element={<NotFound />} />
           </Route>
           <Route

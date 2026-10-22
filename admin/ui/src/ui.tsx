@@ -1,6 +1,6 @@
-import { useGetIdentity, usePermissions, useUpdate, type BaseKey, type NotificationProvider } from '@refinedev/core'
+import { useGetIdentity, useInfiniteList, useInvalidate, usePermissions, useUpdate, type BaseKey, type NotificationProvider } from '@refinedev/core'
 import { Check, ChevronRight, Copy, Inbox } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { api } from '@/lib/api'
+import { format } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import type { Currency, Me } from './providers/auth'
 
@@ -51,6 +53,31 @@ export function useChange(resource: string, id: BaseKey, onDone: () => void) {
     busy: mutation.isPending,
     run: (values: object, meta?: { action?: string; method?: string }) => mutate({ resource, id, values, meta }, { onSuccess: onDone }),
   }
+}
+
+// A write outside Refine's CRUD (approve, disconnect, a limit): busy while it runs, a toast with the
+// API's message on failure; after success every loaded list and record is refetched.
+// ok false: it failed (already toasted).
+export function useAction() {
+  const invalidate = useInvalidate()
+  const [busy, setBusy] = useState(false)
+  const run = useCallback(
+    async <T = unknown,>(path: string, init: Parameters<typeof api>[1], failed = 'Not saved'): Promise<{ ok: boolean; data?: T }> => {
+      setBusy(true)
+      try {
+        const data = await api<T>(path, init)
+        await invalidate({ invalidates: ['all'] })
+        return { ok: true, data }
+      } catch (e) {
+        toast.error(failed, { description: (e as Error).message })
+        return { ok: false }
+      } finally {
+        setBusy(false)
+      }
+    },
+    [invalidate],
+  )
+  return { busy, run }
 }
 
 // Refine's notifications as sonner toasts.
@@ -142,6 +169,34 @@ export function Toolbar({ children }: { children: ReactNode }) {
   return <div className="mb-4 flex flex-wrap items-center gap-2">{children}</div>
 }
 
+// ── lists ───────────────────────────────────────────────────────────────────────────────────────
+
+export const PAGE = 50
+
+// A keyset list: pages of PAGE appended by "Load more" (the API's next cursor). filters are plain
+// query parameters ('' = unset); changing them starts over.
+export function usePaged<T>(resource: string, filters: Record<string, string> = {}, opts: { enabled?: boolean; quiet?: boolean } = {}) {
+  const { result, query } = useInfiniteList<T & { id: number }>({
+    resource,
+    filters: Object.entries(filters).map(([field, value]) => ({ field, operator: 'eq' as const, value })),
+    pagination: { mode: 'server', pageSize: PAGE },
+    queryOptions: { enabled: opts.enabled ?? true, retry: opts.quiet ? false : undefined },
+    errorNotification: opts.quiet ? false : undefined,
+  })
+  const rows = result.data?.pages.flatMap((p) => p.data) as T[] | undefined
+  const more = result.hasNextPage ? (
+    <div className="flex justify-center pt-3">
+      <Button variant="outline" size="sm" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
+        {query.isFetchingNextPage ? 'Loading…' : 'Load more'}
+      </Button>
+    </div>
+  ) : null
+  return { rows, loading: query.isLoading, error: query.error, more }
+}
+
+export const dateTime = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—')
+export const When = ({ at }: { at: string | null | undefined }) => <span className="whitespace-nowrap text-muted-foreground">{dateTime(at)}</span>
+
 // ── numbers ─────────────────────────────────────────────────────────────────────────────────────
 
 type Tone = 'ok' | 'danger' | 'warn' | 'brand' | 'neutral'
@@ -179,6 +234,21 @@ export function Facts({ items, cols = 3 }: { items: [label: string, value: React
     </dl>
   )
 }
+
+// Minor units in a currency's decimals (/api/me), with its code: money(1234, 'usd') → "12.34 USD".
+export function useMoney() {
+  const cur = useMe()?.currencies
+  const decimals = (code: string) => cur?.find((c) => c.code === code)?.decimals ?? 0
+  return {
+    decimals,
+    money: (amount: number | bigint, code: string, withCode = true) => format(amount, decimals(code)) + (withCode ? ` ${code.toUpperCase()}` : ''),
+  }
+}
+
+// A signed amount, green when it adds.
+export const Signed = ({ amount, children }: { amount: number; children: ReactNode }) => (
+  <span className={cn('num', amount > 0 && 'text-ok', amount < 0 && 'text-danger')}>{children}</span>
+)
 
 export const Faint = ({ children = '—' }: { children?: ReactNode }) => <span className="text-muted-foreground/60">{children}</span>
 export const Mono = ({ children }: { children: ReactNode }) => <span className="font-mono text-xs text-muted-foreground">{children}</span>

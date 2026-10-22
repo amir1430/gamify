@@ -24,6 +24,24 @@ func adjustEnv(t *testing.T, approveAbove map[ledger.Currency]int64) (*apptest.A
 	return newAdmin(t, func(c *Config) { c.ApproveAbove = approveAbove })
 }
 
+// /api/me tells the UI which adjustments will wait for approval.
+func TestAdjustApproveAboveInMe(t *testing.T) {
+	a, _, srv := adjustEnv(t, map[ledger.Currency]int64{"usd": 1000})
+	op := loginAs(t, a, srv, "op", RoleOperator)
+	st, body := call(t, op, srv, "GET", "/api/me", nil)
+	if st != 200 {
+		t.Fatalf("me: %d %v", st, body)
+	}
+	got := map[string]any{}
+	for _, c := range body["currencies"].([]any) {
+		m := c.(map[string]any)
+		got[m["code"].(string)] = m["approve_above"]
+	}
+	if got["usd"] != 1000.0 || got["tickets"] != nil {
+		t.Fatalf("approve_above %v, want usd 1000 and tickets null", got)
+	}
+}
+
 func TestAdjustCreditDebit(t *testing.T) {
 	a, _, srv := adjustEnv(t, nil)
 	op := loginAs(t, a, srv, "op", RoleOperator)
