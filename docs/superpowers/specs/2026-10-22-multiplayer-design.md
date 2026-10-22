@@ -2,6 +2,10 @@
 
 Oct 22, 2026
 
+> **Release split (owner, Oct 22, 2026):** this design is no longer one release. v1.1 shipped
+> parties and matchmaking (§1, §2). Leaderboards (§3) are v1.2, tournaments (§4) v1.3, leagues
+> (§5) v1.4, cross-feature docs v1.5. See `docs/superpowers/plans/2026-10-22-v1.1-index.md`.
+
 ## Intent
 
 gamify makes online game development easy for any kind of game (CLAUDE.md, "Breadth"). v1.0 gives

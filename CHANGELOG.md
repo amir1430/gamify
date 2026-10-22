@@ -5,6 +5,8 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.0] - 2026-10-22
+
 ### Added
 - `ledger`: `FeeOf(pot, bp)`, `SettlePotFee` and `SettlePoolFee` (the house's cut set per pot, 0..10_000
   basis points; `SettlePot`/`SettlePool` are the `FeeBP` case, transfer IDs unchanged), and
