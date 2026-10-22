@@ -40,6 +40,7 @@ func TestGameRange(t *testing.T) {
 			"HoldExtra":     func() error { return l.HoldExtra(ctx, g, "usd", 1, 1, 1, 10) },
 			"SettleHolds":   func() error { return l.SettleHolds(ctx, g, "usd", 1, 1, 10, nil, 0) },
 			"Spend":         func() error { return l.Spend(ctx, g, "usd", 1, 1, 10) },
+			"Transfer":      func() error { return l.Transfer(ctx, g, "usd", 1, 1, 2, 10) },
 			"HoldPot":       func() error { return l.HoldPot(ctx, g, "usd", PotEntry{ID: 1, UserID: 1, Amount: 10}) },
 			"SettlePot": func() error {
 				_, err := l.SettlePot(ctx, g, "usd", 1, []PotEntry{{ID: 1, UserID: 1, Amount: 10}}, nil)

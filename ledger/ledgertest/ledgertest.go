@@ -15,10 +15,11 @@ import (
 	"github.com/amir1430/gamify/ledger"
 )
 
-// Currencies are the suite's: usd (ledger 1) and tickets (ledger 2, 1,000 welcome tickets).
+// Currencies are the suite's: usd (ledger 1, not transferable) and tickets (ledger 2, 1,000
+// welcome tickets, transferable between users).
 var (
 	USD     = ledger.CurrencyConfig{Code: "usd", Ledger: 1, MinAmount: 1}
-	Tickets = ledger.CurrencyConfig{Code: "tickets", Ledger: 2, MinAmount: 10, Welcome: 1000}
+	Tickets = ledger.CurrencyConfig{Code: "tickets", Ledger: 2, MinAmount: 10, Welcome: 1000, Transferable: true}
 )
 
 const (
@@ -29,6 +30,7 @@ const (
 	lottery ledger.Game = 5
 	predict ledger.Game = 6
 	shop    ledger.Game = 7
+	gift    ledger.Game = 8
 )
 
 // Run runs the whole suite on drivers from newDriver.
@@ -442,6 +444,52 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 		if err := f.l.Spend(ctx, shop, "eur", int64(rid()), u, 1); err == nil {
 			t.Fatal("unknown currency accepted")
 		}
+	})
+
+	t.Run("transfer", func(t *testing.T) {
+		a, b := f.user(), f.user()
+		for _, amount := range []int64{10, 0} {
+			if err := f.l.Transfer(ctx, gift, "usd", int64(rid()), a, b, amount); !errors.Is(err, ledger.ErrNotTransferable) {
+				t.Fatalf("usd %d: %v", amount, err)
+			}
+		}
+		// a buys 1,500 tickets: 2,500 in all, 1,000 of them the play-only welcome grant.
+		must(t, f.l.Swap(ctx, int64(rid()), a, "usd", 1000, "tickets", 1500, 0, 0))
+		op := int64(rid())
+		for range 2 { // retry: sent once
+			must(t, f.l.Transfer(ctx, gift, "tickets", op, a, b, 1500))
+		}
+		want(t, "sender", f.bal(a, "tickets"), 1000)
+		want(t, "receiver", f.bal(b, "tickets"), 2500)
+		if err := f.l.Transfer(ctx, gift, "tickets", int64(rid()), a, b, 1); !errors.Is(err, ledger.ErrInsufficientFunds) {
+			t.Fatalf("into the welcome grant: %v", err)
+		}
+		if err := f.l.Transfer(ctx, gift, "tickets", int64(rid()), f.user(), b, 1); !errors.Is(err, ledger.ErrInsufficientFunds) {
+			t.Fatalf("welcome only: %v", err)
+		}
+		if err := f.l.Transfer(ctx, gift, "tickets", int64(rid()), b, b, 1); err == nil {
+			t.Fatal("transfer to self accepted")
+		}
+		if err := f.l.Transfer(ctx, gift, "tickets", int64(rid()), b, a, -1); err == nil {
+			t.Fatal("negative transfer accepted")
+		}
+		must(t, f.l.Transfer(ctx, gift, "tickets", int64(rid()), b, a, 0))
+		want(t, "sender after refusals", f.bal(a, "tickets"), 1000)
+		want(t, "receiver after refusals", f.bal(b, "tickets"), 2500)
+		if err := f.l.Transfer(ctx, gift, "eur", int64(rid()), a, b, 1); err == nil {
+			t.Fatal("unknown currency accepted")
+		}
+	})
+
+	t.Run("one operation ID, three moves", func(t *testing.T) {
+		u, v := f.user(), f.user()
+		op := int64(rid())
+		must(t, f.l.SettleInstant(ctx, gift, "usd", op, u, 100, 0))
+		must(t, f.l.Spend(ctx, gift, "usd", op, u, 100))
+		want(t, "usd", f.bal(u, "usd"), 800)
+		must(t, f.l.Swap(ctx, int64(rid()), v, "usd", 500, "tickets", 500, 0, 0))
+		must(t, f.l.Transfer(ctx, gift, "tickets", op, v, u, 100))
+		want(t, "tickets", f.bal(u, "tickets"), 1100)
 	})
 }
 

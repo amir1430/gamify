@@ -26,6 +26,9 @@ type CurrencyConfig struct {
 	// Decimals is display only: 2 = cents (1234 shows as 12.34); 0 = whole units (the default).
 	// Every amount stays in minor units.
 	Decimals uint8
+	// Transferable lets users send this currency to each other (Transfer). Off by default, so real
+	// money can't move between players unless the brand opts in (soft coins, gems).
+	Transferable bool
 }
 
 // Account codes.
@@ -54,6 +57,7 @@ const (
 	codeReward     uint16 = 16
 	codeAdjustment uint16 = 18
 	codeSpend      uint16 = 20
+	codeTransfer   uint16 = 21
 )
 
 // Game is an ID space for one table of operation IDs: it namespaces the transfer ID, so row IDs
@@ -97,13 +101,14 @@ const MaxExtraHolds = 3
 
 // Transfer ID namespaces (high 32 bits of ID.Hi) of everything that isn't a game operation.
 const (
-	nsDeposit uint64 = 1
-	nsWelcome uint64 = 2
-	nsSwap    uint64 = 3
-	nsReward  uint64 = 4
-	nsTopUp   uint64 = 5
-	nsAdjust  uint64 = 6
-	nsSpend   uint64 = 7 // keyed by game: ns<<32 | game<<8 | leg
+	nsDeposit  uint64 = 1
+	nsWelcome  uint64 = 2
+	nsSwap     uint64 = 3
+	nsReward   uint64 = 4
+	nsTopUp    uint64 = 5
+	nsAdjust   uint64 = 6
+	nsSpend    uint64 = 7 // keyed by game: ns<<32 | game<<8 | leg
+	nsTransfer uint64 = 8 // keyed by game, as nsSpend
 )
 
 // System accounts, one of each per currency: ID (0, ledger<<8 | kind).
@@ -126,6 +131,9 @@ var systemKinds = map[uint64]string{kindHouse: "house", kindPot: "pot", kindExch
 	kindAdjust: "adjust", kindSales: "sales"}
 
 var ErrInsufficientFunds = errors.New("ledger: insufficient funds")
+
+// ErrNotTransferable: a Transfer in a currency without Transferable.
+var ErrNotTransferable = errors.New("ledger: currency not transferable")
 
 // ErrAlreadyFailed: a retry of a transfer ID the driver refused before (for the balance, say). The
 // ID stays refused for good, even once the reason is gone; a new attempt needs a new ID.
@@ -572,6 +580,43 @@ func (l *Ledger) Spend(ctx context.Context, g Game, c Currency, opID, userID, am
 	}
 	return l.createTransfers(ctx, []Transfer{{ID: nsOpID(nsSpend, g, 1, opID), Debit: userAccountID(cur, userID),
 		Credit: system(cur, kindSales), Amount: uint64(amount), Ledger: cur.Ledger, Code: codeSpend}})
+}
+
+// Transfer sends amount of c from one user to another (a gift, a trade), only in a Transferable
+// currency (else ErrNotTransferable). The transfer ID comes from (g, opID), so a retry sends once.
+// It's a cash-out path (farm welcome grants on many accounts, send them to one), so the grant stays
+// play-only as in HoldPot: in a currency with a welcome grant, a linked pair from -> floor -> from
+// of Welcome follows, and the batch fails (ErrInsufficientFunds) if less than that would be left.
+// Amount 0 moves nothing; a negative amount or from == to is an error.
+func (l *Ledger) Transfer(ctx context.Context, g Game, c Currency, opID, from, to, amount int64) error {
+	if err := g.check(); err != nil {
+		return err
+	}
+	cur, err := l.currency(c)
+	switch {
+	case err != nil:
+		return err
+	case !cur.Transferable:
+		return fmt.Errorf("%w: %q", ErrNotTransferable, c)
+	case from == to:
+		return fmt.Errorf("ledger: transfer from user %d to itself", from)
+	case amount < 0:
+		return fmt.Errorf("ledger: negative transfer %d", amount)
+	case amount == 0:
+		return nil
+	}
+	sender := userAccountID(cur, from)
+	transfers := []Transfer{{ID: nsOpID(nsTransfer, g, 1, opID), Debit: sender, Credit: userAccountID(cur, to),
+		Amount: uint64(amount), Ledger: cur.Ledger, Code: codeTransfer}}
+	if cur.Welcome > 0 {
+		transfers = append(transfers,
+			Transfer{ID: nsOpID(nsTransfer, g, 2, opID), Debit: sender, Credit: system(cur, kindFloor),
+				Amount: uint64(cur.Welcome), Ledger: cur.Ledger, Code: codeFloor},
+			Transfer{ID: nsOpID(nsTransfer, g, 3, opID), Debit: system(cur, kindFloor), Credit: sender,
+				Amount: uint64(cur.Welcome), Ledger: cur.Ledger, Code: codeFloor})
+		link(transfers)
+	}
+	return l.createTransfers(ctx, transfers)
 }
 
 // Swap exchanges currencies for the user: `from` user -> exchange and exchange -> `to` user, linked,

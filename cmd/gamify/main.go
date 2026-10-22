@@ -175,15 +175,16 @@ func adminConfig(getenv func(string) string) (admin.Config, bool, error) {
 	return cfg, true, nil
 }
 
-// parseCurrencies reads "code:ledger:minamount[:welcome[:decimals]],…", the first being the default.
+// parseCurrencies reads "code:ledger:minamount[:welcome[:decimals[:transferable]]],…", the first being
+// the default; transferable is "t" or omitted.
 func parseCurrencies(s string) ([]ledger.CurrencyConfig, error) {
 	var out []ledger.CurrencyConfig
 	for _, part := range strings.Split(s, ",") {
 		f := strings.Split(strings.TrimSpace(part), ":")
-		if len(f) < 3 || len(f) > 5 {
-			return nil, fmt.Errorf("CURRENCIES: %q: want code:ledger:minamount[:welcome[:decimals]]", part)
+		if len(f) < 3 || len(f) > 6 {
+			return nil, fmt.Errorf("CURRENCIES: %q: want code:ledger:minamount[:welcome[:decimals[:transferable]]]", part)
 		}
-		f = append(f, "0", "0")
+		f = append(f, []string{"", "", "", "0", "0", ""}[len(f):]...)
 		lg, err1 := strconv.ParseUint(f[1], 10, 32)
 		minAmount, err2 := strconv.ParseInt(f[2], 10, 64)
 		welcome, err3 := strconv.ParseInt(f[3], 10, 64)
@@ -191,11 +192,14 @@ func parseCurrencies(s string) ([]ledger.CurrencyConfig, error) {
 		if err := errors.Join(err1, err2, err3, err4); err != nil {
 			return nil, fmt.Errorf("CURRENCIES: %q: %w", part, err)
 		}
+		if f[5] != "" && f[5] != "t" {
+			return nil, fmt.Errorf("CURRENCIES: %q: transferable is t or omitted", part)
+		}
 		if decimals > 18 {
 			return nil, fmt.Errorf("CURRENCIES: %q: decimals %d > 18", part, decimals)
 		}
 		out = append(out, ledger.CurrencyConfig{Code: ledger.Currency(f[0]), Ledger: uint32(lg), MinAmount: minAmount,
-			Welcome: welcome, Decimals: uint8(decimals)})
+			Welcome: welcome, Decimals: uint8(decimals), Transferable: f[5] == "t"})
 	}
 	return out, nil
 }
