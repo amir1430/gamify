@@ -142,6 +142,32 @@ func (r *Router) call(ctx context.Context, method, user string, data []byte, h H
 	return out, nil
 }
 
+// Broadcaster is a Transport that sends one message to many channels in one call, so they all get
+// it at once (a game's tick to every player in a match). Optional: see Broadcast.
+type Broadcaster interface {
+	// Broadcast sends data to every channel. A channel that fails doesn't stop the others; the
+	// error names the ones that failed.
+	Broadcast(ctx context.Context, channels []string, data []byte) error
+}
+
+// Broadcast sends data to every channel: in one call when t is a Broadcaster, else one Publish
+// per channel. A channel that fails doesn't stop the others; the error joins their errors.
+func Broadcast(ctx context.Context, t Transport, channels []string, data []byte) error {
+	if len(channels) == 0 {
+		return nil
+	}
+	if b, ok := t.(Broadcaster); ok {
+		return b.Broadcast(ctx, channels, data)
+	}
+	var errs []error
+	for _, ch := range channels {
+		if err := t.Publish(ctx, ch, data); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", ch, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // PublishJSON publishes v as JSON.
 func PublishJSON(ctx context.Context, t Transport, channel string, v any) error {
 	data, err := json.Marshal(v)

@@ -5,6 +5,13 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+### Added
+- `realtime`: `Broadcast(ctx, transport, channels, data)` sends one message to many channels (a
+  match's tick to every player): in one call when the transport implements the new optional
+  `Broadcaster` interface, else one `Publish` per channel. A failed channel doesn't stop the
+  others; the error names it. The Centrifugo driver implements `Broadcaster` (its `Broadcast` API).
+  No change for existing `Transport` implementations.
+
 ## [1.1.0] - 2026-10-22
 
 ### Added

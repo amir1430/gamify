@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/amir1430/gamify/realtime/centrifugo/apiproto"
 )
 
 func TestToken(t *testing.T) {
@@ -35,5 +37,17 @@ func TestToken(t *testing.T) {
 	}
 	if c.Sub != "42" || c.Exp != now.Add(time.Hour).Unix() || strings.Join(c.Channels, ",") != "user:42,online:all" || c.Info["name"] != "Ali" {
 		t.Fatalf("claims %+v", c)
+	}
+}
+
+func TestBroadcastErr(t *testing.T) {
+	ok := &apiproto.PublishResponse{}
+	bad := &apiproto.PublishResponse{Error: &apiproto.Error{Code: 102, Message: "unknown channel"}}
+	if err := broadcastErr([]string{"user:1", "user:2"}, []*apiproto.PublishResponse{ok, ok}); err != nil {
+		t.Fatal(err)
+	}
+	err := broadcastErr([]string{"user:1", "user:2"}, []*apiproto.PublishResponse{ok, bad})
+	if err == nil || !strings.Contains(err.Error(), "user:2") || strings.Contains(err.Error(), "user:1") {
+		t.Fatalf("err %v", err)
 	}
 }

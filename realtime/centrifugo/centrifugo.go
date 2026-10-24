@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -70,6 +71,30 @@ func (t *Transport) Publish(ctx context.Context, channel string, data []byte) er
 		return fmt.Errorf("centrifugo publish: %d %s", e.Code, e.Message)
 	}
 	return nil
+}
+
+var _ realtime.Broadcaster = (*Transport)(nil)
+
+func (t *Transport) Broadcast(ctx context.Context, channels []string, data []byte) error {
+	resp, err := t.api.Broadcast(ctx, &apiproto.BroadcastRequest{Channels: channels, Data: data})
+	if err != nil {
+		return err
+	}
+	if e := resp.GetError(); e != nil {
+		return fmt.Errorf("centrifugo broadcast: %d %s", e.Code, e.Message)
+	}
+	return broadcastErr(channels, resp.GetResult().GetResponses())
+}
+
+// broadcastErr joins the per-channel errors of a broadcast (responses are in channels' order).
+func broadcastErr(channels []string, responses []*apiproto.PublishResponse) error {
+	var errs []error
+	for i, r := range responses {
+		if e := r.GetError(); e != nil && i < len(channels) {
+			errs = append(errs, fmt.Errorf("centrifugo broadcast %s: %d %s", channels[i], e.Code, e.Message))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (t *Transport) Disconnect(ctx context.Context, userID int64) error {
