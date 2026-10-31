@@ -12,8 +12,8 @@ import (
 //go:embed migrations/*.sql
 var Migrations embed.FS
 
-// Register adds restrictions to an app: its table, the login check, the RPC check (after any the
-// brand set before) and the reload loop. restrictadmin adds the console page.
+// Register adds restrictions to an app: its table, the login check, the RPC check (Router.CheckData,
+// after any the brand set before) and the reload loop. restrictadmin adds the console page.
 func Register(ctx context.Context, a *app.App, cfg Config) (*Service, error) {
 	s, err := New(a.Pool, cfg)
 	if err != nil {
@@ -26,14 +26,14 @@ func Register(ctx context.Context, a *app.App, cfg Config) (*Service, error) {
 		return nil, err
 	}
 	s.kick = a.Realtime.Disconnect
-	prev := a.Router.Check
-	a.Router.Check = func(ctx context.Context, userID int64, method string) error {
+	prev := a.Router.CheckData
+	a.Router.CheckData = func(ctx context.Context, userID int64, method string, data []byte) error {
 		if prev != nil {
-			if err := prev(ctx, userID, method); err != nil {
+			if err := prev(ctx, userID, method, data); err != nil {
 				return err
 			}
 		}
-		return s.Check(ctx, userID, method)
+		return s.CheckCall(ctx, userID, method, data)
 	}
 	a.LoginCheck(s.Login)
 	a.Loop(s.cfg.ReloadEvery, s.reload)

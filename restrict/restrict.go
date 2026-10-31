@@ -7,10 +7,12 @@ package restrict
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -33,6 +35,9 @@ var (
 type Config struct {
 	// Blocks names groups of RPC methods an operator can block for one player, e.g.
 	// {"bets": {"dice.bet", "mines.start"}, "trades": {"shop.buy"}}. A method may be in several.
+	// An entry "method?field=value" matches only calls whose JSON payload has that top-level field
+	// equal to value (a string, or a number or bool as written), e.g. "duel.create?game=chess": a
+	// call without the field doesn't match, so the brand must require it on such a method.
 	Blocks map[string][]string
 	// ReloadEvery is how soon a change made on another instance applies here (default 5s).
 	ReloadEvery time.Duration
@@ -67,10 +72,48 @@ func fromRow(row store.UserRestriction) Restriction {
 	return r
 }
 
+// rule is one Blocks entry of a method: its block, and the payload field it needs ("" = any call).
+type rule struct{ block, field, value string }
+
+// parseEntry splits "method" or "method?field=value".
+func parseEntry(e string) (method string, r rule, ok bool) {
+	method, cond, hasCond := strings.Cut(e, "?")
+	if method == "" {
+		return "", r, false
+	}
+	if hasCond {
+		r.field, r.value, ok = strings.Cut(cond, "=")
+		if !ok || r.field == "" || r.value == "" {
+			return "", r, false
+		}
+	}
+	return method, r, true
+}
+
+// matches reports whether data's top-level field equals the rule's value.
+func (r rule) matches(data []byte) bool {
+	if r.field == "" {
+		return true
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(data, &m) != nil {
+		return false
+	}
+	raw, ok := m[r.field]
+	if !ok {
+		return false
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s == r.value
+	}
+	return string(raw) == r.value // a number or bool as written
+}
+
 type Service struct {
 	q       *store.Queries
 	cfg     Config
-	byCall  map[string][]string // method -> the blocks it is in
+	byCall  map[string][]rule // method -> the blocks it is in
 	now     func() time.Time
 	rows    atomic.Pointer[map[int64]Restriction]
 	kick    func(ctx context.Context, userID int64) error
@@ -85,13 +128,18 @@ func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {
 	if cfg.ReloadEvery < 0 {
 		return nil, fmt.Errorf("restrict: ReloadEvery %s: must be positive", cfg.ReloadEvery)
 	}
-	s := &Service{q: store.New(pool), cfg: cfg, byCall: map[string][]string{}, now: time.Now}
+	s := &Service{q: store.New(pool), cfg: cfg, byCall: map[string][]rule{}, now: time.Now}
 	for name, methods := range cfg.Blocks {
 		if name == "" || len(methods) == 0 || slices.Contains(methods, "") {
 			return nil, fmt.Errorf("restrict: block %q: needs a name and at least one method", name)
 		}
-		for _, m := range methods {
-			s.byCall[m] = append(s.byCall[m], name)
+		for _, e := range methods {
+			m, r, ok := parseEntry(e)
+			if !ok {
+				return nil, fmt.Errorf("restrict: block %q: entry %q: want method or method?field=value", name, e)
+			}
+			r.block = name
+			s.byCall[m] = append(s.byCall[m], r)
 		}
 		s.blockNs = append(s.blockNs, name)
 	}
@@ -129,8 +177,18 @@ func (s *Service) Current(userID int64) (Restriction, bool) {
 	return r, ok && r.Active(s.now())
 }
 
-// Check is the RPC router's guard: nil when the player may call method.
-func (s *Service) Check(_ context.Context, userID int64, method string) error {
+// Check is nil when the player may call method, judged without its payload: a field entry
+// ("method?field=value") counts as matching. Register guards with CheckCall.
+func (s *Service) Check(ctx context.Context, userID int64, method string) error {
+	return s.check(userID, method, nil, false)
+}
+
+// CheckCall is the RPC router's guard (Router.CheckData): nil when the player may make this call.
+func (s *Service) CheckCall(_ context.Context, userID int64, method string, data []byte) error {
+	return s.check(userID, method, data, true)
+}
+
+func (s *Service) check(userID int64, method string, data []byte, withData bool) error {
 	r, ok := s.Current(userID)
 	switch {
 	case !ok:
@@ -138,8 +196,8 @@ func (s *Service) Check(_ context.Context, userID int64, method string) error {
 	case r.Suspended:
 		return ErrSuspended
 	}
-	for _, b := range s.byCall[method] {
-		if slices.Contains(r.Blocks, b) {
+	for _, x := range s.byCall[method] {
+		if slices.Contains(r.Blocks, x.block) && (!withData || x.matches(data)) {
 			return ErrBlocked
 		}
 	}

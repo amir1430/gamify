@@ -16,6 +16,10 @@ func TestNewChecksConfig(t *testing.T) {
 		"empty name":     {Blocks: map[string][]string{"": {"a.b"}}},
 		"no methods":     {Blocks: map[string][]string{"bets": nil}},
 		"empty method":   {Blocks: map[string][]string{"bets": {""}}},
+		"no condition":   {Blocks: map[string][]string{"bets": {"duel.create?"}}},
+		"no value":       {Blocks: map[string][]string{"bets": {"duel.create?game="}}},
+		"no field":       {Blocks: map[string][]string{"bets": {"duel.create?=chess"}}},
+		"no method":      {Blocks: map[string][]string{"bets": {"?game=chess"}}},
 		"negative every": {ReloadEvery: -time.Second},
 	} {
 		if _, err := restrict.New(nil, cfg); err == nil {
@@ -104,5 +108,55 @@ func TestRestrictions(t *testing.T) {
 	}
 	if rows, err := s.List(ctx, 0, 10); err != nil || len(rows) != 2 || rows[0].UserID != bob {
 		t.Fatalf("list %+v %v", rows, err)
+	}
+}
+
+// A "method?field=value" entry blocks only the calls whose payload has that field value.
+func TestFieldBlocks(t *testing.T) {
+	a, ctx := apptest.New(t), context.Background()
+	s, err := restrict.Register(ctx, a.App, restrict.Config{Blocks: map[string][]string{
+		"chess": {"duel.create?game=chess", "duel.join?game=chess"},
+		"seat2": {"duel.create?seat=2"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []string{"duel.create", "duel.join"} {
+		a.Router.Handle(m, func(context.Context, int64, []byte) ([]byte, error) { return []byte("{}"), nil })
+	}
+	alice := a.User("alice")
+	tx, err := a.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, after, err := s.Set(ctx, tx, alice, restrict.Restriction{Blocks: []string{"chess", "seat2"}})
+	if err != nil || tx.Commit(ctx) != nil {
+		t.Fatal(err)
+	}
+	s.Applied(ctx, alice, after)
+	for _, c := range []struct {
+		method string
+		req    any
+		code   uint32
+	}{
+		{"duel.create", map[string]any{"game": "chess"}, 1108},
+		{"duel.join", map[string]any{"game": "chess", "table_id": 7}, 1108},
+		{"duel.create", map[string]any{"game": "dice"}, 0},
+		{"duel.create", map[string]any{}, 0}, // no field: no match
+		{"duel.create", map[string]any{"game": "dice", "seat": 2}, 1108},
+		{"duel.create", map[string]any{"game": "dice", "seat": 3}, 0},
+		{"duel.create", map[string]any{"game": []int{1}}, 0},
+	} {
+		var code uint32
+		if _, cerr := a.Call(alice, c.method, c.req); cerr != nil {
+			code = cerr.Code
+		}
+		if code != c.code {
+			t.Errorf("%s %v: code %d, want %d", c.method, c.req, code, c.code)
+		}
+	}
+	// Check has no payload: a field entry counts as matching.
+	if !errors.Is(s.Check(ctx, alice, "duel.create"), restrict.ErrBlocked) {
+		t.Error("Check without payload")
 	}
 }

@@ -5,6 +5,18 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.7] - 2026-10-31
+
+### Added
+- `realtime`: `Router.CheckData`, an optional guard that runs after `Check` with the request's
+  payload too.
+- `restrict`: a `Config.Blocks` entry can be `method?field=value`: it matches only calls whose JSON
+  payload has that top-level field equal to value (a string, or a number or bool as written), so one
+  block can cover one game of a method games share (`"duel.create?game=chess"`). A call without the
+  field doesn't match: require the field on such a method. `Service.CheckCall` is the guard
+  `Register` now installs (on `Router.CheckData`); `Service.Check` (no payload) counts a field entry
+  as matching. A malformed entry is refused by `New`. Plain entries are unchanged.
+
 ## [1.1.6] - 2026-10-31
 
 ### Fixed

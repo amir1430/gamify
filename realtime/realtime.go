@@ -81,6 +81,9 @@ type Router struct {
 	methods map[string]Handler
 	// Check, when set, runs before every method: an error refuses the call (a restricted player).
 	Check func(ctx context.Context, userID int64, method string) error
+	// CheckData, when set, runs after Check with the request's payload too (a rule on one of its
+	// fields); an error refuses the call.
+	CheckData func(ctx context.Context, userID int64, method string, data []byte) error
 }
 
 func NewRouter() *Router { return &Router{methods: map[string]Handler{}} }
@@ -127,6 +130,9 @@ func (r *Router) call(ctx context.Context, method, user string, data []byte, h H
 	}
 	if r.Check != nil {
 		err = r.Check(ctx, userID, method)
+	}
+	if err == nil && r.CheckData != nil {
+		err = r.CheckData(ctx, userID, method, data)
 	}
 	var out []byte
 	if err == nil {
