@@ -26,16 +26,19 @@ func NewService(pool *pgxpool.Pool, sealer *Sealer) *Service {
 
 // Ensure gives the user an active and a next seed pair if missing. Idempotent and race-safe
 // (partial unique indexes + ON CONFLICT DO NOTHING).
-func (s *Service) Ensure(ctx context.Context, userID int64) error {
+func (s *Service) Ensure(ctx context.Context, userID int64) error { return s.ensure(ctx, s.q, userID) }
+
+// ensure creates the user's pairs through q: the pool, or the caller's transaction.
+func (s *Service) ensure(ctx context.Context, q *store.Queries, userID int64) error {
 	clientSeed := NewClientSeed()
 	seed, hash := NewServerSeed()
-	if err := s.q.CreateActiveSeedPair(ctx, store.CreateActiveSeedPairParams{
+	if err := q.CreateActiveSeedPair(ctx, store.CreateActiveSeedPairParams{
 		UserID: userID, ServerSeedEnc: s.sealer.Seal(userID, seed), KeyID: s.sealer.KeyID,
 		ServerSeedHash: hash, ClientSeed: clientSeed,
 	}); err != nil {
 		return err
 	}
-	return s.createNext(ctx, s.q, userID, clientSeed)
+	return s.createNext(ctx, q, userID, clientSeed)
 }
 
 func (s *Service) createNext(ctx context.Context, q *store.Queries, userID int64, clientSeed string) error {
@@ -58,14 +61,16 @@ type Draw struct {
 
 // Next consumes the next nonce of the user's active seed pair and returns its Draw with n floats.
 // Must run inside the transaction that inserts the bet, so a rolled-back bet doesn't burn the nonce.
-// Creates the user's seed pairs if they have none (e.g. after old pairs were retired).
+// Creates the user's seed pairs if they have none (e.g. after old pairs were retired), in tx: a
+// second pool connection while holding this one would deadlock a full pool.
 func (s *Service) Next(ctx context.Context, tx pgx.Tx, userID int64, n int) (Draw, error) {
-	row, err := s.q.WithTx(tx).NextNonce(ctx, userID)
+	q := s.q.WithTx(tx)
+	row, err := q.NextNonce(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if err := s.Ensure(ctx, userID); err != nil {
+		if err := s.ensure(ctx, q, userID); err != nil {
 			return Draw{}, err
 		}
-		row, err = s.q.WithTx(tx).NextNonce(ctx, userID)
+		row, err = q.NextNonce(ctx, userID)
 	}
 	if err != nil {
 		return Draw{}, fmt.Errorf("fairness: next nonce: %w", err)

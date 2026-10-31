@@ -5,6 +5,14 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.4] - 2026-10-31
+
+### Fixed
+- `fairness`: `Service.Next` creates a player's missing seed pairs in the bet's own transaction.
+  It took a second pool connection while holding the transaction's, so as many first bets at once
+  as the pool has connections (players without pairs, e.g. a launch spike) deadlocked every bet
+  until the requests timed out. Regression test `TestFirstBetsDontStarvePool`. No API change.
+
 ## [1.1.3] - 2026-10-31
 
 ### Added

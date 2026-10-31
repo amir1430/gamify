@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/amir1430/gamify/db"
 
@@ -72,5 +74,79 @@ func TestGuardVetoesRotation(t *testing.T) {
 	}
 	if _, err := s.Rotate(ctx, userID, "mine"); !errors.Is(err, veto) {
 		t.Fatalf("rotate = %v, want the guard's veto", err)
+	}
+}
+
+// First bets of players without seed pairs, more at once than the pool has connections, must not
+// deadlock: the pairs are made in the bet's own transaction, never on a second connection. And one
+// player's concurrent first bets share one pair, each with its own nonce.
+func TestFirstBetsDontStarvePool(t *testing.T) {
+	s, _ := service(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cfg := s.pool.Config().Copy()
+	cfg.MaxConns = 2
+	small, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer small.Close()
+	s = NewService(small, s.sealer)
+	newUser := func() int64 {
+		var id int64
+		if err := small.QueryRow(ctx, `INSERT INTO users DEFAULT VALUES RETURNING id`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	bet := func(userID int64) (Draw, error) {
+		var d Draw
+		err := pgx.BeginFunc(ctx, small, func(tx pgx.Tx) error {
+			var err error
+			d, err = s.Next(ctx, tx, userID, 0)
+			return err
+		})
+		return d, err
+	}
+	users := make([]int64, 8)
+	for i := range users {
+		users[i] = newUser()
+	}
+	same := newUser()
+	var wg sync.WaitGroup
+	errs := make(chan error, 12)
+	nonces := make(chan Draw, 4)
+	for _, u := range users {
+		wg.Add(1)
+		go func() { defer wg.Done(); _, err := bet(u); errs <- err }()
+	}
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d, err := bet(same)
+			errs <- err
+			nonces <- d
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	close(nonces)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("first bet: %v", err)
+		}
+	}
+	seen := map[int64]bool{}
+	var pair int64
+	for d := range nonces {
+		if seen[d.Nonce] || (pair != 0 && d.SeedPairID != pair) {
+			t.Fatalf("one player's first bets: nonce %d pair %d (seen %v, pair %d)", d.Nonce, d.SeedPairID, seen, pair)
+		}
+		seen[d.Nonce], pair = true, d.SeedPairID
+	}
+	info, err := s.Info(ctx, same)
+	if err != nil || info.Nonce != 4 || info.NextServerSeedHash == "" {
+		t.Fatalf("after 4 bets: %+v %v", info, err)
 	}
 }
