@@ -73,12 +73,13 @@ const (
 	PermMatchCancel  Perm = "matchmaking.cancel" // matchmakingadmin: cancel a match
 	PermMatchReport  Perm = "matchmaking.report" // matchmakingadmin: report a match's result
 	PermPartyDisband Perm = "party.disband"      // partyadmin: disband a party
+	PermRestrict     Perm = "restrict.set"       // restrictadmin: suspend or restrict a player
 )
 
 var rolePerms = map[Role][]Perm{
-	RoleOwner:    {PermView, PermIdentity, PermLimits, PermAdjust, PermApprove, PermAdmins, PermMatchCancel, PermMatchReport, PermPartyDisband},
-	RoleOperator: {PermView, PermIdentity, PermLimits, PermAdjust, PermMatchCancel, PermMatchReport, PermPartyDisband},
-	RoleSupport:  {PermView, PermIdentity},
+	RoleOwner:    {PermView, PermIdentity, PermLimits, PermAdjust, PermApprove, PermAdmins, PermMatchCancel, PermMatchReport, PermPartyDisband, PermRestrict},
+	RoleOperator: {PermView, PermIdentity, PermLimits, PermAdjust, PermMatchCancel, PermMatchReport, PermPartyDisband, PermRestrict},
+	RoleSupport:  {PermView, PermIdentity, PermRestrict},
 	RoleViewer:   {PermView},
 }
 

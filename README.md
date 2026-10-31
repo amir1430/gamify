@@ -29,7 +29,7 @@ module github.com/amir1430/gamify
 - [Admin console](#admin-console)
 - [Development](#development)
 - [Versioning](#versioning)
-- [Not moved yet](#not-moved-yet)
+- [Not in the platform yet](#not-in-the-platform-yet)
 
 ## Quick start: run the sample
 
@@ -160,6 +160,7 @@ published port (`127.0.0.1:10000`) and `centrifugo.proxy_endpoint` at
 | `fairness/` | Opt-in module for games of chance (`Register`: `seed_pairs` table, `seed.info`, `seed.rotate`): seed pairs sealed with AES-256-GCM, nonces, verifier-compatible hashes and floats, pot seeds |
 | `admin/` | Opt-in back office (own migrations, goose table `goose_admin`): console users with roles and permissions, argon2id passwords, TOTP, audit log, balance adjustments, brand views, the console UI (`admin/ui`, embedded); `CreateUser` for the first owner |
 | `party/` | Opt-in module (goose table `goose_party`): parties with a leader, join requests, chat, `Lock`/`Unlock` for other modules; `party/partyadmin` is its console view |
+| `restrict/` | Opt-in module (goose table `goose_restrict`): per-player restrictions set by operators. Suspended: no login (`App.LoginCheck`, 403) and every RPC refused; blocks: groups of RPC methods the brand names (`Config.Blocks`); each until lifted or a time. Checked in memory (`Router.Check`), reloaded every 5 s; a suspension drops the player's connections. `restrict/restrictadmin` is its console page (`PermRestrict`) |
 | `matchmaking/` | Opt-in module (goose table `goose_matchmaking`, needs `party`): queues with parties, ratings (OpenSkill), staked matches (`HoldPot`/`SettlePot`), direct matches (`Create`), `Finish`/`Cancel`, timeouts; `matchmaking/matchmakingadmin` is its console views |
 | `gameconfig/` | Admin-set limits per game × currency × variant (code defaults are hard caps) |
 | `metrics/` | Prometheus metrics and request logs |
@@ -334,8 +335,8 @@ break and committed migrations never change (new ones are added). Generated quer
 `internal/store` packages and isn't public API. [CHANGELOG.md](CHANGELOG.md) lists every release
 with upgrade notes.
 
-## Not moved yet
+## Not in the platform yet
 
-From the casino's core, still to come as platform modules: feed and leaderboards, player
-restrictions, rewards and referrals (the ledger's `Reward` exists), the swaps service, deposits
-(a wallet/payments provider), profile stats, share cards, and the Crash hash chain.
+Planned modules, each when a brand needs it: leaderboards, referrals, a payments provider
+(deposits and withdrawals, see `gamify platform changes.md`), and an exchange service with rates
+over `ledger.Swap`. Until then a brand builds them on the ledger, realtime and admin views.

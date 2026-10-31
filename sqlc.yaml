@@ -63,3 +63,12 @@ sql:
         out: matchmaking/internal/store
         sql_package: pgx/v5
         emit_pointers_for_null_types: true
+  - engine: postgresql
+    schema: [db/migrations, restrict/migrations]
+    queries: restrict/queries.sql
+    gen:
+      go:
+        package: store
+        out: restrict/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true

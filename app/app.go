@@ -72,6 +72,7 @@ type App struct {
 	cfg       Config
 	providers map[string]auth.Provider
 	reconcile []func(context.Context)
+	logins    []func(ctx context.Context, userID int64) error
 	loops     []loop
 	extra     []namedServer
 	historyMu sync.Mutex
@@ -128,6 +129,13 @@ func (a *App) Serve(name string, srv *http.Server) {
 
 // Reconcile registers a job run every ReconcileEvery (a game finishing its pending operations).
 func (a *App) Reconcile(f func(context.Context)) { a.reconcile = append(a.reconcile, f) }
+
+// LoginCheck adds a check every login runs once the user is known (a suspended player): an error
+// refuses the login with 403 and no token. A *realtime.ClientError's message is sent as
+// {"error": message}; any other error is logged and the body stays empty. Add checks before Run.
+func (a *App) LoginCheck(f func(ctx context.Context, userID int64) error) {
+	a.logins = append(a.logins, f)
+}
 
 // Loop registers f to run every `every` while Run is going (a module's own ticker, like a matcher).
 // Call it before Run: Run reads the list without a lock.
@@ -208,6 +216,18 @@ func (a *App) routes() {
 			slog.ErrorContext(ctx, "login", "provider", id.Provider, "err", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
+		}
+		for _, check := range a.logins {
+			if err := check(ctx, u.ID); err != nil {
+				var ce *realtime.ClientError
+				if !errors.As(err, &ce) {
+					slog.ErrorContext(ctx, "login check", "user", u.ID, "err", err)
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": ce.Message})
+				return
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"token": a.Realtime.Token(u.ID, cmp.Or(id.DisplayName, id.Username), now)})
 	})

@@ -189,3 +189,29 @@ func TestLinkRPC(t *testing.T) {
 		t.Fatalf("unknown provider = %v", cerr)
 	}
 }
+
+// A login check refuses the login with 403 and its message, and gives no token.
+func TestLoginCheck(t *testing.T) {
+	p, _ := custom.New(custom.Config{Secret: secret, Audience: "game"})
+	a := testApp(t, p)
+	sub := fmt.Sprint(rand.Int64())
+	_, blocked := login(t, a, "custom", jwt(sub))
+	a.LoginCheck(func(_ context.Context, userID int64) error {
+		if userID == blocked {
+			return &realtime.ClientError{Code: 1108, Message: "this account is suspended"}
+		}
+		return nil
+	})
+	if code, other := login(t, a, "custom", jwt(fmt.Sprint(rand.Int64()))); code != http.StatusOK || other == 0 {
+		t.Fatalf("other user = %d", code)
+	}
+	rec := httptest.NewRecorder()
+	a.handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/auth/custom", bytes.NewReader(jwt(sub))))
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "this account is suspended") || strings.Contains(rec.Body.String(), "tok:") {
+		t.Fatalf("blocked login = %d %s", rec.Code, rec.Body)
+	}
+	a.LoginCheck(func(context.Context, int64) error { return errors.New("db down") })
+	if code, _ := login(t, a, "custom", jwt(fmt.Sprint(rand.Int64()))); code != http.StatusForbidden {
+		t.Fatalf("failing check = %d, want 403", code)
+	}
+}

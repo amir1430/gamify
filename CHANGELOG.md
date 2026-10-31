@@ -5,6 +5,28 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.2] - 2026-10-31
+
+### Added
+- `restrict`: new opt-in module for per-player restrictions set by operators.
+  `restrict.Register(ctx, app, restrict.Config{Blocks: …})` adds the `user_restrictions` table
+  (goose table `goose_restrict`), the login check, the RPC check and a reload loop
+  (`Config.ReloadEvery`, default 5 s). A suspended player can't log in (403
+  `{"error":"this account is suspended"}`) and every RPC is refused (1108); a block refuses the RPC
+  methods of one group the brand names in `Config.Blocks` (1108), so the player can still finish
+  what is in play. Each lasts until lifted or until a time. `Service.Set` writes in the caller's
+  transaction, `Applied` makes it take effect at once and drops a suspended player's connections.
+- `restrict/restrictadmin`: the console's Restrictions page (also a tab on the player page) with
+  "Set restriction" and "Lift" actions, behind the new permission `restrict.set`
+  (`admin.PermRestrict`: owner, operator, support).
+- `app`: `App.LoginCheck(f)`, a check every login runs once the user is known; an error refuses the
+  login with 403 (a `*realtime.ClientError`'s message as `{"error": …}`).
+- `Router.Check` keeps working as before; `restrict.Register` runs after any check the brand set.
+
+### Upgrade notes
+- New migration in the opt-in `restrict` module only (runs when a brand registers it).
+- Support console users gain `restrict.set`.
+
 ## [1.1.1] - 2026-10-31
 
 ### Added
