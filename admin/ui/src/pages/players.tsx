@@ -2,14 +2,14 @@ import { useGo } from '@refinedev/core'
 import { Search } from 'lucide-react'
 import { useState } from 'react'
 import { Input } from '@/components/ui/input'
-import { Copyable, DataTable, PageHeader, Sub, Toolbar, When, useParam, usePaged } from '../ui'
+import { Avatar, Copyable, DataTable, ExportButton, PageHeader, Presence, Toolbar, When, downloadCSV, useParam, usePaged } from '../ui'
 
-export type Player = { id: number; username: string; display_name: string; created_at: string; last_login_at: string | null }
+export type Player = { id: number; username: string; display_name: string; created_at: string; last_login_at: string | null; connections?: number | null }
 
 export const playerName = (u: Player) => u.display_name || u.username || `Player #${u.id}`
 
-// Players, newest first; ?q= searches (auth.Users.Search: ID, username, display name). A row opens
-// the player.
+// Players, newest first; ?q= searches (auth.Users.Search: ID, username, display name, a login's
+// subject). A row opens the player.
 export function Players() {
   const go = useGo()
   const [q, setQ] = useParam('q')
@@ -18,7 +18,7 @@ export function Players() {
 
   return (
     <>
-      <PageHeader title="Players" description="Newest first. Open one for identities, balances, activity and seeds." />
+      <PageHeader title="Players" description="Newest first. Open one for logins, wallet, activity, seeds and history." />
       <Toolbar>
         <form
           className="relative w-full max-w-sm"
@@ -31,12 +31,24 @@ export function Players() {
           <Input
             className="pl-8"
             type="search"
-            placeholder="ID, username or name"
+            placeholder="ID, username, name or Telegram ID — Enter"
             value={text}
             onChange={(e) => (setText(e.target.value), !e.target.value && setQ(null))}
             aria-label="Search"
           />
         </form>
+        <div className="ml-auto">
+          <ExportButton
+            disabled={!rows?.length}
+            onExport={() =>
+              downloadCSV(
+                'players',
+                ['id', 'username', 'display_name', 'online_connections', 'joined', 'last_login'],
+                (rows ?? []).map((u) => [u.id, u.username, u.display_name, u.connections ?? '', u.created_at, u.last_login_at]),
+              )
+            }
+          />
+        </div>
       </Toolbar>
       <DataTable
         rows={rows}
@@ -49,13 +61,17 @@ export function Players() {
             key: 'player',
             title: 'Player',
             render: (u) => (
-              <div className="font-medium">
-                {u.display_name || '—'}
-                {u.username && <Sub>@{u.username}</Sub>}
-              </div>
+              <span className="flex items-center gap-3">
+                <Avatar name={playerName(u)} id={u.id} size="sm" />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{u.display_name || '—'}</span>
+                  {u.username && <span className="block truncate text-xs text-muted-foreground">@{u.username}</span>}
+                </span>
+              </span>
             ),
           },
           { key: 'id', title: 'ID', render: (u) => <Copyable value={u.id} /> },
+          { key: 'status', title: 'Status', render: (u) => <Presence connections={u.connections} /> },
           { key: 'joined', title: 'Joined', render: (u) => <When at={u.created_at} /> },
           { key: 'seen', title: 'Last login', render: (u) => <When at={u.last_login_at} /> },
         ]}

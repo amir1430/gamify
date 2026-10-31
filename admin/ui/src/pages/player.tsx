@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
+  Avatar,
   ChangeDialog,
   Copyable,
   DataTable,
@@ -15,6 +16,7 @@ import {
   Note,
   PageHeader,
   Pill,
+  Presence,
   Section,
   Segmented,
   Signed,
@@ -35,7 +37,8 @@ import { playerName, type Player as PlayerRow } from './players'
 import { ViewTable, useViews } from './views'
 
 type Identity = { provider: string; subject: string; linked_at: string }
-type PlayerView = { user: PlayerRow; identities: Identity[]; balances: Record<string, number> }
+type PlayerView = { user: PlayerRow; identities: Identity[]; balances: Record<string, number>; connections: number | null }
+type AuditRow = { id: number; admin_id: number | null; action: string; target: string; reason: string | null; after: unknown; created_at: string }
 type Activity = { game: string; id: number; currency: string; amount: number; payout: number; status: string; detail?: Record<string, unknown>; at: string }
 type Seed = {
   id: number
@@ -48,7 +51,7 @@ type Seed = {
   revealed_at: string | null
 }
 
-const TABS = ['profile', 'auth', 'wallet', 'activity', 'seeds'] as const
+const TABS = ['profile', 'auth', 'wallet', 'activity', 'seeds', 'history'] as const
 
 // One player (Nakama's account page): header with actions, then Profile, Authentication (linked
 // identities, unlink), Wallet (balances, adjustments), Activity (per game) and Seeds (with fairness),
@@ -72,16 +75,7 @@ export function Player() {
       <PageHeader
         crumbs={[{ label: 'Players', to: '/players' }, { label: u ? playerName(u) : `#${id}` }]}
         title={u ? playerName(u) : `Player #${id}`}
-        description={
-          u && (
-            <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
-              <Copyable value={u.id} label={`ID ${u.id}`} />
-              {u.username && <span className="text-xs">@{u.username}</span>}
-              <span className="text-xs">Joined {dateTime(u.created_at)}</span>
-              <span className="text-xs">Last login {dateTime(u.last_login_at)}</span>
-            </span>
-          )
-        }
+        meta={p && <Presence connections={p.connections} />}
         actions={
           u && (
             <>
@@ -99,6 +93,7 @@ export function Player() {
           )
         }
       />
+      {p && u && <Hero p={p} />}
       {query.isLoading && <Skeleton className="h-48 w-full rounded-lg" />}
       {query.isError && <Note className="text-danger">{query.error.message}</Note>}
 
@@ -114,6 +109,7 @@ export function Player() {
               { value: 'activity', label: 'Activity' },
               ...(hasSeeds ? [{ value: 'seeds', label: 'Seeds' }] : []),
               ...playerViews.map((v) => ({ value: `view-${v.name}`, label: v.title })),
+              { value: 'history', label: 'Console history' },
             ]}
           />
           {tab === 'profile' && (
@@ -131,6 +127,7 @@ export function Player() {
           {tab === 'auth' && <Identities id={u.id} identities={p.identities} canUnlink={canIdentity} />}
           {tab === 'wallet' && <Wallet id={u.id} balances={p.balances} />}
           {tab === 'activity' && <ActivityTab id={u.id} />}
+          {tab === 'history' && <History id={u.id} />}
           {tab === 'seeds' && hasSeeds && (
             <>
               <SeedsTable rows={seeds.rows} loading={seeds.loading} />
@@ -142,6 +139,72 @@ export function Player() {
 
       {u && dialog === 'disconnect' && <Disconnect player={u} onClose={() => setDialog(null)} />}
       {u && dialog === 'adjust' && <AdjustDialog user={u.id} onClose={() => setDialog(null)} />}
+    </>
+  )
+}
+
+// Who the player is at a glance: avatar, names, ID, presence, dates, and a balance per currency.
+function Hero({ p }: { p: PlayerView }) {
+  const u = p.user
+  const { money } = useMoney()
+  const currencies = useMe()?.currencies ?? []
+  return (
+    <div className="mb-6 flex flex-col gap-4 rounded-xl border bg-card p-4 shadow-xs lg:flex-row lg:items-center">
+      <div className="flex min-w-0 items-center gap-4">
+        <Avatar name={playerName(u)} id={u.id} size="lg" />
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="truncate font-semibold">{playerName(u)}</span>
+            {u.username && <span className="text-sm text-muted-foreground">@{u.username}</span>}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <Copyable value={u.id} label={`ID ${u.id}`} />
+            <span>
+              Joined <When at={u.created_at} />
+            </span>
+            <span>
+              Last login <When at={u.last_login_at} />
+            </span>
+            <span>
+              {p.identities.length} login{p.identities.length === 1 ? '' : 's'}: {p.identities.map((i) => i.provider).join(', ') || '—'}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2 lg:ml-auto">
+        {currencies.map(({ code }) => (
+          <div key={code} className="min-w-28 rounded-lg border bg-muted/30 px-3 py-2">
+            <div className="text-[11px] font-medium text-muted-foreground">{code.toUpperCase()}</div>
+            <div className="num text-sm font-semibold">{money(p.balances[code] ?? 0, code, false)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// What console users did to this player (audit rows targeting user:<id>): unlinks, disconnects,
+// restrictions and the like. Adjustments are on the Wallet tab.
+function History({ id }: { id: number }) {
+  const { rows, loading, more } = usePaged<AuditRow>('audit', { target: `user:${id}` })
+  return (
+    <>
+      <DataTable
+        rows={rows}
+        loading={loading}
+        rowKey={(e) => e.id}
+        empty="No console action on this player yet."
+        columns={[
+          { key: 'when', title: 'When', render: (e) => <When at={e.created_at} /> },
+          { key: 'admin', title: 'Admin', render: (e) => (e.admin_id == null ? <Faint /> : <Mono>#{e.admin_id}</Mono>) },
+          { key: 'action', title: 'Action', render: (e) => <Pill>{e.action}</Pill> },
+          { key: 'reason', title: 'Reason', className: 'whitespace-normal min-w-48 text-muted-foreground', render: (e) => e.reason || <Faint /> },
+        ]}
+      />
+      {more}
+      <Note>
+        Every console action on <span className="font-mono">user:{id}</span>; the full entries are in the audit log.
+      </Note>
     </>
   )
 }

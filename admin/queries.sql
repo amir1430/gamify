@@ -149,3 +149,7 @@ WHERE id = @id AND status = 'approved';
 SELECT * FROM admin_adjustments
 WHERE status = 'approved' AND created_at < now() - interval '10 seconds'
 ORDER BY created_at, id LIMIT 100;
+
+-- CountAdjustments counts adjustments per status (statuses without any are left out).
+-- name: CountAdjustments :many
+SELECT status, count(*) AS n FROM admin_adjustments GROUP BY status;

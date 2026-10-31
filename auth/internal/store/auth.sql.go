@@ -284,6 +284,41 @@ func (q *Queries) SearchUsers(ctx context.Context, arg SearchUsersParams) ([]Sea
 	return items, nil
 }
 
+const signupsByDay = `-- name: SignupsByDay :many
+SELECT d::date AS day, count(u.id) AS signups
+FROM generate_series(date_trunc('day', now() AT TIME ZONE 'UTC') - ($1::int - 1) * interval '1 day',
+                     date_trunc('day', now() AT TIME ZONE 'UTC'), interval '1 day') AS d
+LEFT JOIN users u ON u.created_at >= (d AT TIME ZONE 'UTC') AND u.created_at < ((d + interval '1 day') AT TIME ZONE 'UTC')
+GROUP BY d ORDER BY d
+`
+
+type SignupsByDayRow struct {
+	Day     pgtype.Date
+	Signups int64
+}
+
+// SignupsByDay counts sign-ups per UTC day for the last days days, oldest first, today last,
+// days without any included as 0.
+func (q *Queries) SignupsByDay(ctx context.Context, days int32) ([]SignupsByDayRow, error) {
+	rows, err := q.db.Query(ctx, signupsByDay, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SignupsByDayRow
+	for rows.Next() {
+		var i SignupsByDayRow
+		if err := rows.Scan(&i.Day, &i.Signups); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const touchUser = `-- name: TouchUser :exec
 UPDATE users SET username = COALESCE($1, username),
   display_name = COALESCE($2, display_name),
@@ -307,4 +342,42 @@ func (q *Queries) TouchUser(ctx context.Context, arg TouchUserParams) error {
 		arg.ID,
 	)
 	return err
+}
+
+const userStats = `-- name: UserStats :one
+SELECT count(*) AS total,
+  count(*) FILTER (WHERE created_at > now() - interval '1 day') AS new_1d,
+  count(*) FILTER (WHERE created_at > now() - interval '7 days') AS new_7d,
+  count(*) FILTER (WHERE created_at > now() - interval '30 days') AS new_30d,
+  count(*) FILTER (WHERE last_login_at > now() - interval '1 day') AS active_1d,
+  count(*) FILTER (WHERE last_login_at > now() - interval '7 days') AS active_7d,
+  count(*) FILTER (WHERE last_login_at > now() - interval '30 days') AS active_30d
+FROM users
+`
+
+type UserStatsRow struct {
+	Total     int64
+	New1d     int64
+	New7d     int64
+	New30d    int64
+	Active1d  int64
+	Active7d  int64
+	Active30d int64
+}
+
+// UserStats counts players: all, signed up and logged in within the last day, week and month.
+// ponytail: scans users; add an index on created_at / last_login_at if the dashboard gets slow.
+func (q *Queries) UserStats(ctx context.Context) (UserStatsRow, error) {
+	row := q.db.QueryRow(ctx, userStats)
+	var i UserStatsRow
+	err := row.Scan(
+		&i.Total,
+		&i.New1d,
+		&i.New7d,
+		&i.New30d,
+		&i.Active1d,
+		&i.Active7d,
+		&i.Active30d,
+	)
+	return i, err
 }

@@ -102,24 +102,65 @@ type currencyStats struct {
 	RewardsPaid int64            `json:"rewards_paid"`
 }
 
+// dashboard is the platform at a glance: players online, player counts and sign-ups per day
+// (?days=, default 30), adjustments per status, games on, and per currency the system accounts.
 func (adm *Admin) dashboard(w http.ResponseWriter, r *http.Request, _ *session) error {
-	online, err := adm.a.Realtime.Online(r.Context())
+	days := defaultSignupDays
+	if v := r.URL.Query().Get("days"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > auth.MaxSignupDays {
+			return badRequest("days must be 1.." + strconv.Itoa(auth.MaxSignupDays))
+		}
+		days = n
+	}
+	ctx := r.Context()
+	online, err := adm.a.Realtime.Online(ctx)
 	if err != nil {
 		return err
 	}
 	cur := map[ledger.Currency]currencyStats{}
 	for _, c := range adm.a.Ledger.Currencies() {
-		sys, err := adm.a.Ledger.SystemBalances(r.Context(), c)
+		sys, err := adm.a.Ledger.SystemBalances(ctx, c)
 		if err != nil {
 			return err
 		}
-		paid, err := adm.a.Ledger.RewardsPaid(r.Context(), c)
+		paid, err := adm.a.Ledger.RewardsPaid(ctx, c)
 		if err != nil {
 			return err
 		}
 		cur[c] = currencyStats{sys, paid}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"online": len(online), "currencies": cur})
+	players, err := adm.a.Users.Stats(ctx)
+	if err != nil {
+		return err
+	}
+	signups, err := adm.a.Users.Signups(ctx, days)
+	if err != nil {
+		return err
+	}
+	counts, err := adm.q.CountAdjustments(ctx)
+	if err != nil {
+		return err
+	}
+	adj := map[string]int64{}
+	for _, s := range adjustmentStatuses {
+		adj[s] = 0
+	}
+	for _, c := range counts {
+		adj[c.Status] = c.N
+	}
+	settings, _ := adm.a.Games.Overrides()
+	games := adm.a.Games.Games()
+	enabled := 0
+	for _, g := range games {
+		if on, ok := settings[g.Name]; !ok || on {
+			enabled++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"online": len(online), "currencies": cur, "players": players, "signups": signups,
+		"adjustments": adj, "games": map[string]int{"total": len(games), "enabled": enabled},
+	})
 	return nil
 }
 
@@ -132,7 +173,7 @@ func (adm *Admin) users(w http.ResponseWriter, r *http.Request, _ *session) erro
 	if err != nil {
 		return err
 	}
-	writePage(w, us, limit, func(u auth.User) int64 { return u.ID })
+	writePage(w, withConnections(us, adm.connections(r.Context())), limit, func(u playerRow) int64 { return u.ID })
 	return nil
 }
 
@@ -156,7 +197,12 @@ func (adm *Admin) user(w http.ResponseWriter, r *http.Request, _ *session) error
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": us[0], "identities": ids, "balances": bal})
+	var conns *int // null: the transport can't say
+	if on := adm.connections(r.Context()); on != nil {
+		n := on[id]
+		conns = &n
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": us[0], "identities": ids, "balances": bal, "connections": conns})
 	return nil
 }
 

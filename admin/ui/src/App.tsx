@@ -15,14 +15,18 @@ import { Admins } from './pages/admins'
 import { Audit } from './pages/audit'
 import { Dashboard } from './pages/dashboard'
 import { Games } from './pages/games'
+import { OnlinePage } from './pages/online'
 import { Player } from './pages/player'
 import { Players } from './pages/players'
+import { System } from './pages/system'
 import { ViewPage } from './pages/views'
 import { notificationProvider, useMe } from './ui'
 
 // meta.perm: what the resource's pages need (the access provider checks it).
 const RESOURCES = [
   { name: 'dashboard', list: '/dashboard', meta: { label: 'Dashboard', perm: 'view' } },
+  { name: 'online', list: '/online', meta: { label: 'Online now', perm: 'view' } },
+  { name: 'system', list: '/system', meta: { label: 'System', perm: 'view' } },
   { name: 'games', list: '/games', meta: { label: 'Games', perm: 'view' } },
   { name: 'users', list: '/players', show: '/players/:id', meta: { label: 'Players', perm: 'view' } },
   { name: 'adjustments', list: '/adjustments', meta: { label: 'Adjustments', perm: 'view' } },
@@ -71,6 +75,8 @@ export function App() {
           >
             <Route index element={<NavigateToResource resource="dashboard" />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/online" element={<OnlinePage />} />
+            <Route path="/system" element={<System />} />
             <Route path="/games" element={<Games />} />
             <Route path="/players" element={<Players />} />
             <Route path="/players/:id" element={<Player />} />

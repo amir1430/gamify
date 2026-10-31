@@ -115,3 +115,14 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+@layer base {
+  ::selection {
+    background: color-mix(in oklab, var(--brand) 28%, transparent);
+  }
+  /* thin, quiet scrollbars in the sidebar and tables */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+  }
+}

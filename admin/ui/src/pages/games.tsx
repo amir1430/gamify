@@ -60,7 +60,7 @@ function GameCard({ game: g }: { game: Game }) {
   const [editing, setEditing] = useState<{ currency: string; row: Row } | null>(null)
 
   return (
-    <section className="rounded-lg border bg-card">
+    <section className="rounded-xl border bg-card shadow-xs">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
         <div className="flex flex-wrap items-center gap-2.5">
           <h2 className="font-semibold">{g.name}</h2>

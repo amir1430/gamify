@@ -8,6 +8,7 @@ import {
   ChangeDialog,
   Choice,
   DataTable,
+  ExportButton,
   Facts,
   Field,
   Mono,
@@ -16,6 +17,7 @@ import {
   Signed,
   Toolbar,
   When,
+  downloadCSV,
   useAction,
   useMe,
   useMoney,
@@ -83,6 +85,18 @@ export function AdjustmentsTable({ user = '', status = '' }: { user?: string; st
 
   return (
     <>
+      <div className="mb-2 flex justify-end">
+        <ExportButton
+          disabled={!rows?.length}
+          onExport={() =>
+            downloadCSV(
+              user ? `adjustments-player-${user}` : 'adjustments',
+              ['id', 'created_at', 'user_id', 'currency', 'amount_minor', 'amount', 'status', 'reason', 'requested_by', 'approved_by', 'error', 'done_at'],
+              (rows ?? []).map((a) => [a.id, a.created_at, a.user_id, a.currency, a.amount, money(a.amount, a.currency, false).replace(/,/g, ''), a.status, a.reason, a.requested_by, a.approved_by, a.error, a.done_at]),
+            )
+          }
+        />
+      </div>
       <DataTable
         rows={rows}
         loading={loading}

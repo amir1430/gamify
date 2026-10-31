@@ -1,6 +1,6 @@
 import { useGetIdentity, useInfiniteList, useInvalidate, usePermissions, useUpdate, type BaseKey, type NotificationProvider } from '@refinedev/core'
-import { Check, ChevronRight, Copy, Inbox } from 'lucide-react'
-import { useCallback, useState, type ReactNode } from 'react'
+import { Check, ChevronRight, Copy, Download, Inbox, type LucideIcon } from 'lucide-react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api'
+import { ago, toCSV } from '@/lib/format'
 import { format } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import type { Currency, Me } from './providers/auth'
@@ -195,7 +196,45 @@ export function usePaged<T>(resource: string, filters: Record<string, string> = 
 }
 
 export const dateTime = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—')
-export const When = ({ at }: { at: string | null | undefined }) => <span className="whitespace-nowrap text-muted-foreground">{dateTime(at)}</span>
+
+// The current time, ticking every `every` ms (relative times stay fresh without a refetch).
+export function useNow(every = 30_000) {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), every)
+    return () => clearInterval(t)
+  }, [every])
+  return now
+}
+
+// "5m ago", the exact local time on hover; relative=false shows the exact time.
+export function When({ at, relative = true }: { at: string | null | undefined; relative?: boolean }) {
+  const now = useNow()
+  if (!at) return <Faint />
+  return (
+    <time dateTime={at} title={dateTime(at)} className="whitespace-nowrap text-muted-foreground">
+      {relative ? ago(at, now) : dateTime(at)}
+    </time>
+  )
+}
+
+// Downloads rows as a CSV file (what is loaded: "Load more" first for more).
+export function downloadCSV(name: string, header: string[], rows: unknown[][]) {
+  const url = URL.createObjectURL(new Blob(['\ufeff' + toCSV(header, rows)], { type: 'text/csv;charset=utf-8' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${name}-${new Date().toISOString().slice(0, 19).replace(/:/g, '')}.csv`
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+export function ExportButton({ onExport, disabled }: { onExport: () => void; disabled?: boolean }) {
+  return (
+    <Button variant="outline" size="sm" onClick={onExport} disabled={disabled} title="Download the loaded rows as CSV">
+      <Download /> Export CSV
+    </Button>
+  )
+}
 
 // ── numbers ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -204,7 +243,7 @@ const TONE_TEXT: Record<Tone, string> = { ok: 'text-ok', danger: 'text-danger', 
 
 export function Stats({ items }: { items: { label: string; value: ReactNode; hint?: ReactNode; tone?: Tone }[] }) {
   return (
-    <div className="grid grid-cols-2 overflow-hidden rounded-lg border bg-card sm:grid-cols-3 lg:grid-cols-[repeat(auto-fit,minmax(150px,1fr))]">
+    <div className="grid grid-cols-2 overflow-hidden rounded-xl border bg-card shadow-xs sm:grid-cols-3 lg:grid-cols-[repeat(auto-fit,minmax(150px,1fr))]">
       {items.map((s) => (
         <div key={s.label} className="-mb-px -mr-px border-r border-b px-4 py-3.5">
           <div className="text-xs text-muted-foreground">{s.label}</div>
@@ -216,12 +255,122 @@ export function Stats({ items }: { items: { label: string; value: ReactNode; hin
   )
 }
 
+// A surface for a dashboard block: a title row (icon, title, actions) over its content.
+export function Card({
+  title,
+  icon: Icon,
+  actions,
+  children,
+  className,
+  bodyClassName,
+}: {
+  title?: ReactNode
+  icon?: LucideIcon
+  actions?: ReactNode
+  children: ReactNode
+  className?: string
+  bodyClassName?: string
+}) {
+  return (
+    <section className={cn('flex min-w-0 flex-col rounded-xl border bg-card shadow-xs', className)}>
+      {title && (
+        <div className="flex items-center gap-2 border-b px-4 py-3">
+          {Icon && <Icon className="size-4 text-muted-foreground" />}
+          <h2 className="text-sm font-semibold">{title}</h2>
+          <div className="ml-auto flex items-center gap-2">{actions}</div>
+        </div>
+      )}
+      <div className={cn('min-w-0 flex-1 p-4', bodyClassName)}>{children}</div>
+    </section>
+  )
+}
+
+// A headline number with an icon, a hint under it and an optional link.
+export function Kpi({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  tone = 'neutral',
+  to,
+  loading,
+}: {
+  label: string
+  value: ReactNode
+  hint?: ReactNode
+  icon: LucideIcon
+  tone?: Tone
+  to?: string
+  loading?: boolean
+}) {
+  const body = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-xs font-medium text-muted-foreground">{label}</div>
+        <span className={cn('grid size-8 place-items-center rounded-lg ring-1 ring-inset', PILL[tone])}>
+          <Icon className="size-4" />
+        </span>
+      </div>
+      {loading ? <Skeleton className="mt-1 h-7 w-24" /> : <div className="num -mt-1 truncate text-2xl font-semibold tracking-tight">{value}</div>}
+      {hint && <div className="mt-1 truncate text-xs text-muted-foreground">{hint}</div>}
+    </>
+  )
+  const cls = 'flex min-w-0 flex-col rounded-xl border bg-card p-4 shadow-xs'
+  return to ? (
+    <Link to={to} className={cn(cls, 'transition-colors hover:border-brand/40 hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none')}>
+      {body}
+    </Link>
+  ) : (
+    <div className={cls}>{body}</div>
+  )
+}
+
+// A green dot with "Online · 2" for connected players; grey "Offline"; nothing when unknown (null).
+export function Presence({ connections, compact }: { connections: number | null | undefined; compact?: boolean }) {
+  if (connections == null) return compact ? null : <Faint />
+  const on = connections > 0
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap" title={on ? `${connections} open connection${connections > 1 ? 's' : ''}` : 'Offline'}>
+      <span className={cn('relative size-2 rounded-full', on ? 'bg-ok' : 'bg-muted-foreground/40')}>
+        {on && <span className="absolute inset-0 animate-ping rounded-full bg-ok/60" />}
+      </span>
+      {!compact && <span className={on ? 'text-ok' : 'text-muted-foreground'}>{on ? (connections > 1 ? `Online · ${connections}` : 'Online') : 'Offline'}</span>}
+    </span>
+  )
+}
+
+// Initials in a tinted circle, the hue picked from the id (stable per player).
+export function Avatar({ name, id, size = 'md' }: { name: string; id: number | string; size?: 'sm' | 'md' | 'lg' }) {
+  const hue = (Number(String(id).replace(/\D/g, '')) * 47) % 360
+  const initials =
+    name
+      .replace(/^@/, '')
+      .split(/[\s._-]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0])
+      .join('')
+      .toUpperCase() || '#'
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'grid shrink-0 place-items-center rounded-full font-semibold',
+        size === 'sm' ? 'size-7 text-[11px]' : size === 'lg' ? 'size-14 text-lg' : 'size-9 text-xs',
+      )}
+      style={{ background: `oklch(0.75 0.09 ${hue} / 0.22)`, color: `oklch(0.55 0.14 ${hue})` }}
+    >
+      {initials}
+    </span>
+  )
+}
+
 // Label / value pairs in a bordered grid.
 export function Facts({ items, cols = 3 }: { items: [label: string, value: ReactNode][]; cols?: 1 | 2 | 3 }) {
   return (
     <dl
       className={cn(
-        'grid overflow-hidden rounded-lg border bg-card',
+        'grid overflow-hidden rounded-xl border bg-card shadow-xs',
         cols === 1 ? 'grid-cols-1' : cols === 2 ? 'sm:grid-cols-2' : 'sm:grid-cols-2 lg:grid-cols-3',
       )}
     >
@@ -302,7 +451,7 @@ export function DataTable<T>({
 }) {
   const r = (c: Column<T>) => cn(c.align === 'right' && 'text-right', c.className)
   return (
-    <div className={cn('overflow-hidden rounded-lg border bg-card', className)}>
+    <div className={cn('overflow-x-auto rounded-xl border bg-card shadow-xs', className)}>
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">

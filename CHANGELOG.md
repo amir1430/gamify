@@ -5,6 +5,40 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.8] - 2026-10-31
+
+### Added
+- `auth`: `Users.Stats` (players in all, signed up and logged in within 24 h / 7 d / 30 d) and
+  `Users.Signups(ctx, days)` (sign-ups per UTC day, zeros included, at most `MaxSignupDays`).
+- `admin` API, all read-only and behind `view`:
+  - `GET /api/dashboard` also returns `players` (`auth.Stats`), `signups` (per day, `?days=`,
+    default 30, 1..366), `adjustments` (count per status) and `games` (`total`, `enabled`).
+    Existing fields are unchanged.
+  - `GET /api/online`: connected players, newest account first (`?limit=`, default 100, at most
+    500), with `total` online and their open `connections`.
+  - `GET /api/system`: the console's status page. Dependencies' health with latency, gamify's
+    version, Go and process stats, the Postgres pool, currencies (decimals, min amount, approval
+    threshold), registered RPCs, activity sources, each role's permissions and console settings.
+    Nothing secret: no keys, tokens or addresses.
+  - `GET /api/users` and `GET /api/users/{id}` carry each player's open `connections` (`null` when
+    the transport can't say, so the list still loads while it is down).
+- `admin` UI, redesigned:
+  - A new shell: collapsible sidebar (remembered), a top bar with the live online count and a
+    theme toggle, a drawer on narrow screens, and a command palette (`⌘K` / `Ctrl+K` or `/`) that
+    jumps to any page or player by ID, name, username or Telegram ID.
+  - Dashboard: KPI cards (online, players, new today, active, waiting approval, games on), a
+    sign-ups chart (7/30/90 days), treasury per currency, recent console activity, system health.
+  - New pages: **Online now** (connected players, refreshed every 10 s) and **System** (health,
+    build, process, DB pool, currencies, RPCs by namespace, roles × permissions matrix).
+  - Players: avatars and online status. Player page: a profile card with presence and balances,
+    and a **Console history** tab (every audit entry on the player).
+  - CSV export of the loaded rows on players, online, adjustments and the audit log; relative
+    times everywhere (exact time on hover).
+
+### Upgrade notes
+- No migration. The new queries read existing tables. Rebuild nothing; the embedded
+  `admin/ui/dist` has the new UI.
+
 ## [1.1.7] - 2026-10-31
 
 ### Added

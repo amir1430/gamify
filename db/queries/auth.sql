@@ -55,3 +55,24 @@ DELETE FROM user_identities WHERE user_id = $1 AND provider = $2;
 
 -- name: ListIdentities :many
 SELECT provider, subject, created_at FROM user_identities WHERE user_id = $1 ORDER BY provider;
+
+-- UserStats counts players: all, signed up and logged in within the last day, week and month.
+-- ponytail: scans users; add an index on created_at / last_login_at if the dashboard gets slow.
+-- name: UserStats :one
+SELECT count(*) AS total,
+  count(*) FILTER (WHERE created_at > now() - interval '1 day') AS new_1d,
+  count(*) FILTER (WHERE created_at > now() - interval '7 days') AS new_7d,
+  count(*) FILTER (WHERE created_at > now() - interval '30 days') AS new_30d,
+  count(*) FILTER (WHERE last_login_at > now() - interval '1 day') AS active_1d,
+  count(*) FILTER (WHERE last_login_at > now() - interval '7 days') AS active_7d,
+  count(*) FILTER (WHERE last_login_at > now() - interval '30 days') AS active_30d
+FROM users;
+
+-- SignupsByDay counts sign-ups per UTC day for the last days days, oldest first, today last,
+-- days without any included as 0.
+-- name: SignupsByDay :many
+SELECT d::date AS day, count(u.id) AS signups
+FROM generate_series(date_trunc('day', now() AT TIME ZONE 'UTC') - (sqlc.arg(days)::int - 1) * interval '1 day',
+                     date_trunc('day', now() AT TIME ZONE 'UTC'), interval '1 day') AS d
+LEFT JOIN users u ON u.created_at >= (d AT TIME ZONE 'UTC') AND u.created_at < ((d + interval '1 day') AT TIME ZONE 'UTC')
+GROUP BY d ORDER BY d;

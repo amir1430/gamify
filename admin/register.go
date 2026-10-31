@@ -27,6 +27,8 @@ type Admin struct {
 	h      http.Handler
 	logins chan struct{} // login attempts in flight, at most maxLogins
 	views  views         // brand views (View)
+
+	started time.Time // when Register ran (the system page's uptime)
 }
 
 // Register migrates the module's tables and adds the console's server to a.Run. Call it after the
@@ -40,7 +42,7 @@ func Register(ctx context.Context, a *app.App, cfg Config) (*Admin, error) {
 		return nil, err
 	}
 	adm := &Admin{a: a, cfg: cfg, q: store.New(a.Pool), totp: totp{key: cfg.TOTPKey},
-		mux: http.NewServeMux(), routes: map[string]route{}, logins: make(chan struct{}, maxLogins)}
+		mux: http.NewServeMux(), routes: map[string]route{}, logins: make(chan struct{}, maxLogins), started: time.Now()}
 	adm.h = adm.guard(adm.mux)
 	adm.register()
 	a.Reconcile(adm.reconcile)
@@ -110,5 +112,6 @@ func (adm *Admin) register() {
 	adm.registerAdmins()
 	adm.registerAdjustments()
 	adm.registerViews()
+	adm.registerInsights()
 	adm.mux.HandleFunc("/", adm.serveUI) // the UI, and JSON 404s for unknown /api paths
 }

@@ -71,6 +71,36 @@ func (q *Queries) ConfirmTOTP(ctx context.Context, arg ConfirmTOTPParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const countAdjustments = `-- name: CountAdjustments :many
+SELECT status, count(*) AS n FROM admin_adjustments GROUP BY status
+`
+
+type CountAdjustmentsRow struct {
+	Status string
+	N      int64
+}
+
+// CountAdjustments counts adjustments per status (statuses without any are left out).
+func (q *Queries) CountAdjustments(ctx context.Context) ([]CountAdjustmentsRow, error) {
+	rows, err := q.db.Query(ctx, countAdjustments)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountAdjustmentsRow
+	for rows.Next() {
+		var i CountAdjustmentsRow
+		if err := rows.Scan(&i.Status, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countLoginFails = `-- name: CountLoginFails :one
 SELECT count(*) FROM admin_audit f
 WHERE f.action = 'login.fail' AND f.target = $1

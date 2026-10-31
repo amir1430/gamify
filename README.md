@@ -10,7 +10,8 @@ currencies and registers its own games. The platform does the parts every game n
 - **Realtime**: RPCs and pushes over Centrifugo.
 - **Randomness**: opt-in provable fairness (seed pairs, nonces, verifiable floats) for games of chance.
 - **Limits**: per game, currency and variant, set by admins without a deploy.
-- **Admin console**: players, balances, adjustments with approval, game limits, audit log, 2FA.
+- **Admin console**: dashboard, online players, players, balances, adjustments with approval, game
+  limits, audit log, system status, command palette, CSV export, 2FA.
 - **Ops**: health checks, Prometheus metrics, a reconcile loop for operations a crash left pending.
 
 It holds no game logic: each game brings its own rules and decides what random numbers mean.
@@ -281,9 +282,12 @@ second admin). `TG_BOT_TOKEN` also enables Telegram login to the console. Compos
 gamify admin add-user <email> <owner|operator|support|viewer>   # prints a one-time password
 ```
 
-Pages: dashboard (players online, system balances per currency), players (profile, linked logins,
-wallet and adjustments, activity per game, seed pairs), games (on/off and limits per currency),
-adjustments with approval, audit log, console users, account. Games can add their own pages
+Pages: dashboard (players online, new and active players, sign-ups per day, adjustments waiting
+approval, treasury per currency, recent console activity, health), online now, players (profile,
+presence, linked logins, wallet and adjustments, activity per game, seed pairs, console history),
+games (on/off and limits per currency), adjustments with approval, audit log, console users, system
+(dependencies' health, build, process, DB pool, currencies, RPCs, roles × permissions), account.
+`⌘K` / `Ctrl+K` opens a command palette for pages and players; lists export as CSV. Games can add their own pages
 (`admin.View`, see the guide): each gets a sidebar entry under its `Group` (`/views/<name>`), and a
 view with a `UserFilter` is also a tab on the player page.
 

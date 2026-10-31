@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { Choice, DataTable, Facts, Faint, Mono, PageHeader, Pill, Toolbar, When, dateTime, useParam, usePaged } from '../ui'
+import { Choice, DataTable, ExportButton, Facts, Faint, Mono, PageHeader, Pill, Toolbar, When, dateTime, downloadCSV, useParam, usePaged } from '../ui'
 
 type Entry = {
   id: number
@@ -94,6 +94,18 @@ export function Audit() {
             Clear
           </Button>
         )}
+        <div className="ml-auto">
+          <ExportButton
+            disabled={!rows?.length}
+            onExport={() =>
+              downloadCSV(
+                'audit',
+                ['id', 'created_at', 'admin_id', 'action', 'target', 'reason', 'ip', 'before', 'after'],
+                (rows ?? []).map((e) => [e.id, e.created_at, e.admin_id, e.action, e.target, e.reason, e.ip, e.before, e.after]),
+              )
+            }
+          />
+        </div>
       </Toolbar>
       <DataTable
         rows={rows}
