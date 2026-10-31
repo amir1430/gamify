@@ -5,6 +5,14 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.3] - 2026-10-31
+
+### Added
+- `app`: `App.OnLogin(f)`, a hook every successful login runs (after `LoginCheck`, before the token
+  is sent) with `auth.Login` (`Created` on a first login) and the verified `auth.Identity` (its
+  `Meta`, e.g. Telegram's `start_param`): referral attribution, welcome flows, analytics. Its error
+  is logged; the login goes on.
+
 ## [1.1.2] - 2026-10-31
 
 ### Added

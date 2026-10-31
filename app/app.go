@@ -73,6 +73,7 @@ type App struct {
 	providers map[string]auth.Provider
 	reconcile []func(context.Context)
 	logins    []func(ctx context.Context, userID int64) error
+	onLogin   []func(ctx context.Context, l auth.Login, id auth.Identity) error
 	loops     []loop
 	extra     []namedServer
 	historyMu sync.Mutex
@@ -129,6 +130,14 @@ func (a *App) Serve(name string, srv *http.Server) {
 
 // Reconcile registers a job run every ReconcileEvery (a game finishing its pending operations).
 func (a *App) Reconcile(f func(context.Context)) { a.reconcile = append(a.reconcile, f) }
+
+// OnLogin adds a hook every successful login runs, after the checks and before the token is sent:
+// l says whether the user was just created, id is the verified identity (with the provider's Meta,
+// such as Telegram's start_param), for referral attribution, welcome flows, analytics. An error is
+// logged and the login goes on (refusing a login is LoginCheck's job). Add hooks before Run.
+func (a *App) OnLogin(f func(ctx context.Context, l auth.Login, id auth.Identity) error) {
+	a.onLogin = append(a.onLogin, f)
+}
 
 // LoginCheck adds a check every login runs once the user is known (a suspended player): an error
 // refuses the login with 403 and no token. A *realtime.ClientError's message is sent as
@@ -227,6 +236,11 @@ func (a *App) routes() {
 				}
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": ce.Message})
 				return
+			}
+		}
+		for _, hook := range a.onLogin {
+			if err := hook(ctx, u, id); err != nil {
+				slog.ErrorContext(ctx, "login hook", "user", u.ID, "err", err)
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"token": a.Realtime.Token(u.ID, cmp.Or(id.DisplayName, id.Username), now)})

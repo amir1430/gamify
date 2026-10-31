@@ -215,3 +215,34 @@ func TestLoginCheck(t *testing.T) {
 		t.Fatalf("failing check = %d, want 403", code)
 	}
 }
+
+// OnLogin sees every successful login with whether the user is new and the verified identity; its
+// error doesn't stop the login, and a refused login never reaches it.
+func TestOnLogin(t *testing.T) {
+	p, _ := custom.New(custom.Config{Secret: secret, Audience: "game"})
+	a := testApp(t, p)
+	type seen struct {
+		user    int64
+		created bool
+		subject string
+	}
+	var got []seen
+	a.OnLogin(func(_ context.Context, l auth.Login, id auth.Identity) error {
+		got = append(got, seen{l.ID, l.Created, id.Subject})
+		return errors.New("hook failed")
+	})
+	sub := fmt.Sprint(rand.Int64())
+	_, first := login(t, a, "custom", jwt(sub))
+	_, again := login(t, a, "custom", jwt(sub))
+	if first == 0 || again != first {
+		t.Fatalf("logins %d %d", first, again)
+	}
+	if len(got) != 2 || got[0] != (seen{first, true, sub}) || got[1] != (seen{first, false, sub}) {
+		t.Fatalf("hook saw %+v", got)
+	}
+	a.LoginCheck(func(context.Context, int64) error { return errors.New("refused") })
+	login(t, a, "custom", jwt(sub))
+	if len(got) != 2 {
+		t.Fatal("hook ran for a refused login")
+	}
+}
