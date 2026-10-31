@@ -26,7 +26,22 @@ type centrifugoConfig struct {
 		WithoutNamespace struct {
 			ProxyEnabled bool `json:"proxy_enabled"`
 		} `json:"without_namespace"`
+		NamespaceBoundary string         `json:"namespace_boundary,omitempty"`
+		Namespaces        []rpcNamespace `json:"namespaces,omitempty"`
 	} `json:"rpc"`
+	Proxies []proxy `json:"proxies,omitempty"`
+}
+
+type rpcNamespace struct {
+	Name         string `json:"name"`
+	ProxyEnabled bool   `json:"proxy_enabled"`
+	ProxyName    string `json:"proxy_name,omitempty"`
+}
+
+type proxy struct {
+	Name     string `json:"name"`
+	Endpoint string `json:"endpoint"`
+	Timeout  string `json:"timeout"`
 }
 
 type namespace struct {
@@ -53,6 +68,20 @@ func (c *Config) CentrifugoJSON() []byte {
 	out.RPC.Proxy.Endpoint = c.Centrifugo.ProxyEndpoint
 	out.RPC.Proxy.Timeout = c.Centrifugo.ProxyTimeout.String()
 	out.RPC.WithoutNamespace.ProxyEnabled = true
+	// Routing by namespace: "dice.bet" is namespace "dice", sent to its proxy (default or named).
+	if len(c.Centrifugo.RPCNamespaces) > 0 {
+		out.RPC.NamespaceBoundary = "."
+		owner := map[string]string{}
+		for _, p := range c.Centrifugo.Proxies {
+			out.Proxies = append(out.Proxies, proxy{Name: p.Name, Endpoint: p.Endpoint, Timeout: c.Centrifugo.ProxyTimeout.String()})
+			for _, ns := range p.Namespaces {
+				owner[ns] = p.Name
+			}
+		}
+		for _, ns := range c.Centrifugo.RPCNamespaces {
+			out.RPC.Namespaces = append(out.RPC.Namespaces, rpcNamespace{Name: ns, ProxyEnabled: true, ProxyName: owner[ns]})
+		}
+	}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return append(b, '\n')
 }

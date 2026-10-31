@@ -246,12 +246,14 @@ reads `gamify.yaml` from the working directory, or the file `GAMIFY_CONFIG` name
 | `centrifugo.api_addr`, `api_key`, `token_secret`, `token_ttl` | the gRPC API the app dials; secrets as `${VAR}` |
 | `centrifugo.proxy_listen`, `proxy_endpoint`, `proxy_timeout` | where the app serves Centrifugo's RPC proxy, and how Centrifugo reaches it |
 | `centrifugo.namespaces` | the brand's channel namespaces (`name`, `presence`, `subscribe`: clients may subscribe), added to the platform's `user`, `online`, `feed` |
+| `centrifugo.rpc_namespaces`, `proxies` | optional RPC routing by namespace (`dice.bet` → `dice`): `rpc_namespaces` lists every namespace the app serves (the platform's too); each of `proxies` (`name`, `endpoint`, `namespaces`) sends its namespaces to another instance, e.g. single-instance rooms. Unset: every RPC to `proxy_endpoint` |
 | `http.addr`, `http.allowed_origins` | the game API and the Mini App's origins (`"*"` is refused) |
 | `metrics.addr` | Prometheus; keep it private, `off` disables |
 | `log.level` | `debug`, `info`, `warn`, `error` |
 
 `go run ./cmd/gamify-config -f gamify.yaml -check` validates it (`make check`); `-o config.json`
-writes Centrifugo's config. That config sends every RPC to the proxy (`without_namespace`) and never
+writes Centrifugo's config. That config sends every RPC to the proxy (`without_namespace`), or routes by namespace when
+`rpc_namespaces` is set (Centrifugo then refuses a method whose namespace isn't listed), and never
 holds a secret: Centrifugo reads `CENTRIFUGO_GRPC_API_KEY` and
 `CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY` from its env.
 

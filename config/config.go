@@ -60,6 +60,21 @@ type Centrifugo struct {
 	// Namespaces are the brand's own channel namespaces (its rooms, tables, prices), added to the
 	// platform's (user, online, feed) in Centrifugo's config.
 	Namespaces []Namespace `yaml:"namespaces"`
+	// RPCNamespaces, when set, routes RPCs by namespace (a method's part before "."): it lists
+	// every namespace the app serves, the platform's included (seed, wallet, …). A namespace in
+	// none of Proxies goes to proxy_endpoint; Centrifugo refuses a method whose namespace isn't
+	// listed. Unset: every RPC goes to proxy_endpoint.
+	RPCNamespaces []string `yaml:"rpc_namespaces"`
+	// Proxies send some RPC namespaces to another endpoint, e.g. single-instance game rooms
+	// deployed apart from the app. Requires RPCNamespaces. Timeout: proxy_timeout.
+	Proxies []Proxy `yaml:"proxies"`
+}
+
+// Proxy is a named RPC proxy: Centrifugo sends methods of its namespaces to Endpoint.
+type Proxy struct {
+	Name       string   `yaml:"name"`
+	Endpoint   string   `yaml:"endpoint"` // grpc://host:port
+	Namespaces []string `yaml:"namespaces"`
 }
 
 // Namespace is a channel namespace the brand's games publish to: channels "<name>:…".
@@ -210,9 +225,49 @@ func (c *Config) validate(unset map[string]bool) []error {
 	}
 	if c.Centrifugo.ProxyEndpoint == "" {
 		required("centrifugo.proxy_endpoint", "")
-	} else if u, err := url.Parse(c.Centrifugo.ProxyEndpoint); err != nil || u.Host == "" ||
-		!slices.Contains([]string{"grpc", "http", "https"}, u.Scheme) {
+	} else if !validEndpoint(c.Centrifugo.ProxyEndpoint) {
 		bad("centrifugo.proxy_endpoint", "%q: want grpc://host:port", c.Centrifugo.ProxyEndpoint)
+	}
+	rpcSeen := map[string]bool{}
+	for i, ns := range c.Centrifugo.RPCNamespaces {
+		path := fmt.Sprintf("centrifugo.rpc_namespaces[%d]", i)
+		switch {
+		case !validNamespace(ns) || strings.Contains(ns, "."):
+			bad(path, "%q: want letters, digits, - or _", ns)
+		case rpcSeen[ns]:
+			bad(path, "%q listed twice", ns)
+		}
+		rpcSeen[ns] = true
+	}
+	if len(c.Centrifugo.Proxies) > 0 && len(c.Centrifugo.RPCNamespaces) == 0 {
+		bad("centrifugo.proxies", "set, but centrifugo.rpc_namespaces isn't: list every RPC namespace")
+	}
+	proxySeen, routed := map[string]bool{}, map[string]string{}
+	for i, p := range c.Centrifugo.Proxies {
+		path := fmt.Sprintf("centrifugo.proxies[%d]", i)
+		switch {
+		case !validNamespace(p.Name):
+			bad(path+".name", "%q: want letters, digits, - or _", p.Name)
+		case proxySeen[p.Name]:
+			bad(path+".name", "%q listed twice", p.Name)
+		}
+		proxySeen[p.Name] = true
+		if !validEndpoint(p.Endpoint) {
+			bad(path+".endpoint", "%q: want grpc://host:port", p.Endpoint)
+		}
+		if len(p.Namespaces) == 0 {
+			bad(path+".namespaces", "required: at least one")
+		}
+		for _, ns := range p.Namespaces {
+			switch {
+			case !rpcSeen[ns]:
+				bad(path+".namespaces", "%q isn't in centrifugo.rpc_namespaces", ns)
+			case routed[ns] != "":
+				bad(path+".namespaces", "%q is already proxy %q's", ns, routed[ns])
+			default:
+				routed[ns] = p.Name
+			}
+		}
 	}
 	seen := map[string]bool{}
 	for i, ns := range c.Centrifugo.Namespaces {
@@ -238,6 +293,11 @@ func (c *Config) validate(unset map[string]bool) []error {
 		}
 	}
 	return errs
+}
+
+func validEndpoint(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Host != "" && slices.Contains([]string{"grpc", "http", "https"}, u.Scheme)
 }
 
 // validNamespace reports whether name is a Centrifugo namespace name (no ':' or other separators).

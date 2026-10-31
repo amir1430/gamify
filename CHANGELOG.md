@@ -5,6 +5,17 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.5] - 2026-10-31
+
+### Added
+- `config`: optional RPC routing by namespace, for brands that deploy parts apart (e.g. single-instance
+  game rooms next to scaled app instances). `centrifugo.rpc_namespaces` lists every RPC namespace the
+  app serves (a method's part before `.`, the platform's included); `centrifugo.proxies`
+  (`name`, `endpoint`, `namespaces`) sends some of them to another endpoint, with `proxy_timeout`.
+  `gamify-config` then writes `rpc.namespace_boundary: "."`, `rpc.namespaces` and `proxies`.
+  Unset (the default) is unchanged: every RPC goes to `proxy_endpoint`. Centrifugo refuses a method
+  whose namespace isn't listed, so keep the list complete (a brand test over `Router.Methods()`).
+
 ## [1.1.4] - 2026-10-31
 
 ### Fixed
