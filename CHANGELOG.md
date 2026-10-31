@@ -5,6 +5,26 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.10] - 2026-10-31
+
+### Added
+- `admin`: two column, filter and field types for brand views.
+  - `admin.URL`: an http(s) link. Table cells and the detail dialog show it as a link (host and
+    path) that opens in a new tab. An action input must be an absolute http(s) URL (400
+    otherwise). A filter takes any text, so a brand can still accept a slug.
+  - `admin.Image`: an http(s) image URL. The table shows a thumbnail; the row's dialog shows it
+    large at the top, linked to full size. Image columns can't be filtered.
+  - The console never puts a non-http(s) value (`javascript:`, `data:`) in an href or src.
+- `admin.Column.DetailOnly`: the column shows in the row's detail dialog only, not in the table
+  (long URLs, images, notes).
+
+### Fixed
+- `admin` UI: the row's detail dialog cut long text to one line ("Which Senate Swing States
+  will Republicans w..."). It now shows the whole value.
+
+Upgrade: no migration, no breaking change. Switch a link or image column from `admin.Text` to
+`admin.URL` / `admin.Image` (its filter's type too) to get the new look.
+
 ## [1.1.9] - 2026-10-31
 
 ### Fixed

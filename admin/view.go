@@ -27,9 +27,11 @@ const (
 	Enum    FieldType = "enum" // one of Options
 	UserID  FieldType = "user_id"
 	JSON    FieldType = "json"
+	URL     FieldType = "url"   // an http(s) link, opened in a new tab; an input must be one
+	Image   FieldType = "image" // an http(s) image URL: a thumbnail in the table, larger in the detail
 )
 
-var fieldTypes = []FieldType{Text, Int, Decimal, Money, Bool, Time, Enum, UserID, JSON}
+var fieldTypes = []FieldType{Text, Int, Decimal, Money, Bool, Time, Enum, UserID, JSON, URL, Image}
 
 // integer reports whether values of t are integers (sent as JSON strings beyond ±2^53).
 func (t FieldType) integer() bool { return t == Int || t == Money || t == UserID || t == Decimal }
@@ -43,6 +45,7 @@ type Column struct {
 	CurrencyKey string          `json:"currency_key,omitempty"` // Money: the row key holding the currency...
 	Currency    ledger.Currency `json:"currency,omitempty"`     // ...or a fixed currency (one of the two)
 	Options     []string        `json:"options,omitempty"`      // Enum
+	DetailOnly  bool            `json:"detail_only,omitempty"`  // shown in the row's detail, not as a table column
 }
 
 // Filter is a query parameter of a view's list. Key is a column's, with the same Type; an Enum
@@ -235,8 +238,8 @@ func (adm *Admin) checkView(v View) (View, error) {
 			return v, fmt.Errorf("filter %q: not a column", f.Key)
 		case f.Type != c.Type:
 			return v, fmt.Errorf("filter %q: type %q, the column's is %q", f.Key, f.Type, c.Type)
-		case f.Type == JSON:
-			return v, fmt.Errorf("filter %q: json columns can't be filtered", f.Key)
+		case f.Type == JSON || f.Type == Image:
+			return v, fmt.Errorf("filter %q: %s columns can't be filtered", f.Key, f.Type)
 		case f.Key == "before" || f.Key == "limit":
 			return v, fmt.Errorf("filter %q: the name is the list's paging parameter", f.Key)
 		case filters[f.Key].Key != "":

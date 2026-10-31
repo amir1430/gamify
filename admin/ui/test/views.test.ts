@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cellText, filterValue, fromLocalInput, groupViews, initialValue, inputValue, labelOf, toLocalInput, type ViewDesc, type ViewField } from '../src/lib/views.ts'
+import { cellText, filterValue, fromLocalInput, groupViews, initialValue, inputValue, labelOf, linkText, toLocalInput, webURL, type ViewDesc, type ViewField } from '../src/lib/views.ts'
 
 const view = (name: string, group: string): ViewDesc => ({
   name,
@@ -88,4 +88,14 @@ test('filterValue: checked like the API, empty = unset', () => {
   assert.deepEqual(filterValue({ key: 'u', label: '', type: 'user_id' }, ' 42 '), { value: '42' })
   assert.ok(filterValue({ key: 'u', label: '', type: 'user_id' }, 'abc').error)
   assert.deepEqual(filterValue({ key: 's', label: '', type: 'text' }, ''), { value: '' })
+})
+
+test('webURL: http(s) only; linkText drops the scheme', () => {
+  assert.equal(webURL('https://polymarket.com/event/x'), 'https://polymarket.com/event/x')
+  assert.equal(webURL('http://a.b/'), 'http://a.b/')
+  for (const bad of ['javascript:alert(1)', 'data:image/png;base64,AA', 'polymarket.com/x', '', 5, null]) assert.equal(webURL(bad), null, String(bad))
+  assert.equal(linkText('https://polymarket.com/event/x/'), 'polymarket.com/event/x')
+  const f: ViewField = { key: 'u', label: 'u', type: 'url', required: false }
+  assert.deepEqual(inputValue(f, 'https://a.b/c'), { value: 'https://a.b/c' })
+  assert.ok(inputValue(f, 'javascript:alert(1)').error)
 })

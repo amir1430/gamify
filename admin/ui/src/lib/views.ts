@@ -2,9 +2,18 @@
 // pages from, and the pure parts of drawing them: grouping for the menu, cell values, action inputs.
 import { format, parseAmount, plain } from './money.ts'
 
-export type FieldType = 'text' | 'int' | 'decimal' | 'money' | 'bool' | 'time' | 'enum' | 'user_id' | 'json'
+export type FieldType = 'text' | 'int' | 'decimal' | 'money' | 'bool' | 'time' | 'enum' | 'user_id' | 'json' | 'url' | 'image'
 
-export type ViewColumn = { key: string; label: string; type: FieldType; scale?: number; currency_key?: string; currency?: string; options?: string[] }
+export type ViewColumn = {
+  key: string
+  label: string
+  type: FieldType
+  scale?: number
+  currency_key?: string
+  currency?: string
+  options?: string[]
+  detail_only?: boolean
+}
 export type ViewFilter = { key: string; label: string; type: FieldType; options?: string[] }
 export type ViewField = { key: string; label: string; type: FieldType; required: boolean; scale?: number; currency?: string; options?: string[] }
 export type ViewAction = { name: string; title: string; confirm: string; reason: boolean; fields: ViewField[] }
@@ -35,6 +44,20 @@ export function groupViews(views: ViewDesc[], fallback = 'More'): { label: strin
   }
   return out
 }
+
+// v as an http(s) URL for an href or src, else null (never javascript: or data:).
+export function webURL(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  try {
+    const u = new URL(v)
+    return (u.protocol === 'http:' || u.protocol === 'https:') && u.host ? u.href : null
+  } catch {
+    return null
+  }
+}
+
+// A link's text: host and path, without the scheme and a trailing slash.
+export const linkText = (href: string) => href.replace(/^https?:\/\//, '').replace(/\/$/, '')
 
 // An integer the API sent as a number, or as a string beyond 2^53.
 const big = (v: unknown): bigint | null => {
@@ -135,6 +158,9 @@ export function inputValue(f: ViewField, raw: string | boolean, decimals = 0): {
       }
     case 'enum':
       return f.options?.includes(s) ? { value: s } : { error: 'Pick one.' }
+    case 'url':
+    case 'image':
+      return webURL(s) ? { value: s } : { error: 'A link starting with https://.' }
   }
   return { value: s }
 }

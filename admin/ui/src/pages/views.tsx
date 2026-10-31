@@ -1,5 +1,5 @@
 import { useCustom, useList } from '@refinedev/core'
-import { MoreHorizontal } from 'lucide-react'
+import { ExternalLink, MoreHorizontal } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
@@ -16,7 +16,9 @@ import {
   initialValue,
   inputValue,
   labelOf,
+  linkText,
   toLocalInput,
+  webURL,
   type ViewAction,
   type ViewColumn,
   type ViewDesc,
@@ -34,11 +36,40 @@ export function useViews(): ViewDesc[] | undefined {
 
 // ── cells ───────────────────────────────────────────────────────────────────────────────────────
 
-function Cell({ col, row }: { col: ViewColumn; row: ViewRow }) {
+// full: the detail dialog's look (whole text and link, a large image) in place of the table's.
+function Cell({ col, row, full = false }: { col: ViewColumn; row: ViewRow; full?: boolean }) {
   const { decimals } = useMoney()
   const v = row[col.key]
   if (v == null || v === '') return <Faint />
   switch (col.type) {
+    case 'url': {
+      const href = webURL(v)
+      if (!href) return <span className={full ? 'break-all' : 'block max-w-80 truncate'}>{String(v)}</span>
+      return (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={href}
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex max-w-full items-center gap-1 text-brand hover:underline"
+        >
+          <span className={full ? 'break-all' : 'max-w-72 truncate'}>{linkText(href)}</span>
+          <ExternalLink className="size-3.5 shrink-0" />
+        </a>
+      )
+    }
+    case 'image': {
+      const src = webURL(v)
+      if (!src) return <Faint />
+      return full ? (
+        <a href={src} target="_blank" rel="noopener noreferrer" title="Open full size">
+          <img src={src} alt="" loading="lazy" className="max-h-56 max-w-full rounded-lg border object-contain" />
+        </a>
+      ) : (
+        <img src={src} alt="" loading="lazy" className="size-9 rounded-md border object-cover" />
+      )
+    }
     case 'bool':
       return <Pill tone={v ? 'ok' : 'neutral'}>{v ? 'Yes' : 'No'}</Pill>
     case 'enum':
@@ -65,7 +96,7 @@ function Cell({ col, row }: { col: ViewColumn; row: ViewRow }) {
     case 'decimal':
       return <span className="num">{cellText(col, v)}</span>
   }
-  return <span className="block max-w-80 truncate">{cellText(col, v)}</span>
+  return full ? <span className="whitespace-pre-wrap">{cellText(col, v)}</span> : <span className="block max-w-80 truncate">{cellText(col, v)}</span>
 }
 
 const numeric = (c: ViewColumn) => c.type === 'int' || c.type === 'decimal' || c.type === 'money'
@@ -78,7 +109,7 @@ export function ViewTable({ view, filters, hide = [] }: { view: ViewDesc; filter
   const { rows, loading, error, more } = usePaged<ViewRow>(`views/${view.name}`, filters)
   const [open, setOpen] = useState<ViewRow | null>(null)
   const [acting, setActing] = useState<{ action: ViewAction; row: ViewRow } | null>(null)
-  const cols = view.columns.filter((c) => !hide.includes(c.key))
+  const cols = view.columns.filter((c) => !c.detail_only && !hide.includes(c.key))
   return (
     <>
       {error && <Note className="text-danger">{error.message}</Note>}
@@ -175,7 +206,17 @@ function RowDialog({ view, row, onClose, onAction }: { view: ViewDesc; row: View
       ) : (
         <>
           {query.isError && <Note className="text-danger">{query.error.message}</Note>}
-          <Facts cols={2} items={view.columns.filter((c) => c.type !== 'json').map((c) => [labelOf(c), <Cell col={c} row={r} />] as [string, ReactNode])} />
+          {view.columns
+            .filter((c) => c.type === 'image' && webURL(r[c.key]))
+            .map((c) => (
+              <div key={c.key}>
+                <Cell col={c} row={r} full />
+              </div>
+            ))}
+          <Facts
+            cols={2}
+            items={view.columns.filter((c) => c.type !== 'json' && c.type !== 'image').map((c) => [labelOf(c), <Cell col={c} row={r} full />] as [string, ReactNode])}
+          />
           {view.columns
             .filter((c) => c.type === 'json')
             .map((c) => (r[c.key] == null || r[c.key] === '' ? null : <JsonView key={c.key} label={labelOf(c)} value={r[c.key]} />))}
@@ -259,7 +300,8 @@ function FieldInput({ field: f, value, error, onChange }: { field: ViewField; va
         <Textarea className="font-mono text-xs" rows={4} value={s} onChange={(e) => onChange(e.target.value)} />
       ) : (
         <Input
-          type={f.type === 'time' ? 'datetime-local' : 'text'}
+          type={f.type === 'time' ? 'datetime-local' : f.type === 'url' || f.type === 'image' ? 'url' : 'text'}
+          placeholder={f.type === 'url' || f.type === 'image' ? 'https://' : undefined}
           inputMode={f.type === 'int' || f.type === 'user_id' ? 'numeric' : f.type === 'money' || f.type === 'decimal' ? 'decimal' : undefined}
           className={f.type === 'text' ? undefined : 'font-mono'}
           value={s}

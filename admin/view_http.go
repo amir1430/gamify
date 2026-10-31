@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -345,8 +346,17 @@ func parseField(f Field, b json.RawMessage) (any, bool) {
 	case Time:
 		t, err := time.Parse(time.RFC3339, s)
 		return t, err == nil
+	case URL, Image:
+		return s, webURL(s)
 	}
 	return s, true // Text
+}
+
+// webURL reports whether s is an absolute http(s) URL (never javascript: or data:, which the
+// console would put in an href or src).
+func webURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // maxSafeInt is 2^53: beyond it a JSON number loses precision in the browser.

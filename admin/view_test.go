@@ -173,6 +173,10 @@ func TestViewValidation(t *testing.T) {
 		"nil run":              {"close", func(v *View) { v.Actions[0].Run = nil }},
 		"action unknown perm":  {"close", func(v *View) { v.Actions[0].Perm = "things.open" }},
 		"field enum no option": {"kind", func(v *View) { v.Actions[0].Fields = []Field{{Key: "kind", Type: Enum}} }},
+		"image filter": {"pic", func(v *View) {
+			v.Columns = append(v.Columns, Column{Key: "pic", Type: Image})
+			v.Filters = append(v.Filters, Filter{Key: "pic", Type: Image})
+		}},
 	} {
 		v := thingsView(a)
 		c.f(&v)
@@ -333,6 +337,7 @@ func TestViewActionInput(t *testing.T) {
 		{Key: "kind", Type: Enum, Options: []string{"a", "b"}},
 		{Key: "note", Type: Text},
 		{Key: "at", Type: Time},
+		{Key: "link", Type: URL},
 	}, Run: func(ctx context.Context, tx pgx.Tx, c Call) (any, any, error) {
 		got = c.Input
 		return nil, nil, nil
@@ -350,6 +355,8 @@ func TestViewActionInput(t *testing.T) {
 		"bad enum":         {"n": 1, "kind": "c"},
 		"bad bool":         {"n": 1, "on": "yes"},
 		"bad time":         {"n": 1, "at": "yesterday"},
+		"url no scheme":    {"n": 1, "link": "example.com/x"},
+		"javascript url":   {"n": 1, "link": "javascript:alert(1)"},
 	} {
 		st, body := call(t, viewer, srv, "POST", path, map[string]any{"input": in})
 		wantErr(t, name, st, body, 400, "bad_input")
@@ -359,10 +366,11 @@ func TestViewActionInput(t *testing.T) {
 	}
 	if st, body := call(t, viewer, srv, "POST", path, map[string]any{"input": map[string]any{
 		"n": "1152921504606846976", "amount": 250, "on": true, "kind": "b", "note": "hi", "at": "2026-10-21T10:00:00Z",
+		"link": "https://example.com/x",
 	}}); st != 204 {
 		t.Fatalf("set: %d %v", st, body)
 	}
-	if got["n"] != int64(1<<60) || got["amount"] != int64(250) || got["on"] != true || got["kind"] != "b" || got["note"] != "hi" {
+	if got["n"] != int64(1<<60) || got["amount"] != int64(250) || got["on"] != true || got["kind"] != "b" || got["note"] != "hi" || got["link"] != "https://example.com/x" {
 		t.Fatalf("input = %#v", got)
 	}
 }
