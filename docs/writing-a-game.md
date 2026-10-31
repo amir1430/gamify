@@ -150,7 +150,11 @@ Never put a user ID or anything private in a public channel's messages.
 
 ## Admin view
 
-A game can add its own page to the admin console, described in Go; the console's UI draws it. Put
+A game can add its own page to the admin console, described in Go; the console's UI draws it: a
+sidebar entry under the view's `Group` (`/views/<name>`), a table with its filters in the URL, a
+detail dialog (with `Get`), each action as a form of its fields (prefilled from the row's columns of
+the same key) plus the reason and confirmation, and, with a `UserFilter`, a tab on the player page
+filtered to that player. Put
 it in a `<game>admin` subpackage (`arena/arenaadmin`) that imports `admin` and your game, so the
 game itself never imports `admin` and brands without the console don't pull it in. Export from the
 game only what the view needs. The brand calls `arenaadmin.Register(adm, s)` after

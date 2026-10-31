@@ -284,7 +284,8 @@ gamify admin add-user <email> <owner|operator|support|viewer>   # prints a one-t
 Pages: dashboard (players online, system balances per currency), players (profile, linked logins,
 wallet and adjustments, activity per game, seed pairs), games (on/off and limits per currency),
 adjustments with approval, audit log, console users, account. Games can add their own pages
-(`admin.View`, see the guide).
+(`admin.View`, see the guide): each gets a sidebar entry under its `Group` (`/views/<name>`), and a
+view with a `UserFilter` is also a tab on the player page.
 
 The console's UI is `admin/ui` (Vite, React, Refine, shadcn), built into `admin/ui/dist`, which is
 committed and embedded in the Go binary: Node is needed only to edit the UI. `make admin-ui`

@@ -32,6 +32,7 @@ import {
 } from '../ui'
 import { AdjustDialog, AdjustmentsTable } from './adjustments'
 import { playerName, type Player as PlayerRow } from './players'
+import { ViewTable, useViews } from './views'
 
 type Identity = { provider: string; subject: string; linked_at: string }
 type PlayerView = { user: PlayerRow; identities: Identity[]; balances: Record<string, number> }
@@ -50,10 +51,13 @@ type Seed = {
 const TABS = ['profile', 'auth', 'wallet', 'activity', 'seeds'] as const
 
 // One player (Nakama's account page): header with actions, then Profile, Authentication (linked
-// identities, unlink), Wallet (balances, adjustments), Activity (per game) and Seeds (with fairness).
+// identities, unlink), Wallet (balances, adjustments), Activity (per game) and Seeds (with fairness),
+// then a tab per brand view with a UserFilter (e.g. Restrictions), filtered to this player.
 export function Player() {
   const id = useParams().id!
-  const [tab, setTab] = useTab(TABS)
+  const playerViews = (useViews() ?? []).filter((v) => v.user_filter)
+  const [tab, setTab] = useTab<string>([...TABS, ...playerViews.map((v) => `view-${v.name}`)])
+  const shown = playerViews.find((v) => `view-${v.name}` === tab)
   const canIdentity = usePerm('identity')
   const canAdjust = usePerm('adjust')
   const { result: p, query } = useShow<PlayerView>({ resource: 'users', id })
@@ -108,7 +112,8 @@ export function Player() {
               { value: 'auth', label: 'Authentication', count: p.identities.length },
               { value: 'wallet', label: 'Wallet' },
               { value: 'activity', label: 'Activity' },
-              ...(hasSeeds ? [{ value: 'seeds' as const, label: 'Seeds' }] : []),
+              ...(hasSeeds ? [{ value: 'seeds', label: 'Seeds' }] : []),
+              ...playerViews.map((v) => ({ value: `view-${v.name}`, label: v.title })),
             ]}
           />
           {tab === 'profile' && (
@@ -122,6 +127,7 @@ export function Player() {
               ]}
             />
           )}
+          {shown && <ViewTable key={shown.name} view={shown} filters={{ [shown.user_filter]: String(u.id) }} hide={[shown.user_filter]} />}
           {tab === 'auth' && <Identities id={u.id} identities={p.identities} canUnlink={canIdentity} />}
           {tab === 'wallet' && <Wallet id={u.id} balances={p.balances} />}
           {tab === 'activity' && <ActivityTab id={u.id} />}

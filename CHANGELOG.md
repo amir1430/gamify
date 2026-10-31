@@ -5,6 +5,18 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.6] - 2026-10-31
+
+### Fixed
+- `admin` UI: brand views (`Admin.View`) were served by the API but never drawn, so no brand page
+  (and no restrictions editor) could be opened. The console now builds them from `GET /api/views`:
+  a sidebar section per `Group` between Operations and Admin, a page per view at `/views/<name>`
+  (typed columns, filters in the URL, keyset "Load more", a detail dialog when the view has `Get`),
+  actions as forms (fields by type, prefilled from the row's columns of the same key; the reason
+  when `Reason`; the `Confirm` text), and a player-page tab for each view with a `UserFilter`
+  (e.g. `restrictadmin`'s Restrictions). No API or Go change; rebuild nothing, the embedded
+  `admin/ui/dist` carries it.
+
 ## [1.1.5] - 2026-10-31
 
 ### Added

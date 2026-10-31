@@ -17,6 +17,7 @@ import { Dashboard } from './pages/dashboard'
 import { Games } from './pages/games'
 import { Player } from './pages/player'
 import { Players } from './pages/players'
+import { ViewPage } from './pages/views'
 import { notificationProvider, useMe } from './ui'
 
 // meta.perm: what the resource's pages need (the access provider checks it).
@@ -27,6 +28,8 @@ const RESOURCES = [
   { name: 'adjustments', list: '/adjustments', meta: { label: 'Adjustments', perm: 'view' } },
   { name: 'audit', list: '/audit', meta: { label: 'Audit log', perm: 'view' } },
   { name: 'admins', list: '/admins', meta: { label: 'Console users', perm: 'admins' } },
+  // The brand's views: the API checks each view's own perm (GET /api/views lists what the role may open).
+  { name: 'views', list: '/views/:name', meta: { label: 'Views' } },
 ]
 
 function NotFound() {
@@ -74,6 +77,7 @@ export function App() {
             <Route path="/adjustments" element={<Adjustments />} />
             <Route path="/audit" element={<Audit />} />
             <Route path="/admins" element={<Admins />} />
+            <Route path="/views/:name" element={<ViewPage />} />
             <Route path="/account" element={<Account />} />
             <Route path="*" element={<NotFound />} />
           </Route>

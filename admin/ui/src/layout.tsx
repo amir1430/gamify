@@ -1,5 +1,5 @@
 import { useLogout } from '@refinedev/core'
-import { ChevronsUpDown, Gamepad2, LayoutDashboard, LogOut, Monitor, Moon, ScrollText, Scale, Sun, UserCog, UserRound, Users } from 'lucide-react'
+import { ChevronsUpDown, Gamepad2, LayoutDashboard, LayoutList, LogOut, Monitor, Moon, ScrollText, Scale, Sun, UserCog, UserRound, Users } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, NavLink, Outlet } from 'react-router'
 import {
@@ -14,11 +14,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { setAccent, setTheme, useTheme, type Theme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
+import { groupViews } from '@/lib/views'
+import { useViews } from './pages/views'
 import { useMe, usePaged, usePerm } from './ui'
 
 type Item = { to: string; label: string; icon: typeof Users; perm: string; count?: number }
 
-// Brand views join Operations by their Group (Task 15).
+// The platform's pages; the brand's views (GET /api/views) come between Operations and Admin, a
+// section per Group.
 const GROUPS: { label: string; items: Item[] }[] = [
   { label: 'Overview', items: [{ to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: 'view' }] },
   {
@@ -140,10 +143,17 @@ function useGroups() {
   const me = useMe()
   const waiting = usePaged<{ requested_by: number }>('adjustments', { status: 'pending_approval' }, { enabled: approver, quiet: true })
   const count = waiting.rows?.filter((a) => a.requested_by !== me?.user.id).length
-  return GROUPS.map((g) => ({
-    ...g,
-    items: g.items.filter((i) => can[i.perm]).map((i) => (i.to === '/adjustments' && approver ? { ...i, count } : i)),
-  })).filter((g) => g.items.length)
+  // The API lists only the views this admin's role may open: no perm to check here.
+  const brand = groupViews(useViews() ?? []).map((g) => ({
+    label: g.label,
+    items: g.views.map((v): Item => ({ to: `/views/${v.name}`, label: v.title, icon: LayoutList, perm: '' })),
+  }))
+  return [...GROUPS.slice(0, 2), ...brand, ...GROUPS.slice(2)]
+    .map((g) => ({
+      ...g,
+      items: g.items.filter((i) => !i.perm || can[i.perm]).map((i) => (i.to === '/adjustments' && approver ? { ...i, count } : i)),
+    }))
+    .filter((g) => g.items.length)
 }
 
 // Sidebar on desktop; a top bar with the same links on narrow screens.
