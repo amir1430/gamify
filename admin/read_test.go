@@ -214,3 +214,162 @@ func TestPaginationLimits(t *testing.T) {
 		wantErr(t, q, st, body, 400, "bad_request")
 	}
 }
+
+// The lists' search and filters: free text, a time range, and the adjustments' other columns.
+func TestListFilters(t *testing.T) {
+	a, adm, srv, c, alice := readEnv(t)
+	ctx := context.Background()
+	ok := func(path string) []any {
+		t.Helper()
+		st, body := call(t, c, srv, "GET", path, nil)
+		if st != 200 {
+			t.Fatalf("GET %s: %d %v", path, st, body)
+		}
+		return body["items"].([]any)
+	}
+	bad := func(path string) {
+		t.Helper()
+		st, body := call(t, c, srv, "GET", path, nil)
+		wantErr(t, path, st, body, 400, "bad_request")
+	}
+
+	tx, err := a.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.audit(ctx, tx, nil, nil, "game.set", "game:Arena", nil, nil, "Weekend promo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.audit(ctx, tx, nil, nil, "game.set", "game:dice", nil, nil, "maintenance"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Pool.Exec(ctx, `UPDATE admin_audit SET created_at = '2020-01-02T00:00:00Z' WHERE target = 'game:dice'`); err != nil {
+		t.Fatal(err)
+	}
+	// q: part of the target, reason or action, any case; % and _ are literal.
+	for q, want := range map[string]int{"arena": 1, "PROMO": 1, "game.set": 2, "100%25": 0, "game_": 0} {
+		if n := len(ok("/api/audit?q=" + q)); n != want {
+			t.Fatalf("audit q=%s: %d rows, want %d", q, n, want)
+		}
+	}
+	if n := len(ok("/api/audit?action=game.set&until=2021-01-01T00:00:00Z")); n != 1 {
+		t.Fatalf("audit until: %d", n)
+	}
+	if n := len(ok("/api/audit?action=game.set&since=2021-01-01T00:00:00Z")); n != 1 {
+		t.Fatalf("audit since: %d", n)
+	}
+	bad("/api/audit?since=yesterday")
+	bad("/api/audit?until=1")
+
+	bob := a.User("bob")
+	addUser(t, a, "op@brand.example", RoleOperator)
+	var viewerID, opID int64
+	if err := a.Pool.QueryRow(ctx, `SELECT (SELECT id FROM admin_users WHERE email = 'viewer@brand.example'),
+		(SELECT id FROM admin_users WHERE email = 'op@brand.example')`).Scan(&viewerID, &opID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Pool.Exec(ctx, `INSERT INTO admin_adjustments (user_id, currency, amount, reason, requested_by, status, idempotency_key, created_at)
+		VALUES ($1, 'usd', 500, 'VIP gift', $3, 'done', 'f1', now()), ($2, 'usd', -5, 'fix', $4, 'done', 'f2', '2020-01-02T00:00:00Z'),
+		       ($2, 'eur', 7, 'fix', $4, 'done', 'f3', now())`, alice, bob, viewerID, opID); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]int{
+		"currency=usd":               2,
+		"currency=eur":               1,
+		"requested_by=2":             2,
+		"requested_by=1":             1,
+		"q=vip":                      1,
+		"q=FIX&currency=usd":         1,
+		"until=2021-01-01T00:00:00Z": 1,
+		"since=2021-01-01T00:00:00Z": 2,
+	} {
+		if n := len(ok("/api/adjustments?" + path)); n != want {
+			t.Fatalf("adjustments %s: %d rows, want %d", path, n, want)
+		}
+	}
+	bad("/api/adjustments?requested_by=x")
+	bad("/api/adjustments?since=x")
+}
+
+// The treasury: system accounts per currency, what players hold, and any account's history,
+// newest first with a running posted balance; a player's wallet history the same way.
+func TestTreasury(t *testing.T) {
+	a, _, srv, c, alice := readEnv(t)
+	ok := func(path string) map[string]any {
+		t.Helper()
+		st, body := call(t, c, srv, "GET", path, nil)
+		if st != 200 {
+			t.Fatalf("GET %s: %d %v", path, st, body)
+		}
+		return body
+	}
+	bad := func(path string, status int, code string) {
+		t.Helper()
+		st, body := call(t, c, srv, "GET", path, nil)
+		wantErr(t, path, st, body, status, code)
+	}
+
+	tr := ok("/api/treasury")
+	if tr["history"] != true || len(tr["kinds"].([]any)) == 0 {
+		t.Fatalf("treasury = %v", tr)
+	}
+	usd := tr["currencies"].(map[string]any)["usd"].(map[string]any)
+	accs := usd["accounts"].([]any)
+	if len(accs) < 9 || accs[0].(map[string]any)["name"] != "house" {
+		t.Fatalf("accounts = %v", accs)
+	}
+	var faucet map[string]any
+	for _, x := range accs {
+		if x.(map[string]any)["name"] == "faucet" {
+			faucet = x.(map[string]any)
+		}
+	}
+	if faucet["net"].(float64) > -10_000 || faucet["debits_posted"].(float64) < 10_000 {
+		t.Fatalf("faucet = %v", faucet)
+	}
+	if usd["players_posted"].(float64) < 10_000 {
+		t.Fatalf("players_posted = %v", usd["players_posted"])
+	}
+
+	a.Fund(alice, "usd", 250)
+	a.Fund(alice, "usd", 50)
+	w := ok(fmt.Sprintf("/api/users/%d/wallet?currency=usd&limit=2", alice))
+	items := w["items"].([]any)
+	first := items[0].(map[string]any)
+	if len(items) != 2 || first["kind"] != "top_up" || first["amount"] != 50.0 || first["other"].(map[string]any)["system"] != "faucet" {
+		t.Fatalf("wallet = %v", w)
+	}
+	bal := a.Balance(alice, "usd")
+	if first["balance"] != float64(bal) || items[1].(map[string]any)["balance"] != float64(bal-50) {
+		t.Fatalf("running balance %v, %v; balance %d", first["balance"], items[1].(map[string]any)["balance"], bal)
+	}
+	next, _ := w["next"].(string)
+	if next == "" {
+		t.Fatalf("next = %v", w["next"])
+	}
+	p2 := ok(fmt.Sprintf("/api/users/%d/wallet?currency=usd&limit=1&before=%s", alice, next))["items"].([]any)
+	if p2[0].(map[string]any)["balance"] != float64(bal-300) || p2[0].(map[string]any)["amount"] != 10_000.0 {
+		t.Fatalf("page 2 = %v", p2)
+	}
+	// Filtered: no running balance (entries are skipped).
+	f := ok(fmt.Sprintf("/api/users/%d/wallet?currency=usd&kind=charge", alice))["items"].([]any)
+	if len(f) != 0 {
+		t.Fatalf("charges = %v", f)
+	}
+	if _, has := ok(fmt.Sprintf("/api/users/%d/wallet?currency=usd&kind=top_up", alice))["items"].([]any)[0].(map[string]any)["balance"]; has {
+		t.Fatal("balance on a filtered list")
+	}
+
+	h := ok("/api/treasury/usd/faucet?limit=1")["items"].([]any)
+	if len(h) != 1 || h[0].(map[string]any)["other"].(map[string]any)["user"] != float64(alice) || h[0].(map[string]any)["amount"] != -50.0 {
+		t.Fatalf("faucet history = %v", h)
+	}
+	bad("/api/treasury/usd/vault", 404, "not_found")
+	bad("/api/treasury/xyz/house", 404, "not_found")
+	bad(fmt.Sprintf("/api/users/%d/wallet", alice), 400, "bad_request")
+	bad(fmt.Sprintf("/api/users/%d/wallet?currency=usd&kind=nope", alice), 400, "bad_request")
+	bad(fmt.Sprintf("/api/users/%d/wallet?currency=usd&before=x", alice), 400, "bad_request")
+}

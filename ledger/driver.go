@@ -24,6 +24,33 @@ type Driver interface {
 	LookupAccounts(ctx context.Context, ids []ID) ([]AccountBalance, error)
 }
 
+// TransferReader is optional for a Driver: it reads an account's transfers, with the semantics of
+// TigerBeetle's get_account_transfers. The admin console's treasury and wallet history use it, and
+// hide those views when the driver has none. A filter that can match nothing (no side, a zero
+// limit, min above max) returns none, not an error.
+type TransferReader interface {
+	GetAccountTransfers(ctx context.Context, f AccountFilter) ([]StoredTransfer, error)
+}
+
+// AccountFilter is TigerBeetle's AccountFilter, without user data (gamify sets none).
+type AccountFilter struct {
+	AccountID    ID
+	Code         uint16 // only transfers with this code; 0: any
+	TimestampMin uint64 // inclusive; 0: no bound
+	TimestampMax uint64 // inclusive; 0: no bound
+	Limit        uint32 // at most this many; a driver may cap it (TigerBeetle: a batch)
+	Debits       bool   // transfers debiting the account
+	Credits      bool   // transfers crediting it
+	Reversed     bool   // newest first
+}
+
+// StoredTransfer is a transfer as the driver applied it: the amount that moved (a balancing debit's
+// actual amount, a void's pending amount) and when.
+type StoredTransfer struct {
+	Transfer
+	Timestamp uint64 // nanoseconds since the UNIX epoch; unique and increasing in the order applied
+}
+
 // ID is a 128-bit account or transfer ID.
 type ID struct{ Hi, Lo uint64 }
 

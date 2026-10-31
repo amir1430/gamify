@@ -14,11 +14,12 @@ import { Adjustments } from './pages/adjustments'
 import { Admins } from './pages/admins'
 import { Audit } from './pages/audit'
 import { Dashboard } from './pages/dashboard'
-import { Games } from './pages/games'
+import { GamePage, Games } from './pages/games'
 import { OnlinePage } from './pages/online'
 import { Player } from './pages/player'
 import { Players } from './pages/players'
 import { System } from './pages/system'
+import { TreasuryPage } from './pages/treasury'
 import { ViewPage } from './pages/views'
 import { notificationProvider, useMe } from './ui'
 
@@ -27,7 +28,8 @@ const RESOURCES = [
   { name: 'dashboard', list: '/dashboard', meta: { label: 'Dashboard', perm: 'view' } },
   { name: 'online', list: '/online', meta: { label: 'Online now', perm: 'view' } },
   { name: 'system', list: '/system', meta: { label: 'System', perm: 'view' } },
-  { name: 'games', list: '/games', meta: { label: 'Games', perm: 'view' } },
+  { name: 'games', list: '/games', show: '/games/:name', meta: { label: 'Games', perm: 'view' } },
+  { name: 'treasury', list: '/treasury', meta: { label: 'Treasury', perm: 'view' } },
   { name: 'users', list: '/players', show: '/players/:id', meta: { label: 'Players', perm: 'view' } },
   { name: 'adjustments', list: '/adjustments', meta: { label: 'Adjustments', perm: 'view' } },
   { name: 'audit', list: '/audit', meta: { label: 'Audit log', perm: 'view' } },
@@ -78,6 +80,8 @@ export function App() {
             <Route path="/online" element={<OnlinePage />} />
             <Route path="/system" element={<System />} />
             <Route path="/games" element={<Games />} />
+            <Route path="/games/:name" element={<GamePage />} />
+            <Route path="/treasury" element={<TreasuryPage />} />
             <Route path="/players" element={<Players />} />
             <Route path="/players/:id" element={<Player />} />
             <Route path="/adjustments" element={<Adjustments />} />

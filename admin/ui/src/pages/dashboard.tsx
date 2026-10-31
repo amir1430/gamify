@@ -135,7 +135,14 @@ function Treasury({ d, loading }: { d?: Dashboard; loading: boolean }) {
       title="Treasury"
       icon={Landmark}
       bodyClassName="p-0"
-      actions={currencies.length > 1 && <CurrencyTabs value={cur} onChange={setCur} currencies={currencies} />}
+      actions={
+        <>
+          {currencies.length > 1 && <CurrencyTabs value={cur} onChange={setCur} currencies={currencies} />}
+          <Link to="/treasury" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+            Open <ArrowRight className="size-3" />
+          </Link>
+        </>
+      }
     >
       <div className="grid grid-cols-3 divide-x border-b">
         {[

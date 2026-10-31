@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/amir1430/gamify/admin/internal/store"
 	"github.com/amir1430/gamify/app"
 	"github.com/amir1430/gamify/auth"
@@ -68,6 +70,39 @@ func optInt(r *http.Request, name string) (*int64, error) {
 		return nil, badRequest(name + " must be an integer")
 	}
 	return &n, nil
+}
+
+// optTime reads an optional RFC 3339 time filter.
+func optTime(r *http.Request, name string) (pgtype.Timestamptz, error) {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return pgtype.Timestamptz{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return pgtype.Timestamptz{}, badRequest(name + " must be an RFC 3339 time")
+	}
+	return pgtype.Timestamptz{Time: t, Valid: true}, nil
+}
+
+// optLike reads an optional free-text filter as an ILIKE pattern matching it anywhere, with % and
+// _ taken literally.
+func optLike(r *http.Request, name string) *string {
+	v := strings.TrimSpace(r.URL.Query().Get(name))
+	if v == "" {
+		return nil
+	}
+	p := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(v) + "%"
+	return &p
+}
+
+// timeRange reads ?since= and ?until=.
+func timeRange(r *http.Request) (since, until pgtype.Timestamptz, err error) {
+	if since, err = optTime(r, "since"); err != nil {
+		return
+	}
+	until, err = optTime(r, "until")
+	return
 }
 
 func optStr(r *http.Request, name string) *string {
@@ -324,7 +359,12 @@ func (adm *Admin) auditList(w http.ResponseWriter, r *http.Request, _ *session) 
 	if err != nil {
 		return err
 	}
-	p := store.ListAuditParams{AdminID: who, Action: optStr(r, "action"), Target: optStr(r, "target"), MaxRows: limit}
+	since, until, err := timeRange(r)
+	if err != nil {
+		return err
+	}
+	p := store.ListAuditParams{AdminID: who, Action: optStr(r, "action"), Target: optStr(r, "target"),
+		Pattern: optLike(r, "q"), Since: since, Until: until, MaxRows: limit}
 	if before > 0 {
 		p.BeforeID = &before
 	}
@@ -376,7 +416,16 @@ func (adm *Admin) adjustments(w http.ResponseWriter, r *http.Request, _ *session
 	if err != nil {
 		return err
 	}
-	p := store.ListAdjustmentsParams{Status: status, UserID: user, MaxRows: limit}
+	by, err := optInt(r, "requested_by")
+	if err != nil {
+		return err
+	}
+	since, until, err := timeRange(r)
+	if err != nil {
+		return err
+	}
+	p := store.ListAdjustmentsParams{Status: status, UserID: user, Currency: optStr(r, "currency"), RequestedBy: by,
+		Pattern: optLike(r, "q"), Since: since, Until: until, MaxRows: limit}
 	if before > 0 {
 		p.BeforeID = &before
 	}

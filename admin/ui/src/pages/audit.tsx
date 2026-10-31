@@ -1,11 +1,12 @@
-import { Search } from 'lucide-react'
-import { useState } from 'react'
+import { useList } from '@refinedev/core'
+import { ListFilter } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { Button } from '@/components/ui/button'
+import { Chips, FilterBy, RangeFilter, SearchBox, useLiveParam, useParams, useRange } from '@/components/list'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { Choice, DataTable, ExportButton, Facts, Faint, Mono, PageHeader, Pill, Toolbar, When, dateTime, downloadCSV, useParam, usePaged } from '../ui'
+import { Choice, DataTable, ExportButton, Facts, Faint, Mono, PageHeader, Pill, Toolbar, When, dateTime, downloadCSV, useParam, usePaged, usePerm } from '../ui'
 
 type Entry = {
   id: number
@@ -19,105 +20,122 @@ type Entry = {
   created_at: string
 }
 
-// The platform's actions; brand views add view.<name>.<action>, typed into the filter as text.
-const ACTIONS = [
-  'login.ok',
-  'login.fail',
-  'logout',
-  'totp.enrol',
-  'admin.create',
-  'admin.update',
-  'admin.password',
-  'game.set',
-  'game.limit.set',
-  'game.limit.delete',
-  'user.unlink',
-  'user.disconnect',
-  'adjust.request',
-  'adjust.approve',
-  'adjust.reject',
+// The platform's actions by area; brand views add view.<name>.<action> (searchable as text).
+const ACTIONS: { label: string; options: string[] }[] = [
+  { label: 'Sign-in', options: ['login.ok', 'login.fail', 'logout', 'totp.enrol'] },
+  { label: 'Console users', options: ['admin.create', 'admin.update', 'admin.password'] },
+  { label: 'Games', options: ['game.set', 'game.limit.set', 'game.limit.delete'] },
+  { label: 'Players', options: ['user.unlink', 'user.disconnect'] },
+  { label: 'Adjustments', options: ['adjust.request', 'adjust.approve', 'adjust.reject'] },
 ]
+const KNOWN = ACTIONS.flatMap((g) => g.options)
 
-// Every console change and sign-in, newest first. Filters (?admin=, ?action=, ?target=) are the
-// API's; a row opens its before/after.
+type Admin = { id: number; email: string }
+
+// Every console change and sign-in, newest first. Search (?q=: action, target, reason) and filters
+// (?admin=, ?action=, ?target=, a time range) are the API's; a row opens its before/after, and its
+// action or admin filters the log by itself.
 export function Audit() {
+  const { set } = useParams()
   const [admin, setAdmin] = useParam('admin')
   const [action, setAction] = useParam('action')
   const [target, setTarget] = useParam('target')
-  const [text, setText] = useState({ admin, target })
+  const [text, setText, q] = useLiveParam('q')
+  const [idText, setIdText] = useState(admin)
+  const range = useRange()
   const [open, setOpen] = useState<Entry | null>(null)
-  const { rows, loading, more } = usePaged<Entry>('audit', { admin, action, target })
+  const canAdmins = usePerm('admins')
+  const admins = useList<Admin>({ resource: 'admins', pagination: { mode: 'off' }, queryOptions: { enabled: canAdmins }, errorNotification: false }).result.data
+  const email = (id: number | null) => (id == null ? null : (admins.find((x) => x.id === id)?.email ?? null))
+  const { rows, loading, more } = usePaged<Entry>('audit', { admin, action, target, q, since: range.since, until: range.until })
+  const clear = () => (setText(''), setIdText(''), set({ admin: null, action: null, target: null, q: null, range: null, from: null, to: null }))
+  const chips = [
+    q && { key: 'q', label: <>“{q}”</>, onRemove: () => setText('') },
+    action && { key: 'action', label: <>Action: {action}</>, onRemove: () => setAction(null) },
+    admin && { key: 'admin', label: <>By {email(Number(admin)) ?? `admin #${admin}`}</>, onRemove: () => (setAdmin(null), setIdText('')) },
+    target && { key: 'target', label: <>Target: {target}</>, onRemove: () => setTarget(null) },
+    range.range && { key: 'range', label: range.label, onRemove: () => range.set('') },
+  ].filter((c) => !!c) as { key: string; label: ReactNode; onRemove: () => void }[]
 
   return (
     <>
       <PageHeader title="Audit log" description="Every change made from the console, with who, why and what it was before and after." />
       <Toolbar>
+        <SearchBox value={text} onChange={setText} placeholder="Search action, target or reason" />
         <Choice
           label="Action"
-          value={ACTIONS.includes(action) ? action : ''}
+          value={!action || KNOWN.includes(action) ? action : 'other'}
           onChange={(v) => setAction(v || null)}
-          options={[{ value: '', label: 'All actions' }, ...ACTIONS.map((a) => ({ value: a, label: a }))]}
+          options={[{ value: '', label: 'All actions' }, ...(action && !KNOWN.includes(action) ? [{ value: 'other', label: action }] : [])]}
+          groups={ACTIONS.map((g) => ({ label: g.label, options: g.options.map((o) => ({ value: o, label: o })) }))}
         />
-        <form
-          className="flex flex-wrap gap-2"
-          onSubmit={(e) => {
-            e.preventDefault()
-            setAdmin(text.admin.trim() || null)
-            setTarget(text.target.trim() || null)
-          }}
-        >
+        {canAdmins ? (
+          <Choice
+            label="Console user"
+            className="min-w-44"
+            value={admin}
+            onChange={(v) => setAdmin(v || null)}
+            options={[{ value: '', label: 'Any console user' }, ...admins.map((x) => ({ value: String(x.id), label: x.email }))]}
+          />
+        ) : (
           <Input
             className="w-32"
             inputMode="numeric"
             placeholder="Admin ID"
-            value={text.admin}
-            onChange={(e) => setText((t) => ({ ...t, admin: e.target.value }))}
+            value={idText}
+            onChange={(e) => {
+              const v = e.target.value.replace(/\D/g, '')
+              setIdText(v)
+              setAdmin(v || null)
+            }}
             aria-label="Admin ID"
           />
-          <div className="relative w-full max-w-xs">
-            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="pl-8"
-              type="search"
-              placeholder="Target, e.g. user:42 or game:arena"
-              value={text.target}
-              onChange={(e) => setText((t) => ({ ...t, target: e.target.value }))}
-              aria-label="Target"
-            />
-          </div>
-          <Button type="submit" variant="outline">
-            Filter
-          </Button>
-        </form>
-        {(admin || action || target) && (
-          <Button variant="ghost" size="sm" onClick={() => (setAdmin(null), setAction(null), setTarget(null), setText({ admin: '', target: '' }))}>
-            Clear
-          </Button>
         )}
+        <RangeFilter r={range} />
         <div className="ml-auto">
           <ExportButton
             disabled={!rows?.length}
             onExport={() =>
               downloadCSV(
                 'audit',
-                ['id', 'created_at', 'admin_id', 'action', 'target', 'reason', 'ip', 'before', 'after'],
-                (rows ?? []).map((e) => [e.id, e.created_at, e.admin_id, e.action, e.target, e.reason, e.ip, e.before, e.after]),
+                ['id', 'created_at', 'admin_id', 'admin_email', 'action', 'target', 'reason', 'ip', 'before', 'after'],
+                (rows ?? []).map((e) => [e.id, e.created_at, e.admin_id, email(e.admin_id), e.action, e.target, e.reason, e.ip, e.before, e.after]),
               )
             }
           />
         </div>
       </Toolbar>
+      <Chips items={chips} onClear={clear} />
       <DataTable
         rows={rows}
         loading={loading}
         rowKey={(e) => e.id}
-        empty={admin || action || target ? 'No entries match these filters.' : 'No entries yet.'}
+        empty={chips.length ? 'No entries match these filters.' : 'No entries yet.'}
         onRowClick={setOpen}
         columns={[
           { key: 'when', title: 'When', render: (e) => <When at={e.created_at} /> },
-          { key: 'admin', title: 'Admin', render: (e) => (e.admin_id == null ? <Faint /> : <Mono>#{e.admin_id}</Mono>) },
-          { key: 'action', title: 'Action', render: (e) => <Pill tone={e.action === 'login.fail' ? 'danger' : 'neutral'}>{e.action}</Pill> },
-          { key: 'target', title: 'Target', render: (e) => <Target t={e.target} /> },
+          {
+            key: 'admin',
+            title: 'Admin',
+            render: (e) =>
+              e.admin_id == null ? (
+                <Faint />
+              ) : (
+                <FilterBy on={() => (setAdmin(String(e.admin_id)), setIdText(String(e.admin_id)))} title="Only this console user">
+                  <span className="text-xs">{email(e.admin_id) ?? <Mono>#{e.admin_id}</Mono>}</span>
+                </FilterBy>
+              ),
+          },
+          {
+            key: 'action',
+            title: 'Action',
+            render: (e) => (
+              <FilterBy on={() => setAction(e.action)} title="Only this action">
+                <Pill tone={e.action === 'login.fail' ? 'danger' : 'neutral'}>{e.action}</Pill>
+              </FilterBy>
+            ),
+          },
+          { key: 'target', title: 'Target', render: (e) => <Target t={e.target} onFilter={() => setTarget(e.target)} /> },
           { key: 'reason', title: 'Reason', className: 'whitespace-normal min-w-48 text-muted-foreground', render: (e) => e.reason || <Faint /> },
           { key: 'ip', title: 'IP', render: (e) => (e.ip ? <Mono>{e.ip}</Mono> : <Faint />) },
         ]}
@@ -128,15 +146,31 @@ export function Audit() {
   )
 }
 
-// user:42 → the player, adjust:7 → adjustments, game:arena/… → games; anything else as text.
-function Target({ t }: { t: string }) {
-  const [kind, rest] = t.split(/:(.*)/s)
-  const to = kind === 'user' ? `/players/${rest}` : kind === 'adjust' ? '/adjustments' : kind === 'game' ? '/games' : null
-  if (!to) return <Mono>{t}</Mono>
+// user:42 → the player, adjust:7 → adjustments, game:arena/… → the game; anything else as text.
+// The funnel filters the log to this target.
+function Target({ t, onFilter }: { t: string; onFilter: () => void }) {
+  const [kind, rest = ''] = t.split(/:(.*)/s)
+  const to =
+    kind === 'user' ? `/players/${rest}` : kind === 'adjust' ? '/adjustments' : kind === 'game' ? `/games/${encodeURIComponent(rest.split('/')[0])}` : null
   return (
-    <Link to={to} className="font-mono text-xs text-brand hover:underline" onClick={(e) => e.stopPropagation()}>
-      {t}
-    </Link>
+    <span className="group inline-flex items-center gap-1.5">
+      {to ? (
+        <Link to={to} className="font-mono text-xs text-brand hover:underline" onClick={(e) => e.stopPropagation()}>
+          {t}
+        </Link>
+      ) : (
+        <Mono>{t}</Mono>
+      )}
+      <button
+        type="button"
+        title="Only this target"
+        aria-label="Only this target"
+        onClick={(e) => (e.stopPropagation(), onFilter())}
+        className="text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
+      >
+        <ListFilter className="size-3.5" />
+      </button>
+    </span>
   )
 }
 

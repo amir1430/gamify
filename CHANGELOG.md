@@ -5,6 +5,49 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.11] - 2026-10-31
+
+### Added
+- `admin` UI: Coolify-style list tools so long lists stay quick to scan.
+  - Games: a grid of compact cards (name, status, variants, currencies, overrides, open switch) or
+    a table, with search (name, variant, currency), filters (status, mode, overrides, variants,
+    currency), sort and pages. Each game's limits moved to its own page, `/games/:name`, with
+    currency tabs and, for games with many variants, a variant search and an "overrides only"
+    switch.
+  - Console users and Online now: search, a filter menu, sort, pages and filter chips.
+  - Players: the search runs as you type.
+  - Audit log: search over action, target and reason, actions grouped by area, console users
+    picked by email (owners), a time range (presets or custom), and a click on a row's action,
+    admin or target filters by it.
+  - Adjustments: search over the reason, and currency, player, requester ("me") and time range
+    filters; a click on a status or requester filters by it.
+  - Every choice lives in the URL (shareable); the page size and grid/table choice are remembered
+    per browser. The command palette (⌘K) also finds games.
+- `admin` API: `GET /api/audit` takes `q` (part of the action, target or reason, any case),
+  `since` and `until` (RFC 3339). `GET /api/adjustments` takes `currency`, `requested_by`, `q`
+  (part of the reason), `since` and `until`.
+
+- `ledger.TransferReader`, an optional driver interface with the semantics of TigerBeetle's
+  `get_account_transfers` (`AccountFilter`, `StoredTransfer`: the amount that moved and a unique,
+  increasing nanosecond timestamp). Both drivers implement it; `ledgertest` covers it on each.
+- `ledger.Ledger.History` (an account's entries newest first: kind, game, operation, stage,
+  signed amount, effect on the posted balance, the other side), `Totals`, `HasHistory`,
+  `GameName`, and `ledger.SystemAccounts`, `ledger.TransferKinds`, `ledger.Party`,
+  `ledger.ErrNoHistory`.
+- `admin`: a Treasury page (`/treasury`): what players hold and have in play, house net,
+  deposits, rewards and sales, a card per system account with its totals, and the chosen
+  account's transfers filtered by kind and time, with a running balance and CSV export. The
+  player page's Wallet tab shows the player's own ledger the same way.
+- `admin` API: `GET /api/treasury`, `GET /api/treasury/{currency}/{account}` and
+  `GET /api/users/{id}/wallet?currency=` (history: `kind`, `since`, `until`, `limit`, `before`).
+
+Upgrade: the Postgres ledger driver has a migration (`00002_transfer_timestamps`): it adds
+`ledger_transfers.ts`, fills it for existing transfers one row at a time (minutes on a large table;
+the table is locked meanwhile, so run it in a quiet window) and adds the `ledger_clock` table. A
+batch that writes transfers now also takes `ledger_clock`'s row lock for the moment before its
+commit. No API change breaks: a brand's own `ledger.Driver` keeps compiling, and the console hides
+history until it implements `ledger.TransferReader`. Links to `/games` still work.
+
 ## [1.1.10] - 2026-10-31
 
 ### Added

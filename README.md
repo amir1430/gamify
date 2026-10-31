@@ -184,6 +184,12 @@ type Driver interface {
 	LookupAccounts(ctx, []ID) ([]AccountBalance, error)
 }
 
+// ledger.TransferReader: optional, TigerBeetle's get_account_transfers. Both drivers have it; the
+// console's treasury and wallet history need it and hide without it.
+type TransferReader interface {
+	GetAccountTransfers(ctx, AccountFilter) ([]StoredTransfer, error)
+}
+
 // realtime.Transport
 type Transport interface {
 	Publish(ctx, channel string, data []byte) error
@@ -195,7 +201,8 @@ type Transport interface {
 }
 ```
 
-To add a ledger driver, implement `ledger.Driver` and call `ledgertest.Run` from its test. It has
+To add a ledger driver, implement `ledger.Driver` (and `ledger.TransferReader` for history) and
+call `ledgertest.Run` from its test. It has
 to pass the same suite as TigerBeetle: that suite is the definition of correct. The Postgres driver
 is the worked example.
 
@@ -283,11 +290,15 @@ gamify admin add-user <email> <owner|operator|support|viewer>   # prints a one-t
 ```
 
 Pages: dashboard (players online, new and active players, sign-ups per day, adjustments waiting
-approval, treasury per currency, recent console activity, health), online now, players (profile,
-presence, linked logins, wallet and adjustments, activity per game, seed pairs, console history),
-games (on/off and limits per currency), adjustments with approval, audit log, console users, system
+approval, treasury per currency, recent console activity, health), online now, treasury (what
+players hold and have in play, each system account's totals and transfers), players (profile,
+presence, linked logins, wallet with its ledger history and adjustments, activity per game, seed pairs, console history),
+games (a searchable, filterable grid or table; a page per game with its limits per currency and
+variant), adjustments with approval, audit log, console users, system
 (dependencies' health, build, process, DB pool, currencies, RPCs, roles × permissions), account.
-`⌘K` / `Ctrl+K` opens a command palette for pages and players; lists export as CSV. Games can add their own pages
+Lists search as you type and filter, sort and page like Coolify's (choices in the URL, so a filtered
+list is a link); the audit log and adjustments also filter by time range. `⌘K` / `Ctrl+K` opens a
+command palette for pages, games and players; lists export as CSV. Games can add their own pages
 (`admin.View`, see the guide): each gets a sidebar entry under its `Group` (`/views/<name>`), and a
 view with a `UserFilter` is also a tab on the player page.
 

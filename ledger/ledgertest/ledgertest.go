@@ -39,6 +39,7 @@ func Run(t *testing.T, newDriver func(t *testing.T) ledger.Driver) {
 	t.Run("Driver", func(t *testing.T) { driverSuite(t, newDriver(t)) })
 	t.Run("Ledger", func(t *testing.T) { ledgerSuite(t, newDriver(t)) })
 	t.Run("Pots", func(t *testing.T) { potSuite(t, newDriver(t)) })
+	t.Run("TransferReader", func(t *testing.T) { readerSuite(t, newDriver(t)) })
 }
 
 func rid() uint64 { return 1<<40 + rand.Uint64N(1<<40) }
@@ -229,6 +230,128 @@ func driverSuite(t *testing.T, d ledger.Driver) {
 	})
 }
 
+// --- TransferReader contract (optional) ---
+
+func readerSuite(t *testing.T, d ledger.Driver) {
+	r, ok := d.(ledger.TransferReader)
+	if !ok {
+		t.Skip("driver has no TransferReader")
+	}
+	ctx := context.Background()
+	const lg = 9
+	acc := func(noOverdraft bool) ledger.ID {
+		id := ledger.ID{Hi: 9, Lo: rid()}
+		must(t, d.CreateAccounts(ctx, []ledger.Account{{ID: id, Ledger: lg, Code: 1, NoOverdraft: noOverdraft}}))
+		return id
+	}
+	tid := func() ledger.ID { return ledger.ID{Hi: 1 << 50, Lo: rid()} }
+	apply := func(ts ...ledger.Transfer) {
+		t.Helper()
+		res, err := d.CreateTransfers(ctx, ts)
+		must(t, err)
+		if len(res) != 0 {
+			t.Fatalf("results %v", res)
+		}
+	}
+	get := func(f ledger.AccountFilter) []ledger.StoredTransfer {
+		t.Helper()
+		got, err := r.GetAccountTransfers(ctx, f)
+		must(t, err)
+		return got
+	}
+	ids := func(ts []ledger.StoredTransfer) []ledger.ID {
+		out := make([]ledger.ID, len(ts))
+		for i, x := range ts {
+			out[i] = x.ID
+		}
+		return out
+	}
+	wantIDs := func(what string, got []ledger.StoredTransfer, w ...ledger.ID) {
+		t.Helper()
+		if !slices.Equal(ids(got), w) {
+			t.Fatalf("%s: %v, want %v", what, ids(got), w)
+		}
+	}
+
+	src, user, house := acc(false), acc(true), acc(false)
+	t1 := ledger.Transfer{ID: tid(), Debit: src, Credit: user, Amount: 100, Ledger: lg, Code: 7}
+	apply(t1)
+	t2 := ledger.Transfer{ID: tid(), Debit: user, Credit: house, Amount: 30, Ledger: lg, Code: 1, Flags: ledger.Flags{Pending: true}}
+	t3 := ledger.Transfer{ID: tid(), PendingID: t2.ID, Debit: user, Credit: house, Amount: 30, Ledger: lg, Code: 1, Flags: ledger.Flags{PostPending: true}}
+	apply(t2, t3)
+	t4 := ledger.Transfer{ID: tid(), Debit: user, Credit: house, Amount: 10, Ledger: lg, Code: 1, Flags: ledger.Flags{Pending: true}}
+	apply(t4)
+	t5 := ledger.Transfer{ID: tid(), PendingID: t4.ID, Debit: user, Credit: house, Ledger: lg, Code: 1, Flags: ledger.Flags{VoidPending: true}}
+	apply(t5)
+	// Refused transfers and broken chains leave nothing to read.
+	if res, err := d.CreateTransfers(ctx, []ledger.Transfer{
+		{ID: tid(), Debit: user, Credit: house, Amount: 1000, Ledger: lg, Code: 1},
+		{ID: tid(), Debit: src, Credit: user, Amount: 1, Ledger: lg, Code: 1, Flags: ledger.Flags{Linked: true}},
+		{ID: tid(), Debit: user, Credit: house, Amount: 1000, Ledger: lg, Code: 1},
+	}); err != nil || len(res) != 3 {
+		t.Fatalf("refusals: %v %v", res, err)
+	}
+	t6 := ledger.Transfer{ID: tid(), Debit: user, Credit: house, Amount: ledger.AmountMax, Ledger: lg, Code: 1, Flags: ledger.Flags{BalancingDebit: true}}
+	apply(t6)
+
+	both := ledger.AccountFilter{AccountID: user, Limit: 100, Debits: true, Credits: true}
+	all := get(both)
+	wantIDs("all", all, t1.ID, t2.ID, t3.ID, t4.ID, t5.ID, t6.ID)
+	for i, x := range all {
+		if x.Timestamp == 0 || (i > 0 && x.Timestamp <= all[i-1].Timestamp) {
+			t.Fatalf("timestamps not increasing: %d after %d", x.Timestamp, all[max(i-1, 0)].Timestamp)
+		}
+	}
+	// Stored as applied: the fields given, the amount that moved.
+	want(t, "t1", all[0].Transfer, t1)
+	want(t, "t3 pending id", all[2].PendingID, t2.ID)
+	want(t, "t3 flags", all[2].Flags, ledger.Flags{PostPending: true})
+	want(t, "t2 flags", all[1].Flags, ledger.Flags{Pending: true})
+	want(t, "t5 void amount", all[4].Amount, uint64(10))
+	want(t, "t6 balancing amount", all[5].Amount, uint64(70))
+	want(t, "t6 debit", all[5].Debit, user)
+
+	rev := both
+	rev.Reversed = true
+	wantIDs("reversed", get(rev), t6.ID, t5.ID, t4.ID, t3.ID, t2.ID, t1.ID)
+	deb := both
+	deb.Credits = false
+	wantIDs("debits", get(deb), t2.ID, t3.ID, t4.ID, t5.ID, t6.ID)
+	cred := both
+	cred.Debits = false
+	wantIDs("credits", get(cred), t1.ID)
+	code := both
+	code.Code = 7
+	wantIDs("code", get(code), t1.ID)
+
+	// Pages by timestamp, both ways.
+	page := both
+	page.Limit = 2
+	p1 := get(page)
+	wantIDs("page 1", p1, t1.ID, t2.ID)
+	page.TimestampMin = p1[1].Timestamp + 1
+	wantIDs("page 2", get(page), t3.ID, t4.ID)
+	back := rev
+	back.Limit = 2
+	back.TimestampMax = all[3].Timestamp - 1
+	wantIDs("back", get(back), t3.ID, t2.ID)
+	span := both
+	span.TimestampMin, span.TimestampMax = all[1].Timestamp, all[2].Timestamp
+	wantIDs("span", get(span), t2.ID, t3.ID)
+
+	// Filters that match nothing.
+	wantIDs("house of none", get(ledger.AccountFilter{AccountID: ledger.ID{Hi: 9, Lo: rid()}, Limit: 10, Debits: true, Credits: true}))
+	zero := both
+	zero.Limit = 0
+	wantIDs("limit 0", get(zero))
+	none := both
+	none.Debits, none.Credits = false, false
+	wantIDs("no side", get(none))
+	inverted := both
+	inverted.TimestampMin, inverted.TimestampMax = all[2].Timestamp, all[1].Timestamp
+	wantIDs("min above max", get(inverted))
+}
+
 // --- Ledger flows ---
 
 type fixture struct {
@@ -286,6 +409,91 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 		must(t, f.l.SettleInstant(ctx, instant, "usd", int64(rid()), u, 0, 0)) // demo
 		if err := f.l.SettleInstant(ctx, instant, "eur", int64(rid()), u, 1, 0); err == nil {
 			t.Fatal("unknown currency accepted")
+		}
+	})
+
+	t.Run("history", func(t *testing.T) {
+		if !f.l.HasHistory() {
+			t.Skip("driver has no TransferReader")
+		}
+		u := f.user() // welcome tickets, then a $10 top-up
+		op := int64(rid())
+		must(t, f.l.SettleInstant(ctx, instant, "usd", op, u, 300, 500))
+		hop := int64(rid())
+		must(t, f.l.Hold(ctx, held, "usd", hop, u, 200))
+		must(t, f.l.SettleHeld(ctx, held, "usd", hop, u, 200, 0))
+		must(t, f.l.Adjust(ctx, "usd", int64(rid()), u, -50))
+
+		h, err := f.l.History(ctx, "usd", ledger.Party{User: u}, ledger.HistoryFilter{Limit: 100})
+		must(t, err)
+		type row struct {
+			kind, stage  string
+			game         ledger.Game
+			amount, post int64
+			other        ledger.Party
+		}
+		var got []row
+		for _, e := range h {
+			got = append(got, row{e.Kind, e.Stage, e.Game, e.Amount, e.Posted, e.Other})
+		}
+		house := ledger.Party{System: "house"}
+		w := []row{
+			{"adjustment", "posted", 0, -50, -50, ledger.Party{System: "adjust"}},
+			{"charge", "settled", held, -200, -200, house},
+			{"charge", "held", held, -200, 0, house},
+			{"payout", "posted", instant, 500, 500, house},
+			{"charge", "posted", instant, -300, -300, house},
+			{"top_up", "posted", 0, 1000, 1000, ledger.Party{System: "faucet"}},
+		}
+		if !slices.Equal(got, w) {
+			t.Fatalf("history\n got %v\nwant %v", got, w)
+		}
+		// A running posted balance from today's back to zero.
+		sum := int64(0)
+		for _, e := range h {
+			sum += e.Posted
+		}
+		want(t, "posted sum", sum, f.bal(u, "usd"))
+		for i := 1; i < len(h); i++ {
+			if !h[i].At.Before(h[i-1].At) && h[i].Timestamp >= h[i-1].Timestamp {
+				t.Fatalf("not newest first at %d", i)
+			}
+		}
+
+		// Pages, kinds, a time range.
+		p1, err := f.l.History(ctx, "usd", ledger.Party{User: u}, ledger.HistoryFilter{Limit: 2})
+		must(t, err)
+		p2, err := f.l.History(ctx, "usd", ledger.Party{User: u}, ledger.HistoryFilter{Limit: 2, Before: p1[1].Timestamp})
+		must(t, err)
+		want(t, "page 2", p2[0].ID, h[2].ID)
+		charges, err := f.l.History(ctx, "usd", ledger.Party{User: u}, ledger.HistoryFilter{Limit: 100, Kind: "charge"})
+		must(t, err)
+		want(t, "charges", len(charges), 3)
+		late, err := f.l.History(ctx, "usd", ledger.Party{User: u}, ledger.HistoryFilter{Limit: 100, Since: h[1].At})
+		must(t, err)
+		want(t, "since", len(late) >= 2 && late[len(late)-1].At.Compare(h[1].At) >= 0, true)
+		none, err := f.l.History(ctx, "usd", ledger.Party{User: u}, ledger.HistoryFilter{Limit: 100, Until: h[len(h)-1].At})
+		must(t, err)
+		want(t, "until excludes", len(none), 0)
+		if _, err := f.l.History(ctx, "usd", ledger.Party{User: u}, ledger.HistoryFilter{Limit: 1, Kind: "nope"}); err == nil {
+			t.Fatal("unknown kind accepted")
+		}
+
+		// The house sees the same operation from its side.
+		hh, err := f.l.History(ctx, "usd", house, ledger.HistoryFilter{Limit: 5, Since: h[len(h)-2].At})
+		must(t, err)
+		found := false
+		for _, e := range hh {
+			if e.Op == op && e.Kind == "payout" {
+				found = e.Amount == -500 && e.Other == ledger.Party{User: u} && e.Game == instant
+			}
+		}
+		want(t, "house payout", found, true)
+		tot, err := f.l.Totals(ctx, "usd", ledger.Party{User: u})
+		must(t, err)
+		want(t, "totals", tot.CreditsPosted-tot.DebitsPosted, sum)
+		if _, err := f.l.Totals(ctx, "usd", ledger.Party{System: "vault"}); err == nil {
+			t.Fatal("unknown system account accepted")
 		}
 	})
 

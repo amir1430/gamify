@@ -108,6 +108,7 @@ func (adm *Admin) register() {
 	adm.enrolment("POST /api/totp/enrol", adm.enrol)
 	adm.handle("GET /api/me", "", adm.me)
 	adm.registerReads()
+	adm.registerTreasury()
 	adm.registerWrites()
 	adm.registerAdmins()
 	adm.registerAdjustments()

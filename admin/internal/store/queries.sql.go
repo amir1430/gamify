@@ -524,22 +524,38 @@ SELECT id, user_id, currency, amount, reason, requested_by, approved_by, status,
 WHERE ($1::bigint IS NULL OR id < $1)
   AND ($2::text IS NULL OR status = $2)
   AND ($3::bigint IS NULL OR user_id = $3)
-ORDER BY id DESC LIMIT $4
+  AND ($4::text IS NULL OR currency = $4)
+  AND ($5::bigint IS NULL OR requested_by = $5)
+  AND ($6::text IS NULL OR reason ILIKE $6)
+  AND ($7::timestamptz IS NULL OR created_at >= $7)
+  AND ($8::timestamptz IS NULL OR created_at < $8)
+ORDER BY id DESC LIMIT $9
 `
 
 type ListAdjustmentsParams struct {
-	BeforeID *int64
-	Status   *string
-	UserID   *int64
-	MaxRows  int32
+	BeforeID    *int64
+	Status      *string
+	UserID      *int64
+	Currency    *string
+	RequestedBy *int64
+	Pattern     *string
+	Since       pgtype.Timestamptz
+	Until       pgtype.Timestamptz
+	MaxRows     int32
 }
 
-// ListAdjustments lists adjustments newest first; every filter is optional.
+// ListAdjustments lists adjustments newest first; every filter is optional. pattern is an ILIKE
+// pattern over the reason; since and until bound created_at (since inclusive).
 func (q *Queries) ListAdjustments(ctx context.Context, arg ListAdjustmentsParams) ([]AdminAdjustment, error) {
 	rows, err := q.db.Query(ctx, listAdjustments,
 		arg.BeforeID,
 		arg.Status,
 		arg.UserID,
+		arg.Currency,
+		arg.RequestedBy,
+		arg.Pattern,
+		arg.Since,
+		arg.Until,
 		arg.MaxRows,
 	)
 	if err != nil {
@@ -624,7 +640,11 @@ WHERE ($1::bigint IS NULL OR id < $1)
   AND ($2::bigint IS NULL OR admin_id = $2)
   AND ($3::text IS NULL OR action = $3)
   AND ($4::text IS NULL OR target = $4)
-ORDER BY id DESC LIMIT $5
+  AND ($5::text IS NULL OR action ILIKE $5 OR target ILIKE $5
+       OR reason ILIKE $5)
+  AND ($6::timestamptz IS NULL OR created_at >= $6)
+  AND ($7::timestamptz IS NULL OR created_at < $7)
+ORDER BY id DESC LIMIT $8
 `
 
 type ListAuditParams struct {
@@ -632,16 +652,23 @@ type ListAuditParams struct {
 	AdminID  *int64
 	Action   *string
 	Target   *string
+	Pattern  *string
+	Since    pgtype.Timestamptz
+	Until    pgtype.Timestamptz
 	MaxRows  int32
 }
 
-// ListAudit lists audit rows newest first; every filter is optional.
+// ListAudit lists audit rows newest first; every filter is optional. pattern is an ILIKE pattern
+// over the action, target and reason; since and until bound created_at (since inclusive).
 func (q *Queries) ListAudit(ctx context.Context, arg ListAuditParams) ([]AdminAudit, error) {
 	rows, err := q.db.Query(ctx, listAudit,
 		arg.BeforeID,
 		arg.AdminID,
 		arg.Action,
 		arg.Target,
+		arg.Pattern,
+		arg.Since,
+		arg.Until,
 		arg.MaxRows,
 	)
 	if err != nil {

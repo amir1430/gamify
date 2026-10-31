@@ -38,6 +38,7 @@ func (r iteratorForInsertTransfers) Values() ([]interface{}, error) {
 		r.rows[0].Code,
 		r.rows[0].Flags,
 		r.rows[0].PendingState,
+		r.rows[0].Ts,
 	}, nil
 }
 
@@ -46,5 +47,5 @@ func (r iteratorForInsertTransfers) Err() error {
 }
 
 func (q *Queries) InsertTransfers(ctx context.Context, arg []InsertTransfersParams) (int64, error) {
-	return q.db.CopyFrom(ctx, []string{"ledger_transfers"}, []string{"id", "debit", "credit", "amount", "pending_id", "ledger", "code", "flags", "pending_state"}, &iteratorForInsertTransfers{rows: arg})
+	return q.db.CopyFrom(ctx, []string{"ledger_transfers"}, []string{"id", "debit", "credit", "amount", "pending_id", "ledger", "code", "flags", "pending_state", "ts"}, &iteratorForInsertTransfers{rows: arg})
 }

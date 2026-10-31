@@ -2,6 +2,7 @@ import { useCustom, useLogout } from '@refinedev/core'
 import {
   ChevronsUpDown,
   Gamepad2,
+  Landmark,
   LayoutDashboard,
   LayoutList,
   LogOut,
@@ -57,6 +58,7 @@ const GROUPS: { label: string; items: Item[] }[] = [
     items: [
       { to: '/players', label: 'Players', icon: Users, perm: 'view' },
       { to: '/games', label: 'Games', icon: Gamepad2, perm: 'view' },
+      { to: '/treasury', label: 'Treasury', icon: Landmark, perm: 'view' },
       { to: '/adjustments', label: 'Adjustments', icon: Scale, perm: 'view' },
     ],
   },

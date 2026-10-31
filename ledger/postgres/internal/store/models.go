@@ -19,6 +19,11 @@ type LedgerAccount struct {
 	CreditsPosted  int64
 }
 
+type LedgerClock struct {
+	One  bool
+	Last int64
+}
+
 type LedgerFailedTransfer struct {
 	ID        pgtype.UUID
 	Result    string
@@ -36,4 +41,5 @@ type LedgerTransfer struct {
 	Flags        int32
 	PendingState *string
 	CreatedAt    pgtype.Timestamptz
+	Ts           int64
 }

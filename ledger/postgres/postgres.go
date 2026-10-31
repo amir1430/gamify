@@ -7,6 +7,8 @@
 //
 // ponytail: every game operation locks its currency's house account row, so they commit one at a time
 // per currency (roughly a few thousand per second). Shard the house account if a brand outgrows that.
+// Writing batches also take the transfer clock (ledger_clock) for their last moment before commit,
+// so timestamps increase in commit order across currencies.
 package postgres
 
 import (
@@ -130,6 +132,7 @@ type xfer struct {
 	state string          // pending transfers: pending | posted | voided
 	isNew bool
 	moved bool // state changed in this batch
+	order int  // new transfers: the order applied in the batch
 }
 
 // batch is one CreateTransfers call: locked accounts, the transfers and failed IDs it refers to,
@@ -141,6 +144,7 @@ type batch struct {
 	failed    map[ledger.ID]bool
 	newFailed []store.InsertFailedParams
 	undo      []func()
+	applied   int // new transfers so far, for their order
 }
 
 // load locks the accounts the transfers name, then reads the transfers and failed IDs they refer
@@ -212,6 +216,47 @@ func (b *batch) read(ctx context.Context, ids []ledger.ID) error {
 
 func flags(n int32) ledger.Flags {
 	return ledger.Flags{Linked: n&1 != 0, Pending: n&2 != 0, PostPending: n&4 != 0, VoidPending: n&8 != 0, BalancingDebit: n&16 != 0}
+}
+
+func fromBits(n int32) ledger.Flags {
+	return ledger.Flags{Linked: n&1 != 0, Pending: n&2 != 0, PostPending: n&4 != 0, VoidPending: n&8 != 0, BalancingDebit: n&16 != 0}
+}
+
+// maxFilterLimit caps a filter's limit like TigerBeetle's batch of transfers.
+const maxFilterLimit = 8189
+
+// GetAccountTransfers reads an account's transfers (ledger.TransferReader, TigerBeetle's
+// get_account_transfers). A filter that matches nothing returns none.
+func (d *Driver) GetAccountTransfers(ctx context.Context, f ledger.AccountFilter) ([]ledger.StoredTransfer, error) {
+	if f.Limit == 0 || (!f.Debits && !f.Credits) || (f.TimestampMax != 0 && f.TimestampMin > f.TimestampMax) {
+		return nil, nil
+	}
+	tsMax := int64(math.MaxInt64)
+	if f.TimestampMax != 0 && f.TimestampMax < math.MaxInt64 {
+		tsMax = int64(f.TimestampMax)
+	}
+	if f.TimestampMin > math.MaxInt64 {
+		return nil, nil
+	}
+	p := store.AccountTransfersParams{Debits: f.Debits, Credits: f.Credits, Account: uuid(f.AccountID), Code: int32(f.Code),
+		TsMin: int64(f.TimestampMin), TsMax: tsMax, MaxRows: int32(min(f.Limit, maxFilterLimit))}
+	var rows []store.LedgerTransfer
+	var err error
+	if f.Reversed {
+		rows, err = d.q.AccountTransfersReversed(ctx, store.AccountTransfersReversedParams(p))
+	} else {
+		rows, err = d.q.AccountTransfers(ctx, p)
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ledger.StoredTransfer, len(rows))
+	for i, r := range rows {
+		out[i] = ledger.StoredTransfer{Timestamp: uint64(r.Ts), Transfer: ledger.Transfer{ID: fromUUID(r.ID), Debit: fromUUID(r.Debit),
+			Credit: fromUUID(r.Credit), Amount: uint64(r.Amount), Ledger: uint32(r.Ledger), Code: uint16(r.Code),
+			PendingID: fromUUID(r.PendingID), Flags: fromBits(r.Flags)}}
+	}
+	return out, nil
 }
 
 func bits(f ledger.Flags) int32 {
@@ -410,6 +455,8 @@ func (b *batch) change(a *account, dpend, dpost, cpend, cpost int64) {
 }
 
 func (b *batch) add(x *xfer) {
+	b.applied++
+	x.order = b.applied
 	b.transfers[x.t.ID] = x
 	b.undo = append(b.undo, func() { delete(b.transfers, x.t.ID) })
 }
@@ -417,6 +464,7 @@ func (b *batch) add(x *xfer) {
 func (b *batch) write(ctx context.Context) error {
 	var rows []store.InsertTransfersParams
 	var states []store.SetPendingStateParams
+	order := map[pgtype.UUID]int{}
 	for _, x := range b.transfers {
 		var state *string
 		if x.state != "" {
@@ -431,6 +479,7 @@ func (b *batch) write(ctx context.Context) error {
 			rows = append(rows, store.InsertTransfersParams{ID: uuid(x.t.ID), Debit: uuid(x.t.Debit), Credit: uuid(x.t.Credit),
 				Amount: int64(x.t.Amount), PendingID: pending, Ledger: int64(x.t.Ledger), Code: int32(x.t.Code),
 				Flags: bits(x.t.Flags), PendingState: state})
+			order[uuid(x.t.ID)] = x.order
 		case x.moved:
 			states = append(states, store.SetPendingStateParams{ID: uuid(x.t.ID), PendingState: state})
 		}
@@ -443,6 +492,15 @@ func (b *batch) write(ctx context.Context) error {
 		}
 	}
 	if len(rows) > 0 {
+		// Timestamps in the order applied, reserved last so the clock is held only until commit.
+		slices.SortFunc(rows, func(x, y store.InsertTransfersParams) int { return order[x.ID] - order[y.ID] })
+		last, err := b.q.ReserveTimestamps(ctx, int64(len(rows)))
+		if err != nil {
+			return err
+		}
+		for i := range rows {
+			rows[i].Ts = last - int64(len(rows)-1-i)
+		}
 		if _, err := b.q.InsertTransfers(ctx, rows); err != nil {
 			return err
 		}

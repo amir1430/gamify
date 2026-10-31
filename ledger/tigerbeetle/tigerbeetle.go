@@ -144,6 +144,34 @@ func (d *Driver) LookupAccounts(_ context.Context, ids []ledger.ID) ([]ledger.Ac
 	return out, nil
 }
 
+// GetAccountTransfers is TigerBeetle's get_account_transfers (ledger.TransferReader). A filter that
+// matches nothing returns none; TigerBeetle caps the limit at one batch.
+func (d *Driver) GetAccountTransfers(_ context.Context, f ledger.AccountFilter) ([]ledger.StoredTransfer, error) {
+	if f.Limit == 0 || (!f.Debits && !f.Credits) || (f.TimestampMax != 0 && f.TimestampMin > f.TimestampMax) {
+		return nil, nil
+	}
+	ts, err := d.tb.GetAccountTransfers(types.AccountFilter{AccountID: id(f.AccountID), Code: f.Code,
+		TimestampMin: f.TimestampMin, TimestampMax: f.TimestampMax, Limit: f.Limit,
+		Flags: types.AccountFilterFlags{Debits: f.Debits, Credits: f.Credits, Reversed: f.Reversed}.ToUint32()})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ledger.StoredTransfer, len(ts))
+	for i, t := range ts {
+		n := t.Amount.BigInt()
+		if !n.IsUint64() {
+			return nil, fmt.Errorf("tigerbeetle: transfer %v: amount %s out of range", fromID(t.ID), n.String())
+		}
+		fl := t.TransferFlags()
+		out[i] = ledger.StoredTransfer{Timestamp: t.Timestamp, Transfer: ledger.Transfer{ID: fromID(t.ID),
+			Debit: fromID(t.DebitAccountID), Credit: fromID(t.CreditAccountID), Amount: n.Uint64(),
+			Ledger: t.Ledger, Code: t.Code, PendingID: fromID(t.PendingID),
+			Flags: ledger.Flags{Linked: fl.Linked, Pending: fl.Pending, PostPending: fl.PostPendingTransfer,
+				VoidPending: fl.VoidPendingTransfer, BalancingDebit: fl.BalancingDebit}}}
+	}
+	return out, nil
+}
+
 // Ping checks TigerBeetle answers.
 func (d *Driver) Ping(context.Context) error { return d.tb.Nop() }
 

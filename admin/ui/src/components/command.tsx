@@ -1,4 +1,4 @@
-import { CornerDownLeft, Monitor, Moon, Search, Sun, UserRound, type LucideIcon } from 'lucide-react'
+import { CornerDownLeft, Gamepad2, Monitor, Moon, Search, Sun, UserRound, type LucideIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
@@ -52,6 +52,18 @@ function usePlayerSearch(q: string) {
   return { rows, busy }
 }
 
+// Game names, fetched when the palette first opens (a viewer's).
+function useGameNames(on: boolean) {
+  const [names, setNames] = useState<string[] | null>(null)
+  useEffect(() => {
+    if (!on || names) return
+    api<{ items: { name: string }[] }>('/api/games')
+      .then((r) => setNames(r.items.map((g) => g.name)))
+      .catch(() => setNames([]))
+  }, [on, names])
+  return names ?? []
+}
+
 // Jump anywhere: the pages this admin may open, players by ID, name or Telegram ID, the theme.
 export function CommandPalette({ open, onOpenChange, pages, canPlayers }: { open: boolean; onOpenChange: (o: boolean) => void; pages: CommandPage[]; canPlayers: boolean }) {
   const navigate = useNavigate()
@@ -59,6 +71,7 @@ export function CommandPalette({ open, onOpenChange, pages, canPlayers }: { open
   const [active, setActive] = useState(0)
   const list = useRef<HTMLDivElement>(null)
   const players = usePlayerSearch(canPlayers && open ? q : '')
+  const games = useGameNames(canPlayers && open)
 
   useEffect(() => {
     if (open) setQ('')
@@ -71,6 +84,10 @@ export function CommandPalette({ open, onOpenChange, pages, canPlayers }: { open
     const match = (s: string) => !text || s.toLowerCase().includes(text)
     const out: Entry[] = []
     for (const p of pages) if (match(p.label) || match(p.group)) out.push({ key: p.to, group: 'Pages', label: p.label, hint: p.group, icon: p.icon, run: go(p.to) })
+    if (text) {
+      const hits = games.filter((g) => match(g)).slice(0, 6)
+      for (const g of hits) out.push({ key: `g-${g}`, group: 'Games', label: g, hint: 'game limits', icon: Gamepad2, run: go(`/games/${encodeURIComponent(g)}`) })
+    }
     if (canPlayers) {
       const id = /^#?(\d+)$/.exec(q.trim())?.[1]
       if (id && !players.rows.some((r) => String(r.id) === id))
@@ -93,7 +110,7 @@ export function CommandPalette({ open, onOpenChange, pages, canPlayers }: { open
     ]
     for (const [label, icon, t] of themes) if (match(label) || match('theme')) out.push({ key: t, group: 'Preferences', label, icon, run: theme(t) })
     return out
-  }, [q, pages, players.rows, canPlayers, navigate, onOpenChange])
+  }, [q, pages, games, players.rows, canPlayers, navigate, onOpenChange])
 
   useEffect(() => setActive(0), [q, entries.length])
   useEffect(() => {
@@ -117,7 +134,7 @@ export function CommandPalette({ open, onOpenChange, pages, canPlayers }: { open
               else if (e.key === 'ArrowUp') (e.preventDefault(), setActive((a) => Math.max(a - 1, 0)))
               else if (e.key === 'Enter') (e.preventDefault(), entries[active]?.run())
             }}
-            placeholder={canPlayers ? 'Search pages, players by ID, name or Telegram ID…' : 'Search pages…'}
+            placeholder={canPlayers ? 'Search pages, games, players by ID, name or Telegram ID…' : 'Search pages…'}
             className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             aria-label="Search"
             role="combobox"

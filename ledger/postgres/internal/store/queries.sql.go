@@ -11,6 +11,121 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const accountTransfers = `-- name: AccountTransfers :many
+SELECT id, debit, credit, amount, pending_id, ledger, code, flags, pending_state, created_at, ts FROM ledger_transfers
+WHERE (($1::bool AND debit = $2) OR ($3::bool AND credit = $2))
+  AND ($4::integer = 0 OR code = $4) AND ts BETWEEN $5 AND $6
+ORDER BY ts LIMIT $7
+`
+
+type AccountTransfersParams struct {
+	Debits  bool
+	Account pgtype.UUID
+	Credits bool
+	Code    int32
+	TsMin   int64
+	TsMax   int64
+	MaxRows int32
+}
+
+// AccountTransfers and AccountTransfersReversed are get_account_transfers, oldest or newest first.
+func (q *Queries) AccountTransfers(ctx context.Context, arg AccountTransfersParams) ([]LedgerTransfer, error) {
+	rows, err := q.db.Query(ctx, accountTransfers,
+		arg.Debits,
+		arg.Account,
+		arg.Credits,
+		arg.Code,
+		arg.TsMin,
+		arg.TsMax,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LedgerTransfer
+	for rows.Next() {
+		var i LedgerTransfer
+		if err := rows.Scan(
+			&i.ID,
+			&i.Debit,
+			&i.Credit,
+			&i.Amount,
+			&i.PendingID,
+			&i.Ledger,
+			&i.Code,
+			&i.Flags,
+			&i.PendingState,
+			&i.CreatedAt,
+			&i.Ts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const accountTransfersReversed = `-- name: AccountTransfersReversed :many
+SELECT id, debit, credit, amount, pending_id, ledger, code, flags, pending_state, created_at, ts FROM ledger_transfers
+WHERE (($1::bool AND debit = $2) OR ($3::bool AND credit = $2))
+  AND ($4::integer = 0 OR code = $4) AND ts BETWEEN $5 AND $6
+ORDER BY ts DESC LIMIT $7
+`
+
+type AccountTransfersReversedParams struct {
+	Debits  bool
+	Account pgtype.UUID
+	Credits bool
+	Code    int32
+	TsMin   int64
+	TsMax   int64
+	MaxRows int32
+}
+
+func (q *Queries) AccountTransfersReversed(ctx context.Context, arg AccountTransfersReversedParams) ([]LedgerTransfer, error) {
+	rows, err := q.db.Query(ctx, accountTransfersReversed,
+		arg.Debits,
+		arg.Account,
+		arg.Credits,
+		arg.Code,
+		arg.TsMin,
+		arg.TsMax,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LedgerTransfer
+	for rows.Next() {
+		var i LedgerTransfer
+		if err := rows.Scan(
+			&i.ID,
+			&i.Debit,
+			&i.Credit,
+			&i.Amount,
+			&i.PendingID,
+			&i.Ledger,
+			&i.Code,
+			&i.Flags,
+			&i.PendingState,
+			&i.CreatedAt,
+			&i.Ts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAccount = `-- name: GetAccount :one
 SELECT id, ledger, code, no_overdraft, debits_pending, debits_posted, credits_pending, credits_posted FROM ledger_accounts WHERE id = $1
 `
@@ -56,7 +171,7 @@ func (q *Queries) GetFailed(ctx context.Context, ids []pgtype.UUID) ([]pgtype.UU
 }
 
 const getTransfers = `-- name: GetTransfers :many
-SELECT id, debit, credit, amount, pending_id, ledger, code, flags, pending_state, created_at FROM ledger_transfers WHERE id = ANY($1::uuid[])
+SELECT id, debit, credit, amount, pending_id, ledger, code, flags, pending_state, created_at, ts FROM ledger_transfers WHERE id = ANY($1::uuid[])
 `
 
 func (q *Queries) GetTransfers(ctx context.Context, ids []pgtype.UUID) ([]LedgerTransfer, error) {
@@ -79,6 +194,7 @@ func (q *Queries) GetTransfers(ctx context.Context, ids []pgtype.UUID) ([]Ledger
 			&i.Flags,
 			&i.PendingState,
 			&i.CreatedAt,
+			&i.Ts,
 		); err != nil {
 			return nil, err
 		}
@@ -125,6 +241,7 @@ type InsertTransfersParams struct {
 	Code         int32
 	Flags        int32
 	PendingState *string
+	Ts           int64
 }
 
 const lockAccounts = `-- name: LockAccounts :many
@@ -192,4 +309,19 @@ func (q *Queries) LookupAccounts(ctx context.Context, ids []pgtype.UUID) ([]Ledg
 		return nil, err
 	}
 	return items, nil
+}
+
+const reserveTimestamps = `-- name: ReserveTimestamps :one
+UPDATE ledger_clock SET last = greatest(last, (extract(epoch FROM clock_timestamp()) * 1000000000)::bigint) + $1::bigint
+RETURNING last
+`
+
+// ReserveTimestamps hands out n transfer timestamps, the last one returned: after the last one
+// given and no earlier than now. The row stays locked until the batch commits, so timestamps
+// increase in commit order.
+func (q *Queries) ReserveTimestamps(ctx context.Context, n int64) (int64, error) {
+	row := q.db.QueryRow(ctx, reserveTimestamps, n)
+	var last int64
+	err := row.Scan(&last)
+	return last, err
 }

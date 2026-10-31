@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
+import { Chips, FilterBy, RangeFilter, SearchBox, useLiveParam, useParams, useRange } from '@/components/list'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { parseAmount } from '@/lib/money'
@@ -48,11 +49,32 @@ const STATUS: Record<Adjustment['status'], { label: string; tone: 'ok' | 'danger
   rejected: { label: 'Rejected', tone: 'neutral' },
 }
 
-// Balance adjustments, newest first, filtered by ?status=. Approvers decide others' requests here.
+// Balance adjustments, newest first. Search (the reason) and filters live in the URL and are the
+// API's: ?status=, ?currency=, ?player=, ?by= (a console user, "me"), and a time range.
 export function Adjustments() {
+  const me = useMe()
+  const { set } = useParams()
   const [status, setStatus] = useParam('status')
+  const [currency, setCurrency] = useParam('currency')
+  const [by, setBy] = useParam('by')
+  const [ptext, setPtext, player] = useLiveParam('player', 400)
+  const [text, setText, q] = useLiveParam('q')
+  const range = useRange()
   const [creating, setCreating] = useState(false)
   const canAdjust = usePerm('adjust')
+  const currencies = me?.currencies ?? []
+  const byID = by === 'me' ? String(me?.user.id ?? '') : by
+  const playerOK = !player || /^\d+$/.test(player)
+  const clear = () => (setText(''), setPtext(''), set({ status: null, currency: null, by: null, player: null, q: null, range: null, from: null, to: null }))
+  const chips = [
+    q && { key: 'q', label: <>“{q}”</>, onRemove: () => setText('') },
+    status && { key: 'status', label: <>Status: {STATUS[status as Adjustment['status']]?.label ?? status}</>, onRemove: () => setStatus(null) },
+    currency && { key: 'cur', label: <>Currency: {currency.toUpperCase()}</>, onRemove: () => setCurrency(null) },
+    player && { key: 'player', label: <>Player #{player}</>, onRemove: () => setPtext('') },
+    by && { key: 'by', label: <>Requested by {by === 'me' ? 'me' : `admin #${by}`}</>, onRemove: () => setBy(null) },
+    range.range && { key: 'range', label: range.label, onRemove: () => range.set('') },
+  ].filter((c) => !!c) as { key: string; label: ReactNode; onRemove: () => void }[]
+
   return (
     <>
       <PageHeader
@@ -61,27 +83,74 @@ export function Adjustments() {
         actions={canAdjust && <Button onClick={() => setCreating(true)}>New adjustment</Button>}
       />
       <Toolbar>
+        <SearchBox value={text} onChange={setText} placeholder="Search reasons" />
         <Choice
           label="Status"
           value={status}
           onChange={(v) => setStatus(v || null)}
           options={[{ value: '', label: 'Any status' }, ...Object.entries(STATUS).map(([value, s]) => ({ value, label: s.label }))]}
         />
+        {currencies.length > 1 && (
+          <Choice
+            label="Currency"
+            className="min-w-32"
+            value={currency}
+            onChange={(v) => setCurrency(v || null)}
+            options={[{ value: '', label: 'Any currency' }, ...currencies.map((c) => ({ value: c.code, label: c.code.toUpperCase() }))]}
+          />
+        )}
+        <Choice
+          label="Requested by"
+          className="min-w-36"
+          value={by === 'me' || !by ? by : 'other'}
+          onChange={(v) => setBy(v || null)}
+          options={[{ value: '', label: 'Anyone' }, { value: 'me', label: 'Requested by me' }, ...(by && by !== 'me' ? [{ value: 'other', label: `Admin #${by}` }] : [])]}
+        />
+        <Input
+          className="w-32"
+          inputMode="numeric"
+          placeholder="Player ID"
+          value={ptext}
+          onChange={(e) => setPtext(e.target.value.replace(/^#/, ''))}
+          aria-label="Player ID"
+          aria-invalid={!playerOK}
+        />
+        <RangeFilter r={range} />
       </Toolbar>
-      <AdjustmentsTable status={status} />
+      <Chips items={chips} onClear={clear} />
+      <AdjustmentsTable
+        filters={{ status, currency, user: playerOK ? player : '', requested_by: byID, q, since: range.since, until: range.until }}
+        filtered={chips.length > 0}
+        onFilter={(k, v) => (k === 'status' ? setStatus(v) : setBy(v))}
+      />
       {creating && <AdjustDialog onClose={() => setCreating(false)} />}
     </>
   )
 }
 
-// Adjustments, optionally of one player (?user= on the API) or in one status.
-export function AdjustmentsTable({ user = '', status = '' }: { user?: string; status?: string }) {
+// Adjustments with API filters (user: one player's); onFilter makes a status or requester cell
+// filter the page by itself.
+export function AdjustmentsTable({
+  user = '',
+  filters = {},
+  filtered,
+  onFilter,
+}: {
+  user?: string
+  filters?: Record<string, string>
+  filtered?: boolean
+  onFilter?: (key: 'status' | 'by', value: string) => void
+}) {
   const me = useMe()
   const { money } = useMoney()
   const canApprove = usePerm('approve')
-  const { rows, loading, more } = usePaged<Adjustment>('adjustments', { user, status })
+  const { rows, loading, more } = usePaged<Adjustment>('adjustments', { user, ...filters })
   const [deciding, setDeciding] = useState<{ a: Adjustment; approve: boolean } | null>(null)
-  const who = (id: number | null) => (id == null ? '—' : id === me?.user.id ? 'You' : <Mono>admin #{id}</Mono>)
+  const who = (id: number | null, filter = false) => {
+    if (id == null) return '—'
+    const label = id === me?.user.id ? 'You' : <Mono>admin #{id}</Mono>
+    return filter && onFilter ? <FilterBy on={() => onFilter('by', id === me?.user.id ? 'me' : String(id))}>{label}</FilterBy> : label
+  }
 
   return (
     <>
@@ -101,7 +170,7 @@ export function AdjustmentsTable({ user = '', status = '' }: { user?: string; st
         rows={rows}
         loading={loading}
         rowKey={(a) => a.id}
-        empty={status ? 'No adjustment in this status.' : 'No adjustments yet.'}
+        empty={filtered ? 'No adjustment matches these filters.' : 'No adjustments yet.'}
         columns={[
           { key: 'id', title: 'ID', render: (a) => <Mono>#{a.id}</Mono> },
           { key: 'when', title: 'Requested', render: (a) => <When at={a.created_at} /> },
@@ -124,13 +193,19 @@ export function AdjustmentsTable({ user = '', status = '' }: { user?: string; st
             title: 'Status',
             render: (a) => (
               <>
-                <Pill tone={STATUS[a.status].tone}>{STATUS[a.status].label}</Pill>
+                {onFilter ? (
+                  <FilterBy on={() => onFilter('status', a.status)}>
+                    <Pill tone={STATUS[a.status].tone}>{STATUS[a.status].label}</Pill>
+                  </FilterBy>
+                ) : (
+                  <Pill tone={STATUS[a.status].tone}>{STATUS[a.status].label}</Pill>
+                )}
                 {a.error && <div className="mt-0.5 text-xs text-danger">{a.error}</div>}
               </>
             ),
           },
           { key: 'reason', title: 'Reason', className: 'whitespace-normal min-w-48 text-muted-foreground', render: (a) => a.reason },
-          { key: 'by', title: 'Requested by', render: (a) => who(a.requested_by) },
+          { key: 'by', title: 'Requested by', render: (a) => who(a.requested_by, true) },
           { key: 'decided', title: 'Decided by', render: (a) => who(a.approved_by) },
           ...(canApprove
             ? [

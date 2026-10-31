@@ -1,13 +1,35 @@
 import { useCustom, useGo } from '@refinedev/core'
-import { Plug, Radio, RefreshCw, Search } from 'lucide-react'
-import { useState } from 'react'
+import { Plug, Radio, RefreshCw } from 'lucide-react'
+import { Chips, FilterMenu, Pager, SearchBox, SortMenu, listChips, useClientList } from '@/components/list'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { count } from '@/lib/format'
-import { Avatar, Copyable, DataTable, ExportButton, Kpi, PageHeader, Presence, Toolbar, When, downloadCSV, useParam } from '../ui'
+import { by, type FilterGroup, type Sort } from '@/lib/list'
+import { Avatar, Copyable, DataTable, ExportButton, Kpi, PageHeader, Presence, Toolbar, When, downloadCSV } from '../ui'
 import { playerName, type Player } from './players'
 
 type Online = { total: number; connections: number; items: (Player & { connections: number })[] }
+
+type Row = Player & { connections: number }
+const HOUR = 3600_000
+const GROUPS: FilterGroup<Row>[] = [
+  { key: 'conns', label: 'Connections', options: [{ value: '1', label: 'One' }, { value: 'many', label: 'Two or more' }], match: (u, v) => (v === '1' ? u.connections === 1 : u.connections > 1) },
+  {
+    key: 'joined',
+    label: 'Account',
+    options: [
+      { value: 'day', label: 'Joined in the last 24 hours' },
+      { value: 'week', label: 'Joined in the last 7 days' },
+    ],
+    match: (u, v) => Date.now() - Date.parse(u.created_at) < (v === 'day' ? 24 : 168) * HOUR,
+  },
+  { key: 'named', label: 'Profile', options: [{ value: 'username', label: 'Has a username' }, { value: 'none', label: 'No username' }], match: (u, v) => !!u.username === (v === 'username') },
+]
+const SORTS: Sort<Row>[] = [
+  { value: 'new', label: 'Newest account', compare: by((u) => u.id, true) },
+  { value: 'conns', label: 'Most connections', compare: by((u) => u.connections, true) },
+  { value: 'login', label: 'Latest login', compare: by((u) => u.last_login_at ?? '', true) },
+  { value: 'name', label: 'Name A–Z', compare: by((u) => playerName(u)) },
+]
 
 const REFRESH_MS = 10_000
 const LIMIT = 500
@@ -16,12 +38,10 @@ const LIMIT = 500
 // connection, newest account first, refreshed every 10 s. The filter searches the loaded rows.
 export function OnlinePage() {
   const go = useGo()
-  const [q, setQ] = useParam('q')
-  const [text, setText] = useState(q)
   const { query } = useCustom<Online>({ url: '/api/online', method: 'get', config: { query: { limit: LIMIT } }, queryOptions: { refetchInterval: REFRESH_MS } })
   const d = query.data?.data
-  const needle = q.trim().toLowerCase().replace(/^@/, '')
-  const rows = d?.items.filter((u) => !needle || String(u.id) === needle || u.username.toLowerCase().includes(needle) || u.display_name.toLowerCase().includes(needle))
+  const list = useClientList('online', d?.items, { text: (u) => [u.id, u.username, u.display_name], groups: GROUPS, sorts: SORTS }, 48)
+  const rows = list.filtered
 
   return (
     <>
@@ -46,23 +66,9 @@ export function OnlinePage() {
         />
       </div>
       <Toolbar>
-        <form
-          className="relative w-full max-w-sm"
-          onSubmit={(e) => {
-            e.preventDefault()
-            setQ(text.trim() || null)
-          }}
-        >
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="pl-8"
-            type="search"
-            placeholder="Filter by ID, username or name"
-            value={text}
-            onChange={(e) => (setText(e.target.value), setQ(e.target.value.trim() || null))}
-            aria-label="Filter"
-          />
-        </form>
+        <SearchBox value={list.text} onChange={list.setText} placeholder="Filter by ID, username or name" />
+        <FilterMenu groups={GROUPS} values={list.filters} onChange={list.setFilter} onClear={list.clear} />
+        <SortMenu sorts={SORTS} value={list.sort} onChange={list.setSort} />
         <div className="ml-auto">
           <ExportButton
             disabled={!rows?.length}
@@ -76,11 +82,12 @@ export function OnlinePage() {
           />
         </div>
       </Toolbar>
+      <Chips items={listChips(list, GROUPS)} onClear={list.clear} />
       <DataTable
-        rows={rows}
+        rows={list.page.rows}
         loading={query.isLoading}
         rowKey={(u) => u.id}
-        empty={needle ? 'No online player matches.' : 'Nobody is online.'}
+        empty={list.filtering ? 'No online player matches.' : 'Nobody is online.'}
         onRowClick={(u) => go({ to: `/players/${u.id}`, type: 'push' })}
         columns={[
           {
@@ -102,6 +109,7 @@ export function OnlinePage() {
           { key: 'joined', title: 'Joined', render: (u) => <When at={u.created_at} /> },
         ]}
       />
+      <Pager page={list.page} total={list.filtered.length} noun={['player', 'players']} size={list.size} onPage={list.setPage} onSize={list.setSize} />
       {d && d.total > d.items.length && (
         <p className="mt-3 text-xs text-muted-foreground">
           Showing the {d.items.length.toLocaleString()} newest accounts of {d.total.toLocaleString()} online.

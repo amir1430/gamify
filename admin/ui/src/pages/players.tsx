@@ -1,42 +1,23 @@
 import { useGo } from '@refinedev/core'
-import { Search } from 'lucide-react'
-import { useState } from 'react'
-import { Input } from '@/components/ui/input'
-import { Avatar, Copyable, DataTable, ExportButton, PageHeader, Presence, Toolbar, When, downloadCSV, useParam, usePaged } from '../ui'
+import { SearchBox, useLiveParam } from '@/components/list'
+import { Avatar, Copyable, DataTable, ExportButton, PageHeader, Presence, Toolbar, When, downloadCSV, usePaged } from '../ui'
 
 export type Player = { id: number; username: string; display_name: string; created_at: string; last_login_at: string | null; connections?: number | null }
 
 export const playerName = (u: Player) => u.display_name || u.username || `Player #${u.id}`
 
-// Players, newest first; ?q= searches (auth.Users.Search: ID, username, display name, a login's
+// Players, newest first; ?q= searches as you type (auth.Users.Search: ID, username, display name, a login's
 // subject). A row opens the player.
 export function Players() {
   const go = useGo()
-  const [q, setQ] = useParam('q')
-  const [text, setText] = useState(q)
+  const [text, setText, q] = useLiveParam('q', 300)
   const { rows, loading, more } = usePaged<Player>('users', { q })
 
   return (
     <>
       <PageHeader title="Players" description="Newest first. Open one for logins, wallet, activity, seeds and history." />
       <Toolbar>
-        <form
-          className="relative w-full max-w-sm"
-          onSubmit={(e) => {
-            e.preventDefault()
-            setQ(text.trim() || null)
-          }}
-        >
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="pl-8"
-            type="search"
-            placeholder="ID, username, name or Telegram ID — Enter"
-            value={text}
-            onChange={(e) => (setText(e.target.value), !e.target.value && setQ(null))}
-            aria-label="Search"
-          />
-        </form>
+        <SearchBox className="sm:max-w-sm" value={text} onChange={setText} placeholder="ID, username, name or Telegram ID" />
         <div className="ml-auto">
           <ExportButton
             disabled={!rows?.length}

@@ -22,6 +22,8 @@ import {
   Segmented,
   Signed,
   Stats,
+  CurrencyTabs,
+  useCur,
   TabBar,
   When,
   dateTime,
@@ -34,6 +36,7 @@ import {
   useTab,
 } from '../ui'
 import { AdjustDialog, AdjustmentsTable } from './adjustments'
+import { LedgerHistory } from '@/components/ledger'
 import { playerName, type Player as PlayerRow } from './players'
 import { ViewTable, useViews } from './views'
 
@@ -292,9 +295,21 @@ function Unlink({ id, identity, onClose }: { id: number; identity: Identity; onC
 function Wallet({ id, balances }: { id: number; balances: Record<string, number> }) {
   const { money } = useMoney()
   const currencies = useMe()?.currencies ?? []
+  const [cur, setCur] = useCur()
+  const { query } = useCustom<{ history: boolean; kinds: string[] }>({ url: '/api/treasury', method: 'get' })
+  const t = query.data?.data
   return (
     <>
       <Stats items={currencies.map(({ code }) => ({ label: `${code.toUpperCase()} balance`, value: money(balances[code] ?? 0, code, false) }))} />
+      {t?.history && (
+        <Section
+          title="Ledger"
+          description="Every transfer on this player's account, newest first, with the posted balance after each. Holds show faded: they don't change the posted balance."
+          actions={currencies.length > 1 && <CurrencyTabs value={cur} onChange={setCur} currencies={currencies} />}
+        >
+          <LedgerHistory key={cur} path={`users/${id}/wallet`} params={{ currency: cur }} currency={cur} kinds={t.kinds} csv={`wallet-${id}-${cur}`} />
+        </Section>
+      )}
       <Section title="Adjustments" description="Balance changes made from the console for this player.">
         <AdjustmentsTable user={String(id)} />
       </Section>
