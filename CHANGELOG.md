@@ -5,6 +5,16 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.9] - 2026-10-31
+
+### Fixed
+- `admin` UI: `json` columns of brand views (and the `detail` of player activity) were shown as one
+  truncated line of raw JSON. A table cell now shows the top-level fields as key/value chips
+  ("+N" for the rest); the row's dialog shows each json column full width as readable fields
+  (nested objects fold, lists of records as a small table, dates in local time, Yes/No for
+  booleans) with a Raw view and Copy. Activity rows open a detail dialog. Long values in detail
+  dialogs wrap instead of being cut. No API or Go change.
+
 ## [1.1.8] - 2026-10-31
 
 ### Added

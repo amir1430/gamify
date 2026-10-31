@@ -377,7 +377,7 @@ export function Facts({ items, cols = 3 }: { items: [label: string, value: React
       {items.map(([label, value]) => (
         <div key={label} className="-mb-px -mr-px flex min-w-0 flex-col gap-1 border-r border-b px-4 py-3">
           <dt className="text-xs text-muted-foreground">{label}</dt>
-          <dd className="min-w-0 truncate text-sm">{value}</dd>
+          <dd className="min-w-0 text-sm break-words">{value}</dd>
         </div>
       ))}
     </dl>

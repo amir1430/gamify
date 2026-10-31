@@ -3,6 +3,7 @@ import { Plug, Scale } from 'lucide-react'
 import { useState } from 'react'
 import { useParams } from 'react-router'
 import { toast } from 'sonner'
+import { JsonSummary, JsonView } from '@/components/json'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -324,6 +325,7 @@ function ActivityTab({ id }: { id: number }) {
 function ActivityTable({ id, game }: { id: number; game: string }) {
   const { money } = useMoney()
   const { rows, loading, more } = usePaged<Activity>(`users/${id}/activity`, { game })
+  const [open, setOpen] = useState<Activity | null>(null)
   return (
     <>
       <DataTable
@@ -331,6 +333,7 @@ function ActivityTable({ id, game }: { id: number; game: string }) {
         loading={loading}
         rowKey={(b) => b.id}
         empty="No activity yet."
+        onRowClick={setOpen}
         columns={[
           { key: 'when', title: 'When', render: (b) => <When at={b.at} /> },
           { key: 'id', title: 'ID', render: (b) => <Mono>#{b.id}</Mono> },
@@ -343,26 +346,26 @@ function ActivityTable({ id, game }: { id: number; game: string }) {
             render: (b) => <Signed amount={b.payout - b.amount}>{money(b.payout - b.amount, b.currency)}</Signed>,
           },
           { key: 'status', title: 'Status', render: (b) => <Pill tone={b.status === 'settled' ? 'ok' : 'neutral'}>{b.status}</Pill> },
-          { key: 'detail', title: 'Detail', className: 'whitespace-normal', render: (b) => <Detail detail={b.detail} /> },
+          { key: 'detail', title: 'Detail', render: (b) => (b.detail && Object.keys(b.detail).length ? <JsonSummary value={b.detail} /> : <Faint />) },
         ]}
       />
       {more}
+      {open && (
+        <ChangeDialog title={`${open.game} · #${open.id}`} description={dateTime(open.at)} wide busy={false} onClose={() => setOpen(null)} footer={<Button type="button" variant="ghost" onClick={() => setOpen(null)}>Close</Button>}>
+          <Facts
+            items={[
+              ['Amount', money(open.amount, open.currency)],
+              ['Payout', money(open.payout, open.currency)],
+              ['Result', <Signed amount={open.payout - open.amount}>{money(open.payout - open.amount, open.currency)}</Signed>],
+              ['Status', <Pill tone={open.status === 'settled' ? 'ok' : 'neutral'}>{open.status}</Pill>],
+              ['When', dateTime(open.at)],
+              ['ID', <Copyable value={open.id} />],
+            ]}
+          />
+          {open.detail && Object.keys(open.detail).length > 0 && <JsonView label="Detail" value={open.detail} />}
+        </ChangeDialog>
+      )}
     </>
-  )
-}
-
-// An activity row's game fields as key: value pairs.
-function Detail({ detail }: { detail?: Record<string, unknown> }) {
-  const entries = Object.entries(detail ?? {})
-  if (!entries.length) return <Faint />
-  return (
-    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
-      {entries.map(([k, v]) => (
-        <span key={k}>
-          <span className="text-muted-foreground">{k}</span> <span className="font-mono">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
-        </span>
-      ))}
-    </div>
   )
 }
 

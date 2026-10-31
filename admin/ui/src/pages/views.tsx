@@ -3,6 +3,7 @@ import { MoreHorizontal } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
+import { JsonSummary, JsonView } from '@/components/json'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -23,7 +24,7 @@ import {
   type ViewFilter,
   type ViewRow,
 } from '@/lib/views'
-import { ChangeDialog, Choice, DataTable, Facts, Faint, Field, Mono, Note, PageHeader, Pill, Toolbar, useAction, useMe, useMoney, usePaged, useParam } from '../ui'
+import { ChangeDialog, Choice, DataTable, Facts, Faint, Field, Note, PageHeader, Pill, Toolbar, useAction, useMe, useMoney, usePaged, useParam } from '../ui'
 
 // The brand's views this admin may open (GET /api/views; the API already left out the others).
 export function useViews(): ViewDesc[] | undefined {
@@ -51,7 +52,7 @@ function Cell({ col, row }: { col: ViewColumn; row: ViewRow }) {
     case 'time':
       return <span className="whitespace-nowrap text-muted-foreground">{cellText(col, v)}</span>
     case 'json':
-      return <Mono>{cellText(col, v)}</Mono>
+      return <JsonSummary value={v} />
     case 'money': {
       const code = String((col.currency_key ? row[col.currency_key] : col.currency) ?? '')
       return (
@@ -174,7 +175,10 @@ function RowDialog({ view, row, onClose, onAction }: { view: ViewDesc; row: View
       ) : (
         <>
           {query.isError && <Note className="text-danger">{query.error.message}</Note>}
-          <Facts cols={2} items={view.columns.map((c) => [labelOf(c), <Cell col={c} row={r} />] as [string, ReactNode])} />
+          <Facts cols={2} items={view.columns.filter((c) => c.type !== 'json').map((c) => [labelOf(c), <Cell col={c} row={r} />] as [string, ReactNode])} />
+          {view.columns
+            .filter((c) => c.type === 'json')
+            .map((c) => (r[c.key] == null || r[c.key] === '' ? null : <JsonView key={c.key} label={labelOf(c)} value={r[c.key]} />))}
         </>
       )}
     </ChangeDialog>
