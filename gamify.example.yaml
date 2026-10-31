@@ -20,6 +20,10 @@ centrifugo:
   proxy_listen: :10001          # where the app serves Centrifugo's RPC proxy
   proxy_endpoint: grpc://app:10001   # how Centrifugo reaches it
   proxy_timeout: 5s
+  # Your games' channel namespaces (channels "<name>:..."), next to the platform's user, online, feed.
+  # subscribe: clients may subscribe (public rooms); presence: Centrifugo tracks who is in.
+  # namespaces:
+  #   - {name: arena, subscribe: true, presence: true}
 
 http:
   addr: :8080

@@ -23,6 +23,15 @@
       {
         "name": "feed",
         "allow_subscribe_for_client": true
+      },
+      {
+        "name": "crash",
+        "presence": true,
+        "allow_subscribe_for_client": true
+      },
+      {
+        "name": "duel",
+        "allow_subscribe_for_client": true
       }
     ]
   },

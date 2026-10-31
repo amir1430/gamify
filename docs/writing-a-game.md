@@ -133,6 +133,21 @@ func (s *Service) History(ctx context.Context, userID, beforeID int64, limit int
 }
 ```
 
+## Public channels
+
+A player's own pushes go to `realtime.UserChannel(userID)`, which every connection is subscribed to.
+A shared room (a lobby, a round everyone watches) publishes to its own channel, `"<namespace>:<id>"`
+with `a.Realtime.Publish` (or `realtime.Broadcast` for many). Declare the namespace in `gamify.yaml`
+so Centrifugo accepts it, with `subscribe: true` for clients to join it:
+
+```yaml
+centrifugo:
+  namespaces:
+    - {name: arena, subscribe: true}
+```
+
+Never put a user ID or anything private in a public channel's messages.
+
 ## Admin view
 
 A game can add its own page to the admin console, described in Go; the console's UI draws it. Put

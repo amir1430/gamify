@@ -57,7 +57,20 @@ type Centrifugo struct {
 	ProxyListen   string        `yaml:"proxy_listen"`   // where the app serves the RPC proxy, default :10001
 	ProxyEndpoint string        `yaml:"proxy_endpoint"` // how Centrifugo reaches it, e.g. grpc://api:10001
 	ProxyTimeout  time.Duration `yaml:"proxy_timeout"`  // default 5s
+	// Namespaces are the brand's own channel namespaces (its rooms, tables, prices), added to the
+	// platform's (user, online, feed) in Centrifugo's config.
+	Namespaces []Namespace `yaml:"namespaces"`
 }
+
+// Namespace is a channel namespace the brand's games publish to: channels "<name>:…".
+type Namespace struct {
+	Name      string `yaml:"name"`      // letters, digits, - and _
+	Presence  bool   `yaml:"presence"`  // Centrifugo tracks who is subscribed (Online counts)
+	Subscribe bool   `yaml:"subscribe"` // clients may subscribe themselves (public channels)
+}
+
+// platformNamespaces are the namespaces gamify's own code publishes to; a brand can't redefine them.
+var platformNamespaces = []string{"user", "online", "feed"}
 
 type HTTP struct {
 	Addr           string   `yaml:"addr"`            // default :8080
@@ -201,6 +214,19 @@ func (c *Config) validate(unset map[string]bool) []error {
 		!slices.Contains([]string{"grpc", "http", "https"}, u.Scheme) {
 		bad("centrifugo.proxy_endpoint", "%q: want grpc://host:port", c.Centrifugo.ProxyEndpoint)
 	}
+	seen := map[string]bool{}
+	for i, ns := range c.Centrifugo.Namespaces {
+		path := fmt.Sprintf("centrifugo.namespaces[%d].name", i)
+		switch {
+		case !validNamespace(ns.Name):
+			bad(path, "%q: want letters, digits, - or _", ns.Name)
+		case slices.Contains(platformNamespaces, ns.Name):
+			bad(path, "%q is the platform's", ns.Name)
+		case seen[ns.Name]:
+			bad(path, "%q listed twice", ns.Name)
+		}
+		seen[ns.Name] = true
+	}
 	if len(c.HTTP.AllowedOrigins) == 0 {
 		bad("http.allowed_origins", "required: at least one origin")
 	}
@@ -212,6 +238,19 @@ func (c *Config) validate(unset map[string]bool) []error {
 		}
 	}
 	return errs
+}
+
+// validNamespace reports whether name is a Centrifugo namespace name (no ':' or other separators).
+func validNamespace(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // isOrigin reports whether o is a browser Origin: scheme and host, nothing after.

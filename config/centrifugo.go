@@ -46,6 +46,10 @@ func (c *Config) CentrifugoJSON() []byte {
 	out.GRPCAPI.Port, _ = grpcPort(c.Centrifugo.APIAddr) // validated by Parse
 	// The namespaces the platform's code publishes to.
 	out.Channel.Namespaces = []namespace{{Name: "user"}, {Name: "online", Presence: true}, {Name: "feed", AllowSubscribeForClient: true}}
+	// Then the brand's own.
+	for _, ns := range c.Centrifugo.Namespaces {
+		out.Channel.Namespaces = append(out.Channel.Namespaces, namespace{Name: ns.Name, Presence: ns.Presence, AllowSubscribeForClient: ns.Subscribe})
+	}
 	out.RPC.Proxy.Endpoint = c.Centrifugo.ProxyEndpoint
 	out.RPC.Proxy.Timeout = c.Centrifugo.ProxyTimeout.String()
 	out.RPC.WithoutNamespace.ProxyEnabled = true

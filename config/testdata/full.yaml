@@ -16,6 +16,9 @@ centrifugo:
   proxy_listen: :10001
   proxy_endpoint: grpc://api:10001
   proxy_timeout: 5s
+  namespaces:
+    - {name: crash, presence: true, subscribe: true}
+    - {name: duel, subscribe: true}
 
 http:
   addr: :8081

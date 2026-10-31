@@ -5,7 +5,14 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.1] - 2026-10-31
+
 ### Added
+- `config`: `centrifugo.namespaces` lists the brand's own channel namespaces (`name`, `presence`,
+  `subscribe`), which `gamify-config` adds to the platform's `user`, `online` and `feed`. Until now a
+  game could only publish to the platform's namespaces: Centrifugo refused any other channel
+  (`102 unknown channel`). Names are letters, digits, `-` and `_`; a platform name or a duplicate is
+  refused. No change for configs without the key.
 - `realtime`: `Broadcast(ctx, transport, channels, data)` sends one message to many channels (a
   match's tick to every player): in one call when the transport implements the new optional
   `Broadcaster` interface, else one `Publish` per channel. A failed channel doesn't stop the

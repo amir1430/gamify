@@ -244,6 +244,7 @@ reads `gamify.yaml` from the working directory, or the file `GAMIFY_CONFIG` name
 | `ledger.driver` | `postgres` or `tigerbeetle` (`ledger.tigerbeetle.cluster_id`, `addresses`) |
 | `centrifugo.api_addr`, `api_key`, `token_secret`, `token_ttl` | the gRPC API the app dials; secrets as `${VAR}` |
 | `centrifugo.proxy_listen`, `proxy_endpoint`, `proxy_timeout` | where the app serves Centrifugo's RPC proxy, and how Centrifugo reaches it |
+| `centrifugo.namespaces` | the brand's channel namespaces (`name`, `presence`, `subscribe`: clients may subscribe), added to the platform's `user`, `online`, `feed` |
 | `http.addr`, `http.allowed_origins` | the game API and the Mini App's origins (`"*"` is refused) |
 | `metrics.addr` | Prometheus; keep it private, `off` disables |
 | `log.level` | `debug`, `info`, `warn`, `error` |
