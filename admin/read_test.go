@@ -107,7 +107,7 @@ func TestReadEndpoints(t *testing.T) {
 		t.Fatalf("games = %v", games2)
 	}
 	gm := games2[0].(map[string]any)
-	for _, k := range []string{"name", "max_amount", "max_payout", "variants", "pvp", "only", "enabled", "overrides", "effective"} {
+	for _, k := range []string{"name", "max_amount", "max_payout", "variants", "pvp", "only", "enabled", "currencies", "overrides", "effective"} {
 		if _, has := gm[k]; !has {
 			t.Fatalf("game lacks %q: %v", k, gm)
 		}

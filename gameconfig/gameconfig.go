@@ -176,6 +176,10 @@ func (g *Game) off(c ledger.Currency) bool {
 	return (g.Only != "" && c != g.Only) || (!g.PvP && g.s.off[c])
 }
 
+// CurrencyOff reports whether code rules out play in c for this game (Off or Only), which no stored
+// override can undo.
+func (g *Game) CurrencyOff(c ledger.Currency) bool { return g.off(c) }
+
 // Games lists the registered games.
 func (s *Service) Games() []*Game {
 	s.mu.Lock()

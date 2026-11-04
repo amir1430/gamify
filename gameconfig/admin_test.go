@@ -174,3 +174,93 @@ func TestSetLimitRollback(t *testing.T) {
 		t.Fatalf("rows after rollback: %#v", lim)
 	}
 }
+
+func TestSetCurrency(t *testing.T) {
+	a := apptest.New(t)
+	ctx := context.Background()
+	g := a.Games.Game("g", 1000, 50_000, []string{"v"})
+	set := func(cur string, enabled bool) (gameconfig.Change, error) {
+		t.Helper()
+		tx, err := a.Pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		ch, err := a.Games.SetCurrency(ctx, tx, "g", cur, enabled)
+		if err != nil {
+			return ch, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return ch, a.Games.Load(ctx)
+	}
+
+	// Accepted with nothing stored: turning it on changes nothing.
+	if ch, err := set("usd", true); err != nil || ch.Before != nil || ch.After != nil {
+		t.Fatalf("on with no row: %#v %v", ch, err)
+	}
+
+	// Off closes the currency for the game and its variants, and leaves the other open.
+	if ch, err := set("usd", false); err != nil || ch.Before != nil || ch.After == nil {
+		t.Fatalf("off: %#v %v", ch, err)
+	}
+	if _, _, err := g.Limits("usd", ""); !errors.Is(err, gameconfig.ErrUnavailable) {
+		t.Fatalf("usd: %v", err)
+	}
+	if _, _, err := g.Limits("usd", "v"); !errors.Is(err, gameconfig.ErrUnavailable) {
+		t.Fatalf("usd variant: %v", err)
+	}
+	if _, _, err := g.Limits("tickets", ""); err != nil {
+		t.Fatalf("tickets: %v", err)
+	}
+
+	// On again with no limits stored removes the row: the game is back on its code defaults.
+	if _, err := set("usd", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, lim := a.Games.Overrides(); len(lim["g"]["usd"]) != 0 {
+		t.Fatalf("row left behind: %#v", lim)
+	}
+
+	// Stored limits survive a trip off and on.
+	tx, _ := a.Pool.Begin(ctx)
+	if _, err := a.Games.SetLimit(ctx, tx, "g", "usd", "", gameconfig.LimitOverride{Enabled: true, MaxAmount: ptr(500)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := set("usd", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := set("usd", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, l, err := g.Limits("usd", ""); err != nil || l.MaxAmount != 500 {
+		t.Fatalf("limits lost: %+v %v", l, err)
+	}
+
+	if _, err := set("eur", false); !errors.Is(err, gameconfig.ErrBadOverride) {
+		t.Fatalf("unknown currency: %v", err)
+	}
+}
+
+// What the code rules out can't be turned on from the console; it can always be stored off.
+func TestSetCurrencyCodeOff(t *testing.T) {
+	a := apptest.New(t)
+	ctx := context.Background()
+	g := a.Games.Game("g", 1000, 50_000, nil)
+	g.Only = "tickets"
+	if !g.CurrencyOff("usd") || g.CurrencyOff("tickets") {
+		t.Fatalf("CurrencyOff: usd %v tickets %v", g.CurrencyOff("usd"), g.CurrencyOff("tickets"))
+	}
+	tx, _ := a.Pool.Begin(ctx)
+	defer tx.Rollback(ctx)
+	if _, err := a.Games.SetCurrency(ctx, tx, "g", "usd", true); !errors.Is(err, gameconfig.ErrBadOverride) {
+		t.Fatalf("on: %v", err)
+	}
+	if _, err := a.Games.SetCurrency(ctx, tx, "g", "usd", false); err != nil {
+		t.Fatalf("off: %v", err)
+	}
+}

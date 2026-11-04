@@ -15,7 +15,8 @@ var (
 	ErrUnknownGame = errors.New("gameconfig: unknown game")
 	ErrLoosens     = errors.New("gameconfig: override above the game's code cap")
 	// ErrBadOverride covers an unknown currency or variant, a value <= 0, min_amount > max_amount and
-	// max_amount >= max_payout (set together), and an empty game name.
+	// max_amount >= max_payout (set together), an empty game name, and accepting a currency the
+	// game's code rules out.
 	ErrBadOverride = errors.New("gameconfig: invalid override")
 )
 
@@ -122,6 +123,37 @@ func (s *Service) SetLimit(ctx context.Context, tx pgx.Tx, game, currency, varia
 		}
 	}
 	return Change{Before: before, After: o}, nil
+}
+
+// SetCurrency sets whether game accepts currency, inside tx: the enabled flag of its whole-game
+// row, which every variant follows. Stored limits are kept, and a row left with nothing to say is
+// removed. Accepting a currency the code rules out (Game.CurrencyOff) is ErrBadOverride. It does
+// not reload the cache: call Load after tx commits.
+func (s *Service) SetCurrency(ctx context.Context, tx pgx.Tx, game, currency string, enabled bool) (Change, error) {
+	g, err := s.checkLimitKey(game, currency, "")
+	if err != nil {
+		return Change{}, err
+	}
+	if enabled && g.CurrencyOff(ledger.Currency(currency)) {
+		return Change{}, ErrBadOverride
+	}
+	o := LimitOverride{Enabled: enabled}
+	row, err := store.New(tx).LockGameLimit(ctx, store.LockGameLimitParams{Game: game, Currency: currency})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		if enabled {
+			return Change{}, nil
+		}
+	case err != nil:
+		return Change{}, err
+	default:
+		o = fromRow(row)
+		o.Enabled = enabled
+	}
+	if enabled && o.MinAmount == nil && o.MaxAmount == nil && o.MaxPayout == nil {
+		return s.DeleteLimit(ctx, tx, game, currency, "")
+	}
+	return s.SetLimit(ctx, tx, game, currency, "", o)
 }
 
 // DeleteLimit removes the override (back to inheriting), inside tx. It does not reload the

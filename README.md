@@ -9,7 +9,8 @@ currencies and registers its own games. The platform does the parts every game n
   minor units, deterministic transfer IDs, overdrafts refused by the driver.
 - **Realtime**: RPCs and pushes over Centrifugo.
 - **Randomness**: opt-in provable fairness (seed pairs, nonces, verifiable floats) for games of chance.
-- **Limits**: per game, currency and variant, set by admins without a deploy.
+- **Limits**: per game, currency and variant, set by admins without a deploy, including which
+  currencies each game accepts.
 - **Admin console**: dashboard, online players, players, balances, adjustments with approval, game
   limits, audit log, system status, command palette, CSV export, 2FA.
 - **Ops**: health checks, Prometheus metrics, a reconcile loop for operations a crash left pending.

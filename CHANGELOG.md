@@ -5,6 +5,24 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.12] - 2026-11-04
+
+### Added
+- `admin` UI: an "Accepted currencies" section on each game's page, one switch per currency. A
+  switch keeps the currency's stored limits. Currencies ruled out by code (`Game.Only`,
+  `Service.Off`) show as "Off in code" and can't be switched on.
+- `admin` API: `PUT /api/games/{game}/currencies/{currency}` `{enabled}` (`PermLimits`, audited as
+  `game.currency.set`). `GET /api/games` items gain `currencies`: `code`, `accepted`, `locked`.
+- `gameconfig.Service.SetCurrency` sets whether a game accepts a currency, and
+  `gameconfig.Game.CurrencyOff` reports whether code rules one out.
+
+### Changed
+- `admin` UI: the games list (cards, table and currency filter) shows only the currencies a game
+  accepts, not every currency it could take.
+
+Upgrade notes: no migration and no breaking change. This uses the existing `enabled` flag on
+whole-game `game_limits` rows, so currencies already switched off stay off.
+
 ## [1.1.11] - 2026-10-31
 
 ### Added

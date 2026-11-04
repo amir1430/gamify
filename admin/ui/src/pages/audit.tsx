@@ -24,7 +24,7 @@ type Entry = {
 const ACTIONS: { label: string; options: string[] }[] = [
   { label: 'Sign-in', options: ['login.ok', 'login.fail', 'logout', 'totp.enrol'] },
   { label: 'Console users', options: ['admin.create', 'admin.update', 'admin.password'] },
-  { label: 'Games', options: ['game.set', 'game.limit.set', 'game.limit.delete'] },
+  { label: 'Games', options: ['game.set', 'game.currency.set', 'game.limit.set', 'game.limit.delete'] },
   { label: 'Players', options: ['user.unlink', 'user.disconnect'] },
   { label: 'Adjustments', options: ['adjust.request', 'adjust.approve', 'adjust.reject'] },
 ]

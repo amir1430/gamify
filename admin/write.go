@@ -26,6 +26,7 @@ var (
 
 func (adm *Admin) registerWrites() {
 	adm.handle("PUT /api/games/{game}", PermLimits, adm.setGame)
+	adm.handle("PUT /api/games/{game}/currencies/{currency}", PermLimits, adm.setCurrency)
 	adm.handle("PUT /api/games/{game}/limits/{currency}/{variant}", PermLimits, adm.setLimit)
 	adm.handle("DELETE /api/games/{game}/limits/{currency}/{variant}", PermLimits, adm.deleteLimit)
 	adm.handle("DELETE /api/users/{id}/identities/{provider}", PermIdentity, adm.unlink)
@@ -147,6 +148,22 @@ func (adm *Admin) setGame(w http.ResponseWriter, r *http.Request, s *session) er
 	game := r.PathValue("game")
 	return adm.gameWrite(w, r, s, "game.set", "game:"+game, func(ctx context.Context, tx pgx.Tx) (gameconfig.Change, error) {
 		return adm.a.Games.SetGame(ctx, tx, game, *b.Enabled)
+	}, http.StatusOK)
+}
+
+func (adm *Admin) setCurrency(w http.ResponseWriter, r *http.Request, s *session) error {
+	var b struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := decode(w, r, &b); err != nil {
+		return err
+	}
+	if b.Enabled == nil {
+		return badRequest("enabled is required")
+	}
+	game, currency, _, target := limitKey(r)
+	return adm.gameWrite(w, r, s, "game.currency.set", target, func(ctx context.Context, tx pgx.Tx) (gameconfig.Change, error) {
+		return adm.a.Games.SetCurrency(ctx, tx, game, currency, *b.Enabled)
 	}, http.StatusOK)
 }
 

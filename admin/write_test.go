@@ -272,3 +272,66 @@ func TestSideEffectsSurviveCancel(t *testing.T) {
 		t.Fatalf("disconnected %v", d)
 	}
 }
+
+func TestCurrencyWriteAudited(t *testing.T) {
+	a, _, srv := writeEnv(t)
+	op := loginAs(t, a, srv, "op", RoleOperator)
+	support := loginAs(t, a, srv, "support", RoleSupport)
+
+	gameCurrencies := func() map[string]map[string]any {
+		t.Helper()
+		st, body := call(t, op, srv, "GET", "/api/games", nil)
+		if st != 200 {
+			t.Fatalf("games: %d %v", st, body)
+		}
+		out := map[string]map[string]any{}
+		for _, c := range body["items"].([]any)[0].(map[string]any)["currencies"].([]any) {
+			m := c.(map[string]any)
+			out[m["code"].(string)] = m
+		}
+		return out
+	}
+	if c := gameCurrencies()["usd"]; c["accepted"] != true || c["locked"] != false {
+		t.Fatalf("before: %v", c)
+	}
+
+	if st, body := call(t, op, srv, "PUT", "/api/games/arena/currencies/usd", map[string]any{"enabled": false}); st != 200 {
+		t.Fatalf("off: %d %v", st, body)
+	}
+	var target string
+	if err := a.Pool.QueryRow(context.Background(),
+		`SELECT target FROM admin_audit WHERE action = 'game.currency.set'`).Scan(&target); err != nil {
+		t.Fatal(err)
+	}
+	if target != "game:arena/usd/" {
+		t.Fatalf("target = %s", target)
+	}
+	if n := len(a.Pushes("feed:config")); n != 1 {
+		t.Fatalf("config pushes = %d, want 1", n)
+	}
+	cs := gameCurrencies()
+	if cs["usd"]["accepted"] != false || cs["tickets"]["accepted"] != true {
+		t.Fatalf("after: %v", cs)
+	}
+	if a.Games.Public()["arena"]["usd"].Limits.Enabled {
+		t.Fatal("cache not reloaded")
+	}
+
+	// Closing the whole game is not the same as refusing a currency.
+	if st, body := call(t, op, srv, "PUT", "/api/games/arena", map[string]any{"enabled": false}); st != 200 {
+		t.Fatalf("close: %d %v", st, body)
+	}
+	if c := gameCurrencies()["tickets"]; c["accepted"] != true {
+		t.Fatalf("closed game: %v", c)
+	}
+
+	st, body := call(t, op, srv, "PUT", "/api/games/arena/currencies/usd", map[string]any{})
+	wantErr(t, "no enabled", st, body, 400, "bad_request")
+	st, body = call(t, op, srv, "PUT", "/api/games/arena/currencies/eur", map[string]any{"enabled": false})
+	wantErr(t, "bad currency", st, body, 400, "bad_override")
+	st, body = call(t, op, srv, "PUT", "/api/games/nope/currencies/usd", map[string]any{"enabled": false})
+	wantErr(t, "unknown game", st, body, 404, "not_found")
+	if st, _ := call(t, support, srv, "PUT", "/api/games/arena/currencies/usd", map[string]any{"enabled": true}); st != 403 {
+		t.Fatalf("support: %d", st)
+	}
+}

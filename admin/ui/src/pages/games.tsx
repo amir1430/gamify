@@ -41,6 +41,7 @@ type Game = {
   pvp: boolean
   only: string
   enabled: boolean
+  currencies: { code: string; accepted: boolean; locked: boolean }[] // locked: decided by code, not here
   overrides: { enabled: boolean | null; limits: Record<string, Record<string, Override>> }
   effective: Record<string, { limits: Limits; variants?: Record<string, Limits> }>
 }
@@ -56,7 +57,7 @@ const FIELDS = [
 
 // Facts about a game the list shows, searches and filters on.
 const overrideCount = (g: Game) => Object.values(g.overrides.limits).reduce((n, byVariant) => n + Object.keys(byVariant).length, 0) + (g.overrides.enabled != null ? 1 : 0)
-const currenciesOf = (g: Game, all: string[]) => (g.only ? [g.only] : all)
+const currenciesOf = (g: Game) => g.currencies.filter((c) => c.accepted).map((c) => c.code)
 const plural = (n: number, one: string, many = one + 's') => `${n.toLocaleString()} ${n === 1 ? one : many}`
 
 // Every game, as cards (Coolify's project grid) or a table: searched by name, variant or currency,
@@ -71,7 +72,7 @@ export function Games() {
     { key: 'overrides', label: 'Overrides', options: [{ value: 'yes', label: 'Has overrides' }, { value: 'no', label: 'Code defaults only' }], match: (g, v) => overrideCount(g) > 0 === (v === 'yes') },
     { key: 'variants', label: 'Variants', options: [{ value: 'yes', label: 'Has variants' }, { value: 'no', label: 'No variants' }], match: (g, v) => g.variants.length > 0 === (v === 'yes') },
     ...(all.length > 1
-      ? [{ key: 'cur', label: 'Currency', options: all.map((c) => ({ value: c, label: c.toUpperCase() })), match: (g: Game, v: string) => currenciesOf(g, all).includes(v) }]
+      ? [{ key: 'cur', label: 'Currency', options: all.map((c) => ({ value: c, label: c.toUpperCase() })), match: (g: Game, v: string) => currenciesOf(g).includes(v) }]
       : []),
   ]
   const sorts: Sort<Game>[] = [
@@ -124,7 +125,7 @@ export function Games() {
           ) : view === 'grid' ? (
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {list.page.rows.map((g) => (
-                <GameTile key={g.name} game={g} currencies={currenciesOf(g, all)} onFilter={list.toggle} />
+                <GameTile key={g.name} game={g} currencies={currenciesOf(g)} onFilter={list.toggle} />
               ))}
             </div>
           ) : (
@@ -256,7 +257,7 @@ function GameTable({ rows, all, onFilter }: { rows: Game[]; all: string[]; onFil
         {
           key: 'cur',
           title: 'Currencies',
-          render: (g) => <span className="text-xs text-muted-foreground uppercase">{currenciesOf(g, all).join(', ')}</span>,
+          render: (g) => (currenciesOf(g).length ? <span className="text-xs text-muted-foreground uppercase">{currenciesOf(g).join(', ')}</span> : <Faint>none</Faint>),
         },
         { key: 'ovr', title: 'Overrides', align: 'right', render: (g) => (overrideCount(g) ? <span className="num text-brand">{overrideCount(g)}</span> : <Faint>none</Faint>) },
         { key: 'open', align: 'right', render: (g) => <OpenSwitch game={g} /> },
@@ -336,6 +337,7 @@ function GameDetail({ game: g, crumbs }: { game: Game; crumbs: { label: string; 
           ['Variants · overrides', `${g.variants.length} · ${overrideCount(g)}`],
         ]}
       />
+      <AcceptedCurrencies game={g} />
       <Section
         title="Limits"
         description={g.variants.length ? 'The whole game first, then each variant (a variant without its own override follows the whole game).' : undefined}
@@ -386,6 +388,33 @@ function GameDetail({ game: g, crumbs }: { game: Game; crumbs: { label: string; 
       </Section>
       {editing && <EditLimit game={g} {...editing} onClose={() => setEditing(null)} />}
     </>
+  )
+}
+
+// Which currencies the game takes bets in. A switch keeps the currency's stored limits, so turning
+// it back on restores them.
+function AcceptedCurrencies({ game: g }: { game: Game }) {
+  const canEdit = usePerm('limits')
+  const { busy, run } = useAction()
+  return (
+    <Section title="Accepted currencies" description="Players can only start play in the currencies switched on here. Games in play can finish.">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {g.currencies.map((c) => (
+          <label key={c.code} className="flex items-center justify-between gap-4 rounded-lg border px-4 py-3">
+            <span>
+              <span className="block text-sm font-medium">{c.code.toUpperCase()}</span>
+              <span className="block text-xs text-muted-foreground">{c.locked ? 'Off in code' : c.accepted ? 'Accepted' : 'Not accepted'}</span>
+            </span>
+            <Switch
+              checked={c.accepted}
+              disabled={!canEdit || busy || c.locked}
+              aria-label={`${g.name} accepts ${c.code}`}
+              onCheckedChange={(enabled) => void run(`/api/games/${encodeURIComponent(g.name)}/currencies/${encodeURIComponent(c.code)}`, { method: 'PUT', body: { enabled } })}
+            />
+          </label>
+        ))}
+      </div>
+    </Section>
   )
 }
 

@@ -305,6 +305,14 @@ type gameOverrides struct {
 	Limits  map[string]map[string]limitView `json:"limits"`  // currency → variant ("" = game) → override
 }
 
+// currencyView is one currency on a game: whether the game takes it, and whether code decides that
+// (Only, Off) so the console can't change it.
+type currencyView struct {
+	Code     ledger.Currency `json:"code"`
+	Accepted bool            `json:"accepted"`
+	Locked   bool            `json:"locked"`
+}
+
 // games lists the registered games with their stored overrides and the limits in effect.
 func (adm *Admin) games(w http.ResponseWriter, r *http.Request, _ *session) error {
 	settings, limits := adm.a.Games.Overrides()
@@ -325,10 +333,17 @@ func (adm *Admin) games(w http.ResponseWriter, r *http.Request, _ *session) erro
 		if variants == nil {
 			variants = []string{}
 		}
+		// Accepted ignores the game's own switch: a closed game still has its currencies.
+		currencies := []currencyView{}
+		for _, c := range adm.a.Ledger.Currencies() {
+			row, stored := limits[g.Name][string(c)][""]
+			locked := g.CurrencyOff(c)
+			currencies = append(currencies, currencyView{c, !locked && (!stored || row.Enabled), locked})
+		}
 		out = append(out, map[string]any{
 			"name": g.Name, "max_amount": g.MaxAmount, "max_payout": g.MaxPayout, "variants": variants,
 			"pvp": g.PvP, "only": g.Only, "enabled": ov.Enabled == nil || *ov.Enabled,
-			"overrides": ov, "effective": public[g.Name],
+			"currencies": currencies, "overrides": ov, "effective": public[g.Name],
 		})
 	}
 	slices.SortFunc(out, func(a, b map[string]any) int {
