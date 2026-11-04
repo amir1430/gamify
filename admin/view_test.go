@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -173,6 +174,34 @@ func TestViewValidation(t *testing.T) {
 		"nil run":              {"close", func(v *View) { v.Actions[0].Run = nil }},
 		"action unknown perm":  {"close", func(v *View) { v.Actions[0].Perm = "things.open" }},
 		"field enum no option": {"kind", func(v *View) { v.Actions[0].Fields = []Field{{Key: "kind", Type: Enum}} }},
+		"options_from on text": {"note", func(v *View) { v.Actions[0].Fields = []Field{{Key: "note", Type: Text, OptionsFrom: "x"}} }},
+		"options and options_from": {"kind", func(v *View) {
+			v.Actions[0].Fields = []Field{{Key: "kind", Type: Enum, Options: []string{"a"}, OptionsFrom: "x"}}
+		}},
+		"option help unknown": {"kind", func(v *View) {
+			v.Actions[0].Fields = []Field{{Key: "kind", Type: Enum, Options: []string{"a"}, OptionHelp: map[string]string{"b": "?"}}}
+		}},
+		"summary not a column": {"nope", func(v *View) { v.Summary = []string{"nope"} }},
+		"strings filter": {"tags", func(v *View) {
+			v.Columns = append(v.Columns, Column{Key: "tags", Type: Strings})
+			v.Filters = append(v.Filters, Filter{Key: "tags", Type: Strings})
+		}},
+		"option label unknown": {"kind", func(v *View) {
+			v.Actions[0].Fields = []Field{{Key: "kind", Type: Enum, Options: []string{"a"}, OptionLabels: map[string]string{"b": "?"}}}
+		}},
+		"page action duplicates a row action": {"close", func(v *View) { v.PageActions = []Action{v.Actions[0]} }},
+		"page action with state": {"add", func(v *View) {
+			v.PageActions = []Action{pageAdd(func(*Action) {}), {}}[:1]
+			v.PageActions[0].State = func(Row) ActionState { return ActionState{} }
+		}},
+		"target on a row action": {"close", func(v *View) {
+			v.Actions[0].TargetField = "user"
+			v.Actions[0].Fields = []Field{{Key: "user", Type: UserID, Required: true}}
+		}},
+		"target not a field":   {"add", func(v *View) { v.PageActions = []Action{pageAdd(func(a *Action) { a.TargetField = "nope" })} }},
+		"target not an id":     {"add", func(v *View) { v.PageActions = []Action{pageAdd(func(a *Action) { a.Fields[0].Type = Text })} }},
+		"target not required":  {"add", func(v *View) { v.PageActions = []Action{pageAdd(func(a *Action) { a.Fields[0].Required = false })} }},
+		"bad page action name": {"action", func(v *View) { v.PageActions = []Action{pageAdd(func(a *Action) { a.Name = "Add" })} }},
 		"image filter": {"pic", func(v *View) {
 			v.Columns = append(v.Columns, Column{Key: "pic", Type: Image})
 			v.Filters = append(v.Filters, Filter{Key: "pic", Type: Image})
@@ -372,6 +401,185 @@ func TestViewActionInput(t *testing.T) {
 	}
 	if got["n"] != int64(1<<60) || got["amount"] != int64(250) || got["on"] != true || got["kind"] != "b" || got["note"] != "hi" || got["link"] != "https://example.com/x" {
 		t.Fatalf("input = %#v", got)
+	}
+}
+
+func TestViewActionStrings(t *testing.T) {
+	a, adm, srv := thingsEnv(t, thingsPerms)
+	var got map[string]any
+	v := thingsView(a)
+	v.Actions = []Action{{Name: "set", Title: "Set", Perm: PermView, Fields: []Field{
+		{Key: "picks", Type: Strings, Options: []string{"a", "b"}},
+		{Key: "tags", Type: Strings},
+		{Key: "must", Type: Strings, Required: true},
+	}, Run: func(ctx context.Context, tx pgx.Tx, c Call) (any, any, error) {
+		got = c.Input
+		return nil, nil, nil
+	}}}
+	if err := adm.View(v); err != nil {
+		t.Fatal(err)
+	}
+	viewer := loginAs(t, a, srv, "viewer", RoleViewer)
+	path := "/api/views/things/1/actions/set"
+	for name, in := range map[string]map[string]any{
+		"not a list":     {"must": "x"},
+		"not strings":    {"must": []any{1}},
+		"unknown option": {"must": []any{"x"}, "picks": []any{"c"}},
+		"empty required": {"must": []any{}},
+		"blank required": {"must": []any{" "}},
+	} {
+		st, body := call(t, viewer, srv, "POST", path, map[string]any{"input": in})
+		wantErr(t, name, st, body, 400, "bad_input")
+	}
+	if got != nil {
+		t.Fatalf("Run ran with %v", got)
+	}
+	// Trimmed, blanks and repeats dropped, order kept; an empty list is an input that wasn't sent.
+	if st, body := call(t, viewer, srv, "POST", path, map[string]any{"input": map[string]any{
+		"picks": []any{"b", "a", "b"}, "tags": []any{}, "must": []any{" x ", "", "y", "x"},
+	}}); st != 204 {
+		t.Fatalf("set: %d %v", st, body)
+	}
+	if !slices.Equal(got["picks"].([]string), []string{"b", "a"}) || !slices.Equal(got["must"].([]string), []string{"x", "y"}) {
+		t.Fatalf("input = %#v", got)
+	}
+	if _, ok := got["tags"]; ok {
+		t.Fatalf("empty list came through: %#v", got)
+	}
+}
+
+// An enum with OptionsFrom is offered from the row, so the action checks the value, not the console.
+func TestViewActionOptionsFrom(t *testing.T) {
+	a, adm, srv := thingsEnv(t, thingsPerms)
+	var got map[string]any
+	v := thingsView(a)
+	v.Summary = []string{"state"}
+	v.Actions = []Action{{Name: "pick", Title: "Pick", Perm: PermView, Fields: []Field{
+		{Key: "market", Type: Enum, OptionsFrom: "markets", Group: "Market", Help: "h", Placeholder: "p"},
+		{Key: "state", Type: Enum, Options: []string{"a"}, OptionHelp: map[string]string{"a": "first"}, OptionLabels: map[string]string{"a": "Alpha"}},
+	}, Run: func(ctx context.Context, tx pgx.Tx, c Call) (any, any, error) {
+		got = c.Input
+		return nil, nil, nil
+	}}}
+	if err := adm.View(v); err != nil {
+		t.Fatal(err)
+	}
+	viewer := loginAs(t, a, srv, "viewer", RoleViewer)
+	if st, body := call(t, viewer, srv, "POST", "/api/views/things/1/actions/pick", map[string]any{"input": map[string]any{"market": "m1"}}); st != 204 || got["market"] != "m1" {
+		t.Fatalf("pick: %d %v %v", st, body, got)
+	}
+	resp, err := viewer.Get(srv.URL + "/api/views")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	for _, want := range []string{`"summary":["state"]`, `"options_from":"markets"`, `"group":"Market"`, `"help":"h"`, `"placeholder":"p"`, `"option_help":{"a":"first"}`, `"option_labels":{"a":"Alpha"}`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("/api/views lacks %s: %s", want, raw)
+		}
+	}
+}
+
+// pageAdd is a valid page action, changed by f.
+func pageAdd(f func(*Action)) Action {
+	a := Action{Name: "add", Title: "Add", Perm: PermView, TargetField: "user", Fields: []Field{{Key: "user", Type: UserID, Required: true}},
+		Run: func(ctx context.Context, tx pgx.Tx, c Call) (any, any, error) { return nil, nil, nil }}
+	f(&a)
+	return a
+}
+
+func TestViewActionState(t *testing.T) {
+	a, adm, srv := thingsEnv(t, thingsPerms)
+	v := thingsView(a)
+	v.Get = func(ctx context.Context, id int64) (Row, error) { return Row{"id": id, "state": "closed"}, nil }
+	v.Actions = []Action{
+		{Name: "close", Title: "Close", Perm: PermView, Run: closeRun, TypeConfirm: "CLOSE", State: func(r Row) ActionState {
+			if r["state"] == "closed" {
+				return ActionState{Unavailable: "Already closed."}
+			}
+			return ActionState{Impact: "Closes it."}
+		}},
+		{Name: "fine", Title: "Fine", Perm: PermView, Run: closeRun, State: func(Row) ActionState { return ActionState{} }},
+		{Name: "boom", Title: "Boom", Perm: PermView, Run: closeRun, State: func(Row) ActionState { panic("boom") }},
+	}
+	if err := adm.View(v); err != nil {
+		t.Fatal(err)
+	}
+	addThing(t, a, 1, 10, "open")
+	viewer := loginAs(t, a, srv, "viewer", RoleViewer)
+	_, items := getList(t, viewer, srv, "/api/views/things")
+	if len(items) != 1 {
+		t.Fatalf("items = %v", items)
+	}
+	states, _ := items[0]["_actions"].(map[string]any)
+	if fmt.Sprint(states) != "map[close:map[impact:Closes it.]]" { // no entry for fine or for boom's panic
+		t.Fatalf("list states = %#v", items[0]["_actions"])
+	}
+	st, body := call(t, viewer, srv, "GET", "/api/views/things/1", nil)
+	if st != 200 || fmt.Sprint(body["_actions"]) != "map[close:map[unavailable:Already closed.]]" {
+		t.Fatalf("get: %d %v", st, body)
+	}
+	resp, err := viewer.Get(srv.URL + "/api/views")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), `"type_confirm":"CLOSE"`) {
+		t.Fatalf("/api/views lacks type_confirm: %s", raw)
+	}
+}
+
+func TestViewPageAction(t *testing.T) {
+	a, adm, srv := thingsEnv(t, thingsPerms)
+	var got Call
+	var after Call
+	v := thingsView(a)
+	run := func(ctx context.Context, tx pgx.Tx, c Call) (any, any, error) {
+		got = c
+		return nil, map[string]bool{"done": true}, nil
+	}
+	v.PageActions = []Action{
+		pageAdd(func(x *Action) {
+			x.Run, x.Reason = run, true
+			x.After = func(ctx context.Context, c Call, _, _ any) { after = c }
+		}),
+		{Name: "sync", Title: "Sync", Perm: PermView, Run: run},
+		{Name: "secret", Title: "Secret", Perm: "things.close", Run: run},
+	}
+	if err := adm.View(v); err != nil {
+		t.Fatal(err)
+	}
+	viewer := loginAs(t, a, srv, "viewer", RoleViewer)
+	raw := map[string]any{"reason": "why", "input": map[string]any{"user": 77}}
+	if st, body := call(t, viewer, srv, "POST", "/api/views/things/actions/add", raw); st != 204 {
+		t.Fatalf("add: %d %v", st, body)
+	}
+	if got.ID != 77 || after.ID != 77 || got.Input["user"] != int64(77) {
+		t.Fatalf("call = %+v, after %+v", got, after)
+	}
+	var target string
+	if err := a.Pool.QueryRow(context.Background(), `SELECT target FROM admin_audit WHERE action = 'view.things.add'`).Scan(&target); err != nil || target != "things:77" {
+		t.Fatalf("audit target = %q, %v", target, err)
+	}
+	if st, body := call(t, viewer, srv, "POST", "/api/views/things/actions/sync", nil); st != 204 || got.ID != 0 {
+		t.Fatalf("sync: %d %v, id %d", st, body, got.ID)
+	}
+	if err := a.Pool.QueryRow(context.Background(), `SELECT target FROM admin_audit WHERE action = 'view.things.sync'`).Scan(&target); err != nil || target != "things" {
+		t.Fatalf("audit target = %q, %v", target, err)
+	}
+	st, body := call(t, viewer, srv, "POST", "/api/views/things/actions/add", map[string]any{"input": map[string]any{"user": 1}})
+	wantErr(t, "no reason", st, body, 400, "reason_required")
+	if st, _ := call(t, viewer, srv, "POST", "/api/views/things/actions/nope", nil); st != 404 {
+		t.Fatalf("unknown: %d", st)
+	}
+	if st, _ := call(t, viewer, srv, "POST", "/api/views/things/actions/secret", nil); st != 403 {
+		t.Fatalf("no perm: %d", st)
+	}
+	// A page action isn't a row action, nor the other way round.
+	if st, _ := call(t, viewer, srv, "POST", "/api/views/things/1/actions/sync", nil); st != 404 {
+		t.Fatalf("page action on a row: %d", st)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -20,6 +21,7 @@ import (
 	"github.com/amir1430/gamify/restrict/internal/store"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -29,6 +31,8 @@ var (
 	ErrBlocked   = &realtime.ClientError{Code: 1108, Message: "this action is restricted on your account"}
 	// ErrUnknownBlock: a Restriction names a block the Config doesn't have.
 	ErrUnknownBlock = errors.New("restrict: unknown block")
+	// ErrUnknownPlayer: Set names a user that doesn't exist.
+	ErrUnknownPlayer = errors.New("restrict: unknown player")
 )
 
 // Config is the brand's policy; the zero value only allows suspending.
@@ -39,6 +43,11 @@ type Config struct {
 	// equal to value (a string, or a number or bool as written), e.g. "duel.create?game=chess": a
 	// call without the field doesn't match, so the brand must require it on such a method.
 	Blocks map[string][]string
+	// BlockHelp says what a block covers, by its name, for the console (optional). Blocks with
+	// help are listed first there.
+	BlockHelp map[string]string
+	// BlockLabels names the blocks in the console (optional; default: the block's name).
+	BlockLabels map[string]string
 	// ReloadEvery is how soon a change made on another instance applies here (default 5s).
 	ReloadEvery time.Duration
 }
@@ -128,6 +137,16 @@ func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {
 	if cfg.ReloadEvery < 0 {
 		return nil, fmt.Errorf("restrict: ReloadEvery %s: must be positive", cfg.ReloadEvery)
 	}
+	for name := range cfg.BlockHelp {
+		if _, ok := cfg.Blocks[name]; !ok {
+			return nil, fmt.Errorf("restrict: block help %q: no such block", name)
+		}
+	}
+	for name := range cfg.BlockLabels {
+		if _, ok := cfg.Blocks[name]; !ok {
+			return nil, fmt.Errorf("restrict: block label %q: no such block", name)
+		}
+	}
 	s := &Service{q: store.New(pool), cfg: cfg, byCall: map[string][]rule{}, now: time.Now}
 	for name, methods := range cfg.Blocks {
 		if name == "" || len(methods) == 0 || slices.Contains(methods, "") {
@@ -150,6 +169,12 @@ func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {
 
 // BlockNames lists Config.Blocks' names, sorted.
 func (s *Service) BlockNames() []string { return slices.Clone(s.blockNs) }
+
+// BlockHelp is Config.BlockHelp.
+func (s *Service) BlockHelp() map[string]string { return maps.Clone(s.cfg.BlockHelp) }
+
+// BlockLabels is Config.BlockLabels.
+func (s *Service) BlockLabels() map[string]string { return maps.Clone(s.cfg.BlockLabels) }
 
 // Load reads every stored restriction into the in-memory copy.
 func (s *Service) Load(ctx context.Context) error {
@@ -271,6 +296,9 @@ func (s *Service) Set(ctx context.Context, tx pgx.Tx, userID int64, r Restrictio
 	}
 	row, err = q.UpsertRestriction(ctx, store.UpsertRestrictionParams{UserID: userID, Suspended: r.Suspended,
 		Blocks: blocks, Note: r.Note, Until: until})
+	if pe := (*pgconn.PgError)(nil); errors.As(err, &pe) && pe.Code == "23503" /* foreign_key_violation: users */ {
+		return before, after, ErrUnknownPlayer
+	}
 	if err != nil {
 		return before, after, err
 	}

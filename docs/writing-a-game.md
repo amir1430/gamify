@@ -179,8 +179,24 @@ return adm.View(admin.View{
 
 - Field types: `Text`, `Int`, `Decimal` (an integer shown with `Scale` decimals, never a float),
   `Money` (minor units; currency from the row's `CurrencyKey` or a fixed `Currency`), `Bool`,
-  `Time`, `Enum` (`Options`), `UserID` (links to the player), `JSON`. Filters are columns of the
-  same type; action inputs (`Fields`) use the same types, `Money`/`Decimal` as integers.
+  `Time`, `Enum` (`Options`), `UserID` (links to the player), `JSON`, `URL`, `Image`, `Strings` (a
+  list: with `Options` a searchable multi-select, without them free tags). Filters are columns of
+  the same type (not `JSON`, `Image` or `Strings`); action inputs (`Fields`) use the same types,
+  `Money`/`Decimal` as integers.
+- A form is drawn from its `Fields` and prefilled from the row's value at the same key, so a field
+  that replaces stored data needs that data in the row. `Help` is a line under an input,
+  `Placeholder` what an empty one shows, `Group` a section heading, `OptionHelp` a line next to an
+  option. `View.Summary` lists columns shown atop the form.
+- `OptionLabels` (on a `Field`, `Column` or `Filter`) names `Enum` and `Strings` values.
+- `Action.State` says how an action stands on a row, from its values: `Unavailable` greys it out
+  with the reason, `Impact` is a warning in its form. It runs for every row listed and is only what
+  the console shows, so `Run` must still refuse. `Action.TypeConfirm` is text to type before sending.
+- `View.PageActions` are buttons on the page, not on a row. `TargetField` names a required `Int` or
+  `UserID` input holding the row: that's `Call.ID` and the audit target. Their form starts empty,
+  so one that writes over a row must check what's there.
+- A list's first `Text` filter is its search box, `Enum` and `Bool` filters are in its filter menu.
+- `OptionsFrom` gives an `Enum` choices that depend on the row: name a row key holding
+  `[]admin.Option`, from `List` or `Get`. The console can't check such a value, so `Run` must.
 - `View` checks the description and returns an error; register views at startup.
 - Actions never move money: the ledger isn't in `Run`'s transaction. Change your game's row (mark
   the match void) and let your reconciler do the ledger part, as for a row left by a crash. The

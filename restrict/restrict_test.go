@@ -21,6 +21,8 @@ func TestNewChecksConfig(t *testing.T) {
 		"no field":       {Blocks: map[string][]string{"bets": {"duel.create?=chess"}}},
 		"no method":      {Blocks: map[string][]string{"bets": {"?game=chess"}}},
 		"negative every": {ReloadEvery: -time.Second},
+		"unknown help":   {Blocks: map[string][]string{"bets": {"a.b"}}, BlockHelp: map[string]string{"swaps": "?"}},
+		"unknown label":  {Blocks: map[string][]string{"bets": {"a.b"}}, BlockLabels: map[string]string{"swaps": "?"}},
 	} {
 		if _, err := restrict.New(nil, cfg); err == nil {
 			t.Errorf("%s: accepted", name)

@@ -2,7 +2,7 @@
 // pages from, and the pure parts of drawing them: grouping for the menu, cell values, action inputs.
 import { format, parseAmount, plain } from './money.ts'
 
-export type FieldType = 'text' | 'int' | 'decimal' | 'money' | 'bool' | 'time' | 'enum' | 'user_id' | 'json' | 'url' | 'image'
+export type FieldType = 'text' | 'int' | 'decimal' | 'money' | 'bool' | 'time' | 'enum' | 'user_id' | 'json' | 'url' | 'image' | 'strings'
 
 export type ViewColumn = {
   key: string
@@ -12,11 +12,28 @@ export type ViewColumn = {
   currency_key?: string
   currency?: string
   options?: string[]
+  option_labels?: Record<string, string>
   detail_only?: boolean
 }
-export type ViewFilter = { key: string; label: string; type: FieldType; options?: string[] }
-export type ViewField = { key: string; label: string; type: FieldType; required: boolean; scale?: number; currency?: string; options?: string[] }
-export type ViewAction = { name: string; title: string; confirm: string; reason: boolean; fields: ViewField[] }
+export type ViewFilter = { key: string; label: string; type: FieldType; options?: string[]; option_labels?: Record<string, string> }
+export type ViewOption = { value: string; label?: string; hint?: string; disabled?: boolean }
+export type ViewField = {
+  key: string
+  label: string
+  type: FieldType
+  required: boolean
+  scale?: number
+  currency?: string
+  options?: string[]
+  help?: string
+  placeholder?: string
+  group?: string
+  option_help?: Record<string, string>
+  option_labels?: Record<string, string>
+  options_from?: string
+}
+export type ViewAction = { name: string; title: string; confirm: string; type_confirm?: string; reason: boolean; fields: ViewField[] }
+export type ActionState = { unavailable?: string; impact?: string }
 export type ViewDesc = {
   name: string
   title: string
@@ -26,8 +43,16 @@ export type ViewDesc = {
   filters: ViewFilter[]
   has_detail: boolean
   actions: ViewAction[]
+  summary: string[]
+  page_actions: ViewAction[]
 }
-export type ViewRow = Record<string, unknown> & { id: number | string }
+export type ViewRow = Record<string, unknown> & { id: number | string; _actions?: Record<string, ActionState> }
+
+// How an action stands on a row (admin.Action.State); no row: a plain available one.
+export const actionState = (row: ViewRow | undefined, name: string): ActionState => row?._actions?.[name] ?? {}
+
+// A value's name (OptionLabels), else the value.
+export const optionLabel = (x: { option_labels?: Record<string, string> }, v: string) => x.option_labels?.[v] || v
 
 // A key as a label when the brand gave none (the API sends the key then): "custom_title" → "Custom title".
 export const labelOf = (x: { key: string; label?: string }) =>
@@ -69,7 +94,7 @@ const big = (v: unknown): bigint | null => {
 // A cell as text, for the types drawn as plain text (bool, time, user_id and enum get their own
 // look in the page, but fall back here). decimals: the currency's, for money. IDs (user_id, a key
 // "id" or "…_id") aren't grouped.
-export function cellText(col: { type: FieldType; scale?: number; key?: string }, v: unknown, decimals = 0): string {
+export function cellText(col: { type: FieldType; scale?: number; key?: string; option_labels?: Record<string, string> }, v: unknown, decimals = 0): string {
   if (v == null || v === '') return '—'
   switch (col.type) {
     case 'int':
@@ -89,8 +114,23 @@ export function cellText(col: { type: FieldType; scale?: number; key?: string },
       return typeof v === 'string' ? new Date(v).toLocaleString() : String(v)
     case 'json':
       return typeof v === 'string' ? v : JSON.stringify(v)
+    case 'strings':
+      return Array.isArray(v) ? v.map((x) => optionLabel(col, String(x))).join(', ') || '—' : String(v)
+    case 'enum':
+      return optionLabel(col, String(v))
   }
   return String(v)
+}
+
+// A row's cell for a CSV: a number stays exact, money in major units, a time as sent.
+export function csvValue(col: ViewColumn, row: ViewRow, decimals = 0): unknown {
+  const v = row[col.key]
+  if (col.type === 'money' || col.type === 'decimal') {
+    const n = big(v)
+    return n == null ? (v ?? '') : plain(n, col.type === 'money' ? decimals : (col.scale ?? 0))
+  }
+  if (col.type === 'strings' || col.type === 'enum' || col.type === 'json') return v == null || v === '' ? '' : cellText(col, v)
+  return v ?? ''
 }
 
 // RFC 3339 ⇄ an <input type="datetime-local"> value (the browser's local time, to the minute).
@@ -105,11 +145,15 @@ export function fromLocalInput(s: string): string {
   return isNaN(d.getTime()) ? '' : d.toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
+// What a form holds for a field: a boolean, the list of a strings field, else the input's text.
+export type FormValue = string | boolean | string[]
+
 // A form value for a field, prefilled from the row when it has the same key (bool: a boolean,
 // anything else: the text the input shows).
-export function initialValue(f: ViewField, row: ViewRow | undefined, decimals = 0): string | boolean {
+export function initialValue(f: ViewField, row: ViewRow | undefined, decimals = 0): FormValue {
   const v = row?.[f.key]
   if (f.type === 'bool') return v === true
+  if (f.type === 'strings') return Array.isArray(v) ? v.map(String) : []
   if (v == null || v === '') return ''
   switch (f.type) {
     case 'time':
@@ -122,15 +166,45 @@ export function initialValue(f: ViewField, row: ViewRow | undefined, decimals = 
     case 'json':
       return typeof v === 'string' ? v : JSON.stringify(v, null, 2)
     case 'enum':
-      return f.options?.includes(String(v)) ? String(v) : ''
+      return f.options_from || f.options?.includes(String(v)) ? String(v) : ''
   }
   return typeof v === 'object' ? '' : String(v)
 }
 
+// A field's choices: the row's for OptionsFrom, else its Options with their help, those first.
+export function fieldOptions(f: ViewField, row: ViewRow | undefined): ViewOption[] {
+  if (f.options_from) {
+    const l = row?.[f.options_from]
+    return Array.isArray(l) ? (l as ViewOption[]) : []
+  }
+  const all = (f.options ?? []).map((value) => ({ value, label: f.option_labels?.[value], hint: f.option_help?.[value] }))
+  return [...all.filter((o) => o.hint), ...all.filter((o) => !o.hint)]
+}
+
+// Whether a field needs the room of a list rather than a dropdown.
+export const usesPickList = (f: ViewField) =>
+  (f.type === 'strings' && !!f.options?.length) || (f.type === 'enum' && (!!f.options_from || !!f.option_help || (f.options?.length ?? 0) > 8))
+
+// Fields by section: neighbours with the same Group, in order ('' = no heading).
+export function fieldSections(fields: ViewField[]): { group: string; fields: ViewField[] }[] {
+  const out: { group: string; fields: ViewField[] }[] = []
+  for (const f of fields) {
+    const group = f.group ?? ''
+    const last = out[out.length - 1]
+    if (last && last.group === group) last.fields.push(f)
+    else out.push({ group, fields: [f] })
+  }
+  return out
+}
+
 // One input as the API takes it (see admin.Call): undefined = not sent; error = what to fix.
 // Integers go as bigints (the request body writes them as exact JSON integers).
-export function inputValue(f: ViewField, raw: string | boolean, decimals = 0): { value?: unknown; error?: string } {
+export function inputValue(f: ViewField, raw: FormValue, decimals = 0): { value?: unknown; error?: string } {
   if (f.type === 'bool') return { value: raw === true }
+  if (f.type === 'strings') {
+    const l = Array.isArray(raw) ? raw : []
+    return l.length ? { value: l } : f.required ? { error: 'Required.' } : {}
+  }
   const s = String(raw).trim()
   if (s === '') return f.required ? { error: 'Required.' } : {}
   switch (f.type) {
@@ -157,12 +231,34 @@ export function inputValue(f: ViewField, raw: string | boolean, decimals = 0): {
         return { error: 'Valid JSON.' }
       }
     case 'enum':
-      return f.options?.includes(s) ? { value: s } : { error: 'Pick one.' }
+      return f.options_from || f.options?.includes(s) ? { value: s } : { error: 'Pick one.' }
     case 'url':
     case 'image':
       return webURL(s) ? { value: s } : { error: 'A link starting with https://.' }
   }
   return { value: s }
+}
+
+// Whether a form has anything to lose: a value differs from what it opened with.
+export const formDirty = (values: Record<string, FormValue>, initial: Record<string, FormValue>) =>
+  Object.keys(initial).some((k) => JSON.stringify(values[k]) !== JSON.stringify(initial[k]))
+
+// How a list draws its filters: Enum and Bool in the filter menu, the first Text as the search box
+// (a search shouldn't need Enter), the others as their own inputs.
+export function splitFilters(filters: ViewFilter[]): { menu: ViewFilter[]; search?: ViewFilter; inputs: ViewFilter[] } {
+  const search = filters.find((f) => f.type === 'text')
+  return {
+    menu: filters.filter((f) => f.type === 'enum' || f.type === 'bool'),
+    search,
+    inputs: filters.filter((f) => f !== search && f.type !== 'enum' && f.type !== 'bool'),
+  }
+}
+
+// A filter's value as a chip shows it.
+export function filterChip(f: ViewFilter, v: string): string {
+  if (f.type === 'bool') return v === 'true' ? 'Yes' : 'No'
+  if (f.type === 'time') return new Date(v).toLocaleString()
+  return optionLabel(f, v)
 }
 
 // A filter value as the query string takes it ('' = unset).

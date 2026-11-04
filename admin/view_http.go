@@ -31,14 +31,31 @@ func (adm *Admin) registerViews() {
 	adm.handle("GET /api/views/{name}", "", adm.viewList)
 	adm.handle("GET /api/views/{name}/{id}", "", adm.viewGet)
 	adm.handle("POST /api/views/{name}/{id}/actions/{action}", "", adm.viewAction)
+	adm.handle("POST /api/views/{name}/actions/{action}", "", adm.viewPageAction)
 }
 
 type actionDesc struct {
-	Name    string  `json:"name"`
-	Title   string  `json:"title"`
-	Confirm string  `json:"confirm"`
-	Reason  bool    `json:"reason"`
-	Fields  []Field `json:"fields"`
+	Name        string  `json:"name"`
+	Title       string  `json:"title"`
+	Confirm     string  `json:"confirm"`
+	TypeConfirm string  `json:"type_confirm,omitempty"`
+	Reason      bool    `json:"reason"`
+	Fields      []Field `json:"fields"`
+}
+
+// actionDescs lists the actions the role can run.
+func (adm *Admin) actionDescs(role Role, actions []Action) []actionDesc {
+	out := []actionDesc{}
+	for _, a := range actions {
+		if adm.can(role, a.Perm) {
+			fields := a.Fields
+			if fields == nil {
+				fields = []Field{}
+			}
+			out = append(out, actionDesc{a.Name, a.Title, a.Confirm, a.TypeConfirm, a.Reason, fields})
+		}
+	}
+	return out
 }
 
 type viewDesc struct {
@@ -50,6 +67,8 @@ type viewDesc struct {
 	Filters    []Filter     `json:"filters"`
 	HasDetail  bool         `json:"has_detail"`
 	Actions    []actionDesc `json:"actions"`
+	Summary    []string     `json:"summary"`
+	PageActs   []actionDesc `json:"page_actions"`
 }
 
 // viewIndex lists the views the role can see, in registration order, each with the actions the
@@ -61,18 +80,13 @@ func (adm *Admin) viewIndex(w http.ResponseWriter, r *http.Request, s *session) 
 			continue
 		}
 		d := viewDesc{Name: v.Name, Title: v.Title, Group: v.Group, UserFilter: v.UserFilter,
-			Columns: v.Columns, Filters: v.Filters, HasDetail: v.Get != nil, Actions: []actionDesc{}}
+			Columns: v.Columns, Filters: v.Filters, HasDetail: v.Get != nil, Actions: adm.actionDescs(s.Role, v.Actions), Summary: v.Summary,
+			PageActs: adm.actionDescs(s.Role, v.PageActions)}
+		if d.Summary == nil {
+			d.Summary = []string{}
+		}
 		if d.Filters == nil {
 			d.Filters = []Filter{}
-		}
-		for _, a := range v.Actions {
-			if adm.can(s.Role, a.Perm) {
-				fields := a.Fields
-				if fields == nil {
-					fields = []Field{}
-				}
-				d.Actions = append(d.Actions, actionDesc{a.Name, a.Title, a.Confirm, a.Reason, fields})
-			}
 		}
 		out = append(out, d)
 	}
@@ -107,7 +121,7 @@ func (adm *Admin) viewList(w http.ResponseWriter, r *http.Request, s *session) e
 	}
 	items := make([]Row, len(p.Items))
 	for i, row := range p.Items {
-		items[i] = encodeRow(v, row)
+		items[i] = encodeRow(r.Context(), v, row)
 	}
 	writeJSON(w, http.StatusOK, Page{Items: items, Next: p.Next})
 	return nil
@@ -132,28 +146,54 @@ func (adm *Admin) viewGet(w http.ResponseWriter, r *http.Request, s *session) er
 	if row == nil {
 		return errNotFound
 	}
-	writeJSON(w, http.StatusOK, encodeRow(v, row))
+	writeJSON(w, http.StatusOK, encodeRow(r.Context(), v, row))
 	return nil
 }
 
-// viewAction runs an action and its audit row in one transaction.
+// viewAction runs an action on a row.
 func (adm *Admin) viewAction(w http.ResponseWriter, r *http.Request, s *session) error {
 	v, err := adm.view(r, s)
 	if err != nil {
 		return err
 	}
-	i := slices.IndexFunc(v.Actions, func(a Action) bool { return a.Name == r.PathValue("action") })
-	if i < 0 {
-		return errNotFound
-	}
-	a := v.Actions[i]
-	if !adm.can(s.Role, a.Perm) {
-		return errForbidden
+	a, err := adm.action(r, s, v.Actions)
+	if err != nil {
+		return err
 	}
 	id, err := rowID(r)
 	if err != nil {
 		return err
 	}
+	return adm.runAction(w, r, s, v, a, id)
+}
+
+// viewPageAction runs an action of the page: its row, if any, comes from its input.
+func (adm *Admin) viewPageAction(w http.ResponseWriter, r *http.Request, s *session) error {
+	v, err := adm.view(r, s)
+	if err != nil {
+		return err
+	}
+	a, err := adm.action(r, s, v.PageActions)
+	if err != nil {
+		return err
+	}
+	return adm.runAction(w, r, s, v, a, 0)
+}
+
+// action is the {action} of actions, 404 if there's none, 403 if the role lacks its permission.
+func (adm *Admin) action(r *http.Request, s *session, actions []Action) (*Action, error) {
+	i := slices.IndexFunc(actions, func(a Action) bool { return a.Name == r.PathValue("action") })
+	if i < 0 {
+		return nil, errNotFound
+	}
+	if !adm.can(s.Role, actions[i].Perm) {
+		return nil, errForbidden
+	}
+	return &actions[i], nil
+}
+
+// runAction runs an action and its audit row in one transaction.
+func (adm *Admin) runAction(w http.ResponseWriter, r *http.Request, s *session, v *View, a *Action, id int64) error {
 	var b struct {
 		Reason string                     `json:"reason"`
 		Input  map[string]json.RawMessage `json:"input"`
@@ -170,6 +210,14 @@ func (adm *Admin) viewAction(w http.ResponseWriter, r *http.Request, s *session)
 	input, err := parseInput(a.Fields, b.Input)
 	if err != nil {
 		return err
+	}
+
+	if a.TargetField != "" {
+		id = input[a.TargetField].(int64) // required and an integer: checked by View and parseInput
+	}
+	target := v.Name
+	if id != 0 {
+		target += ":" + strconv.FormatInt(id, 10)
 	}
 
 	ctx := r.Context()
@@ -195,7 +243,7 @@ func (adm *Admin) viewAction(w http.ResponseWriter, r *http.Request, s *session)
 		}
 		return err
 	}
-	if err := adm.audit(ctx, tx, s, r, "view."+v.Name+"."+a.Name, v.Name+":"+strconv.FormatInt(id, 10), ba[0], ba[1], reason); err != nil {
+	if err := adm.audit(ctx, tx, s, r, "view."+v.Name+"."+a.Name, target, ba[0], ba[1], reason); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -315,6 +363,12 @@ func parseInput(fields []Field, raw map[string]json.RawMessage) (map[string]any,
 		if !ok {
 			return nil, badInput(fmt.Sprintf("%s: not a valid %s", f.Key, f.Type))
 		}
+		if l, isList := v.([]string); isList && len(l) == 0 { // as if it wasn't sent
+			if f.Required {
+				return nil, badInput(f.Key + " is required")
+			}
+			continue
+		}
 		out[f.Key] = v
 	}
 	return out, nil
@@ -336,13 +390,15 @@ func parseField(f Field, b json.RawMessage) (any, bool) {
 		return v, json.Unmarshal(b, &v) == nil
 	case JSON:
 		return json.RawMessage(bytes.Clone(b)), true
+	case Strings:
+		return parseStrings(f, b)
 	}
 	if json.Unmarshal(b, &s) != nil {
 		return nil, false
 	}
 	switch f.Type {
 	case Enum:
-		return s, slices.Contains(f.Options, s)
+		return s, f.OptionsFrom != "" || slices.Contains(f.Options, s)
 	case Time:
 		t, err := time.Parse(time.RFC3339, s)
 		return t, err == nil
@@ -350,6 +406,27 @@ func parseField(f Field, b json.RawMessage) (any, bool) {
 		return s, webURL(s)
 	}
 	return s, true // Text
+}
+
+// parseStrings reads a Strings input: trimmed, without blanks or repeats, each one an Option if
+// the field has them.
+func parseStrings(f Field, b json.RawMessage) ([]string, bool) {
+	var in []string
+	if json.Unmarshal(b, &in) != nil {
+		return nil, false
+	}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" || slices.Contains(out, s) {
+			continue
+		}
+		if len(f.Options) > 0 && !slices.Contains(f.Options, s) {
+			return nil, false
+		}
+		out = append(out, s)
+	}
+	return out, true
 }
 
 // webURL reports whether s is an absolute http(s) URL (never javascript: or data:, which the
@@ -362,8 +439,9 @@ func webURL(s string) bool {
 // maxSafeInt is 2^53: beyond it a JSON number loses precision in the browser.
 const maxSafeInt = 1 << 53
 
-// encodeRow is row with the integers of integer columns beyond ±2^53 as strings.
-func encodeRow(v *View, row Row) Row {
+// encodeRow is row with the integers of integer columns beyond ±2^53 as strings, and under
+// "_actions" each action's state on it, for those that have one to show.
+func encodeRow(ctx context.Context, v *View, row Row) Row {
 	out := make(Row, len(row))
 	for k, x := range row {
 		out[k] = x
@@ -385,6 +463,19 @@ func encodeRow(v *View, row Row) Row {
 				out[k] = strconv.FormatUint(n, 10)
 			}
 		}
+	}
+	states := map[string]ActionState{}
+	for _, a := range v.Actions {
+		if a.State == nil {
+			continue
+		}
+		st, err := guarded(ctx, v.Name, "state of "+a.Name, errViewFailed, func() (ActionState, error) { return a.State(row), nil })
+		if err == nil && st != (ActionState{}) {
+			states[a.Name] = st
+		}
+	}
+	if len(states) > 0 {
+		out["_actions"] = states
 	}
 	return out
 }

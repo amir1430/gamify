@@ -579,7 +579,7 @@ export function Field({
   className?: string
 }) {
   return (
-    <div className={cn('grid gap-1.5', className)}>
+    <div className={cn('grid content-start gap-1.5', className)}>
       <Label className="text-xs font-medium text-muted-foreground">{label}</Label>
       {children}
       {error ? <p className="text-xs text-danger">{error}</p> : hint && <p className="text-xs text-muted-foreground">{hint}</p>}
@@ -597,8 +597,10 @@ export function ChangeDialog({
   okText = 'Save',
   danger,
   wide,
+  large,
   busy,
   disabled,
+  dirty,
   reason,
   onReason,
   onSubmit,
@@ -611,8 +613,10 @@ export function ChangeDialog({
   okText?: string
   danger?: boolean
   wide?: boolean
+  large?: boolean // between the default and wide: a form with several fields
   busy: boolean
   disabled?: boolean
+  dirty?: boolean // something typed that closing would lose (a typed reason always counts)
   reason?: string // with onReason: the reason field is shown and required
   onReason?: (v: string) => void
   onSubmit?: () => void
@@ -621,37 +625,56 @@ export function ChangeDialog({
   footer?: ReactNode // replaces Cancel / ok
 }) {
   const blocked = busy || !!disabled || (!!onReason && !reason?.trim())
+  const [leaving, setLeaving] = useState(false)
+  const leave = () => {
+    if (busy) return
+    if (dirty || reason?.trim()) setLeaving(true)
+    else onClose()
+  }
   return (
-    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent className={cn('max-h-[90vh] overflow-y-auto', wide ? 'sm:max-w-4xl' : 'sm:max-w-lg')} showCloseButton={!busy}>
-        <DialogHeader>
+    <Dialog open onOpenChange={(o) => !o && leave()}>
+      <DialogContent className={cn('flex max-h-[90vh] flex-col overflow-hidden', wide ? 'sm:max-w-4xl' : large ? 'sm:max-w-3xl' : 'sm:max-w-lg')} showCloseButton={!busy}>
+        <DialogHeader className="shrink-0">
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
         <form
-          className="grid gap-4"
+          className="flex min-h-0 flex-1 flex-col gap-4"
           onSubmit={(e) => {
             e.preventDefault()
             if (!blocked) onSubmit?.()
           }}
         >
-          {children}
-          {onReason && (
-            <Field label="Reason" hint="Goes to the audit log.">
-              <Textarea
-                value={reason}
-                maxLength={500}
-                placeholder="Why this change?"
-                onChange={(e) => onReason(e.target.value)}
-                autoFocus={!children}
-                rows={2}
-              />
-            </Field>
-          )}
-          <DialogFooter className="pt-2">
-            {footer ?? (
+          {/* The fields scroll; the title and the buttons stay in view. */}
+          <div className="-mx-6 grid min-h-0 flex-1 gap-4 overflow-y-auto px-6 py-1">
+            {children}
+            {onReason && (
+              <Field label="Reason" hint="Goes to the audit log.">
+                <Textarea
+                  value={reason}
+                  maxLength={500}
+                  placeholder="Why this change?"
+                  onChange={(e) => onReason(e.target.value)}
+                  autoFocus={!children}
+                  rows={2}
+                />
+              </Field>
+            )}
+          </div>
+          <DialogFooter className="-mx-6 shrink-0 flex-wrap border-t px-6 pt-4">
+            {leaving ? (
               <>
-                <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
+                <span className="mr-auto self-center text-sm">Discard your changes?</span>
+                <Button type="button" variant="ghost" autoFocus onClick={() => setLeaving(false)}>
+                  Keep editing
+                </Button>
+                <Button type="button" variant="destructive" onClick={onClose}>
+                  Discard
+                </Button>
+              </>
+            ) : footer ?? (
+              <>
+                <Button type="button" variant="ghost" onClick={leave} disabled={busy}>
                   Cancel
                 </Button>
                 <Button type="submit" variant={danger ? 'destructive' : 'default'} disabled={blocked}>

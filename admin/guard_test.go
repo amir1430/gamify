@@ -88,6 +88,7 @@ func TestEveryRouteHasPerm(t *testing.T) {
 		"GET /api/views/{name}":                        true,
 		"GET /api/views/{name}/{id}":                   true,
 		"POST /api/views/{name}/{id}/actions/{action}": true,
+		"POST /api/views/{name}/actions/{action}":      true,
 	}
 	if len(adm.routes) == 0 {
 		t.Fatal("no routes")

@@ -127,7 +127,7 @@ export function Player() {
               ]}
             />
           )}
-          {shown && <ViewTable key={shown.name} view={shown} filters={{ [shown.user_filter]: String(u.id) }} hide={[shown.user_filter]} />}
+          {shown && <ViewTable key={shown.name} view={shown} filters={{ [shown.user_filter]: String(u.id) }} hide={[shown.user_filter]} tab />}
           {tab === 'auth' && <Identities id={u.id} identities={p.identities} canUnlink={canIdentity} />}
           {tab === 'wallet' && <Wallet id={u.id} balances={p.balances} />}
           {tab === 'activity' && <ActivityTab id={u.id} />}

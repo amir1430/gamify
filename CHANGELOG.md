@@ -5,6 +5,45 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.1.13] - 2026-11-04
+
+### Added
+- `admin.View.PageActions`: buttons on a view's page rather than on a row, on the new route
+  `POST /api/views/{name}/actions/{action}`. `Action.TargetField` names the input holding the row
+  it acts on (`Call.ID` and the audit target).
+- `admin.Action.State`: per row, an action can be `Unavailable` (greyed out with the reason) or
+  carry an `Impact` shown as a warning in its form. Rows gain `_actions`, so that key is reserved.
+  It's what the console shows: `Run` still refuses what can't run.
+- `admin.Action.TypeConfirm`: text the operator must type before the form can be sent.
+- `admin`: `OptionLabels` on `Field`, `Column` and `Filter` name Enum and Strings values.
+- `admin`: a `Strings` field type, a list of strings (`[]string` in `Call.Input`): with `Options` a
+  searchable multi-select, without them free tags. As a column it shows as chips.
+- `admin.Field` gains `Help`, `Placeholder`, `Group` (form sections), `OptionHelp` (a line next to
+  an option, those options first) and `OptionsFrom` (an Enum whose choices come from the row, as
+  `[]admin.Option`; the action must check the value).
+- `admin.View.Summary`: column keys shown atop an action's form, so it's clear which row it changes.
+- `restrict.Config.BlockHelp` and `BlockLabels`: what each block covers and its name in the console.
+- `restrictadmin`: "Add restriction" on the page, by player ID. It refuses a player who already has
+  one, because its empty form would overwrite it, and an unknown player (`restrict.ErrUnknownPlayer`).
+
+### Changed
+- `admin` UI: dialogs keep their title and buttons in view while the fields scroll. Forms of four
+  or more fields, or with a list to pick from, open in a bigger two-column dialog. A long enum, or
+  one with hints, is a searchable list.
+- `admin` UI: closing a form with something typed asks first, in every dialog with a reason.
+- `admin` UI: an action opened from a row's details returns to them when it ends.
+- `admin` UI: brand view pages get the search box (the first Text filter, applied as it's typed),
+  a filter menu (Enum and Bool), chips for what's applied, and CSV export of the loaded rows.
+- `restrictadmin`: blocks are one searchable multi-select instead of a switch per block.
+
+### Fixed
+- `restrictadmin`: "Set restriction" opened with every block off, so saving (to change only the end
+  date, say) cleared the player's blocks. It now opens with the current ones.
+
+Upgrade notes: no migration and no breaking Go API change. In the console's HTTP API, the
+`restrictions` view's `set` takes `blocks` (a list) instead of one `block_<name>` bool per block,
+and its rows' `blocks` is a list instead of a comma-joined string.
+
 ## [1.1.12] - 2026-11-04
 
 ### Added
