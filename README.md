@@ -276,7 +276,7 @@ Env read by the sample `main` (see `.env.example`):
 | `AUTH_JWT_SECRET` (≥ 32 bytes), `AUTH_JWT_AUDIENCE` | brand-signed JWT login; at least one login provider |
 | `SEED_KEY` (`openssl rand -hex 32`), `SEED_KEY_ID` | seals fairness server seeds; bump the ID with a new key to rotate |
 | `CURRENCIES` | `code:ledger:minamount[:welcome[:decimals[:flags]]]`, comma-separated, e.g. `usd:1:1:0:2,coins:2:1:1000:0:t,usdt:3:1:0:6:w` (`decimals` display only, ≤ 18; `flags`: `t` transferable, `w` withdrawable, combined as `tw`, or omitted) |
-| `DEV_FAUCET` | `true` adds `wallet.faucet` (free test money) and a fake payment method `dev` (deposits and withdrawals that move no real money). Never with real money |
+| `DEV_FAUCET` | `true` adds `wallet.faucet` (free test money) and a fake payment method `dev` that moves no real money: withdrawals of withdrawable currencies work end to end (every one auto-approved and paid at once); deposits only return an address, nothing ever pays it, so they are never credited. Never with real money |
 | `ADMIN_*` | the console, below |
 
 ## Admin console

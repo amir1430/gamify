@@ -15,6 +15,12 @@ Nov 11, 2026
 > - The fee is taken from the requested amount: payout = amount - fee, fee goes to `house`.
 > - `Resolve` needs an expired send lease (`ErrSendInProgress` otherwise).
 > - `ErrWrongStatus` is a plain Go error, not a client error.
+> - Ledger IDs: payments is platform ledger game 2. Deposits use `ledger.DepositFor` and withdrawals
+>   `Withdraw`/`PostWithdraw`/`VoidWithdraw` with that game, keyed `nsOpID(ns, 2, leg, rowID)`, not the
+>   bare `nsDeposit`/`nsWithdraw` IDs of §2. The fee leg has its own code, kind `withdraw_fee`.
+> - A Send/Status call's ctx ends min(Lease/10, 5 s) before the lease; Senders must honor it.
+> - Deferred from §8 (not built in v1.2): methods-page health; withdrawal detail's tx link, ledger
+>   legs and recent wins; time-range filter, search and CSV export on the payments pages.
 
 ## Intent
 

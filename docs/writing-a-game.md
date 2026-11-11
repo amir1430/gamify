@@ -378,6 +378,8 @@ Sender. Amounts are int64 minor units everywhere.
   payment with `h.Received(ctx, Incoming{ExternalID, Address, InvoiceID, Currency, Amount})`.
   `Received` is idempotent per `ExternalID`, so report again after a restart. Return when `ctx` ends;
   a return is restarted with a backoff.
+- One Receiver may serve several currencies: register the same value for each, and its `Run` starts
+  once (`Received` checks the payment's currency). Another Receiver under a taken name is refused.
 
 **Sender**
 - `ValidateDestination(dest)` rejects a bad address before any money is held.
@@ -404,15 +406,19 @@ err = pay.Sender("usdt", &myChain{}, payments.WithdrawLimits{
 
 Register before `a.Run`. Limits are Go defaults the console can edit (zero is no limit, except
 `AutoApproveUpTo`: 0 means every withdrawal waits for an admin; above `SecondApprovalAbove` a second
-admin must approve). `Off` stops new deposits or withdrawals of a method. RPCs: `payments.deposit`,
+admin must approve). `DailyCap` is per user over 24 h: the user's withdrawals in all methods of the
+currency count against the cap of the method being requested. `Off` stops new deposits or
+withdrawals of a method. RPCs: `payments.deposit`,
 `payments.withdraw` (needs an `idem_key`), `payments.cancel`, `payments.history`; pushes
 `payments.updated`. Client errors use codes 1040-1049.
 
 **Test it** with `payments/paymentstest`: `Receiver.Pay` simulates an incoming payment, and
 `Sender` is scripted (`SetNext`, `SetErr`, `SetStatusErr`, `SetStatus`; read `SentPayouts`,
 `Receiver.DepositCalls`), safe to change while sends run in the background. With `apptest`, `Register` payments,
-add the fakes, fund or `Pay`, call `payments.withdraw` and assert `a.Balance` and the withdrawal's
-status. The sample's `DEV_FAUCET=true` registers these fakes as method `dev`; never with real money.
+add the fakes, fund or `Pay`, call `payments.withdraw`, then `pay.Wait()` (sends run in the
+background) and assert `a.Balance` and the withdrawal's status. The sample's `DEV_FAUCET=true` registers these fakes as method `dev`: its withdrawals are
+auto-approved and paid; its deposits only return an address and are never credited. Never with
+real money.
 
 ## Checklist
 
