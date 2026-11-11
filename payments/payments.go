@@ -121,6 +121,8 @@ type Service struct {
 	senders   map[key]Sender
 	deposit   map[key]DepositLimits
 	withdraw  map[key]WithdrawLimits
+
+	sending sync.WaitGroup // the RPC's background sends
 }
 
 func Register(ctx context.Context, a *app.App, cfg Config) (*Service, error) {

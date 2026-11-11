@@ -21,6 +21,7 @@ func setup(t *testing.T) (*payments.Service, *apptest.App) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { payments.WaitSends(s) })
 	return s, a
 }
 

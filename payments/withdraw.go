@@ -133,10 +133,13 @@ func (s *Service) withdrawRPC(ctx context.Context, user int64, req withdrawReq) 
 	if holding && row.Status == "failed" {
 		return Withdrawal{}, ErrInsufficient
 	}
-	if row.Status == "approved" { // send at once; the loop and the reconciler retry
-		if err := s.advance(context.WithoutCancel(ctx), row.ID); err != nil {
-			slog.WarnContext(ctx, "payments: send withdrawal", "withdrawal", row.ID, "err", err)
-		}
+	if row.Status == "approved" { // send now, in the background; the loop and the reconciler retry
+		bg := context.WithoutCancel(ctx)
+		s.sending.Go(func() {
+			if err := s.advance(bg, row.ID); err != nil {
+				slog.WarnContext(bg, "payments: send withdrawal", "withdrawal", row.ID, "err", err)
+			}
+		})
 	}
 	return toWithdrawal(row), nil
 }

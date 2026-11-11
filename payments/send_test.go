@@ -22,6 +22,7 @@ import (
 type countSender struct {
 	*paymentstest.Sender
 	delay time.Duration
+	gate  chan struct{} // Send waits for it to close
 
 	mu    sync.Mutex
 	calls []int64
@@ -29,6 +30,9 @@ type countSender struct {
 
 func (c *countSender) Send(ctx context.Context, p payments.Payout) (payments.Result, error) {
 	time.Sleep(c.delay)
+	if c.gate != nil {
+		<-c.gate
+	}
 	c.mu.Lock()
 	c.calls = append(c.calls, p.ID)
 	c.mu.Unlock()
@@ -50,6 +54,7 @@ func sendSetup(t *testing.T, cfg payments.Config, snd *countSender, auto int64) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { payments.WaitSends(s) })
 	if snd.Sender == nil {
 		snd.Sender = &paymentstest.Sender{}
 	}
@@ -108,6 +113,7 @@ func TestSendPaid(t *testing.T) {
 	a.Fund(u, "usdt", 1000)
 	before := system(t, a)
 	w := mustWd(t, a, u, "k", 400)
+	payments.WaitSends(s)
 	g := status(t, s, w.ID)
 	if g.Status != "paid" || g.Ref != "ref-"+strconv.FormatInt(w.ID, 10) || !settled(t, a, w.ID) {
 		t.Fatalf("%+v settled %v", g, settled(t, a, w.ID))
@@ -136,12 +142,29 @@ func TestSendPaid(t *testing.T) {
 	}
 }
 
+func TestWithdrawReturnsBeforeSend(t *testing.T) {
+	snd := &countSender{gate: make(chan struct{})}
+	s, a := sendSetup(t, shortLease, snd, 1000)
+	u := a.User("ann")
+	a.Fund(u, "usdt", 1000)
+	w := mustWd(t, a, u, "k", 400) // returns while Send is blocked
+	if w.Status != "approved" || len(snd.Calls()) != 0 {
+		t.Fatalf("%+v calls %v", w, snd.Calls())
+	}
+	close(snd.gate)
+	payments.WaitSends(s)
+	if g := status(t, s, w.ID); g.Status != "paid" || !settled(t, a, w.ID) || a.Balance(u, "usdt") != 600 {
+		t.Fatalf("%+v", g)
+	}
+}
+
 func TestSendFailedRefunds(t *testing.T) {
 	snd := &countSender{Sender: &paymentstest.Sender{Next: []payments.Result{{State: payments.StateFailed, Reason: "closed"}}}}
 	s, a := sendSetup(t, shortLease, snd, 1000)
 	u := a.User("ann")
 	a.Fund(u, "usdt", 1000)
 	w := mustWd(t, a, u, "k", 400)
+	payments.WaitSends(s)
 	if g := status(t, s, w.ID); g.Status != "failed" || g.Reason != "closed" || !settled(t, a, w.ID) {
 		t.Fatalf("%+v", g)
 	}
@@ -159,6 +182,7 @@ func TestSendErrorNeverVoids(t *testing.T) {
 	u := a.User("ann")
 	a.Fund(u, "usdt", 1000)
 	w := mustWd(t, a, u, "k", 400)
+	payments.WaitSends(s)
 	held := func(step string) {
 		t.Helper()
 		if g := status(t, s, w.ID); g.Status != "sending" || settled(t, a, w.ID) {
@@ -201,6 +225,7 @@ func TestUnknownResends(t *testing.T) {
 	u := a.User("ann")
 	a.Fund(u, "usdt", 1000)
 	w := mustWd(t, a, u, "k", 400)
+	payments.WaitSends(s)
 	snd.Err = nil // the sender never saw it: Status says unknown
 	reconcile(a)
 	if c := snd.Calls(); !slices.Equal(c, []int64{w.ID, w.ID}) {
