@@ -148,6 +148,11 @@ func TestFieldBlocks(t *testing.T) {
 		{"duel.create", map[string]any{"game": "dice", "seat": 2}, 1108},
 		{"duel.create", map[string]any{"game": "dice", "seat": 3}, 0},
 		{"duel.create", map[string]any{"game": []int{1}}, 0},
+		// Handlers decode payloads into structs, and encoding/json matches field names
+		// case-insensitively: another spelling of the field is the same field.
+		{"duel.create", map[string]any{"Game": "chess"}, 1108},
+		{"duel.create", map[string]any{"GAME": "chess", "game": "dice"}, 1108},
+		{"duel.create", map[string]any{"Game": "dice"}, 0},
 	} {
 		var code uint32
 		if _, cerr := a.Call(alice, c.method, c.req); cerr != nil {

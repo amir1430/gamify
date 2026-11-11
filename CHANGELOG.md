@@ -5,6 +5,9 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+### Fixed
+- `restrict`: a `method?field=value` block matches the field's name case-insensitively, as `encoding/json` does when a handler decodes the payload into a struct. Before, a blocked player could send `{"Game":"chess"}` (or `{"game":"dice","GAME":"chess"}`) and reach the handler's `game` field unblocked. With several spellings of the field in one payload, any one matching blocks the call.
+
 ## [1.2.0] - 2026-11-11
 
 ### Added
