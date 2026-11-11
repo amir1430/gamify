@@ -5,6 +5,8 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.2.0] - 2026-11-11
+
 ### Added
 - `app.App.Go`: run a long-lived worker with Run's context, restarted with a 1 s to 1 min backoff when it returns.
 - `apptest.WithMaxConns(n)`: the test app's Postgres pool size.
