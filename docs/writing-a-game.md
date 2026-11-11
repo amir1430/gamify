@@ -409,7 +409,8 @@ admin must approve). `Off` stops new deposits or withdrawals of a method. RPCs: 
 `payments.updated`. Client errors use codes 1040-1049.
 
 **Test it** with `payments/paymentstest`: `Receiver.Pay` simulates an incoming payment, and
-`Sender` is scripted (`Next`, `Err`, `StatusErr`, `Statuses`). With `apptest`, `Register` payments,
+`Sender` is scripted (`SetNext`, `SetErr`, `SetStatusErr`, `SetStatus`; read `SentPayouts`,
+`Receiver.DepositCalls`), safe to change while sends run in the background. With `apptest`, `Register` payments,
 add the fakes, fund or `Pay`, call `payments.withdraw` and assert `a.Balance` and the withdrawal's
 status. The sample's `DEV_FAUCET=true` registers these fakes as method `dev`; never with real money.
 

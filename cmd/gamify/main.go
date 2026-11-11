@@ -135,16 +135,18 @@ func run() error {
 	return a.Run(ctx)
 }
 
-// devPayments registers the fake method "dev" for DEV_FAUCET: a receiver for every currency and a
-// sender (everything auto-approved, always paid) for every withdrawable one. It moves no real
-// money: never use it, or DEV_FAUCET, where money is real.
+// devPayments registers the fake method "dev" for DEV_FAUCET: one receiver for every currency (it
+// answers an address; nothing ever pays it, so dev deposits are never credited) and one sender
+// (every withdrawal auto-approved and paid) for every withdrawable one. It moves no real money:
+// never use it, or DEV_FAUCET, where money is real.
 func devPayments(s *payments.Service, cs []ledger.CurrencyConfig) error {
+	r, snd := &paymentstest.Receiver{Method: "dev"}, &paymentstest.Sender{Method: "dev"}
 	for _, c := range cs {
-		if err := s.Receiver(c.Code, &paymentstest.Receiver{Method: "dev"}, payments.DepositLimits{}); err != nil {
+		if err := s.Receiver(c.Code, r, payments.DepositLimits{}); err != nil {
 			return err
 		}
 		if c.Withdrawable {
-			if err := s.Sender(c.Code, &paymentstest.Sender{Method: "dev"}, payments.WithdrawLimits{AutoApproveUpTo: math.MaxInt64}); err != nil {
+			if err := s.Sender(c.Code, snd, payments.WithdrawLimits{AutoApproveUpTo: math.MaxInt64}); err != nil {
 				return err
 			}
 		}

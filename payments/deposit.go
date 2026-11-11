@@ -82,7 +82,11 @@ func (s *Service) depositRPC(ctx context.Context, user int64, req depositReq) (D
 		if info.InvoiceID != "" {
 			return DepositInfo{}, errors.New("payments: receiver reused an invoice ID")
 		}
-		if o, err := open(); err != nil || o.Address == info.Address {
+		o, err := open()
+		if errors.Is(err, pgx.ErrNoRows) { // the conflict was on the address: another user's
+			return DepositInfo{}, errors.New("payments: receiver answered an address stored for another user")
+		}
+		if err != nil || o.Address == info.Address {
 			return info, err
 		}
 		return DepositInfo{}, errors.New("payments: receiver answered a different address than the one stored for the user")

@@ -3,6 +3,7 @@ package payments
 import (
 	"context"
 
+	"github.com/amir1430/gamify/ledger"
 	"github.com/amir1430/gamify/payments/internal/store"
 )
 
@@ -27,6 +28,18 @@ func LeaveHolding(ctx context.Context, s *Service, user int64, cur, method, key 
 	r, err := s.q.InsertWithdrawal(ctx, store.InsertWithdrawalParams{UserID: user, Currency: cur, Method: method,
 		Amount: amount, Destination: "addr", IdemKey: key})
 	return r.ID, err
+}
+
+// Running is how many Receiver Runs Register started.
+func Running(s *Service) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.running)
+}
+
+// DepositRPC is the payments.deposit RPC, for tests that need its plain errors.
+func DepositRPC(ctx context.Context, s *Service, user int64, c, method string, amount int64) (DepositInfo, error) {
+	return s.depositRPC(ctx, user, depositReq{Currency: ledger.Currency(c), Method: method, Amount: amount})
 }
 
 // WaitSends waits for the sends the withdraw RPC started in the background.

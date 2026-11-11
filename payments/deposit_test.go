@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -67,8 +68,8 @@ func TestDepositAddressReused(t *testing.T) {
 	_, a, r := depositSetup(t, payments.DepositLimits{})
 	u := a.User("ann")
 	i1, i2 := dep(t, a, u, 0), dep(t, a, u, 0)
-	if i1.Address == "" || i1.Address != i2.Address || r.NumCalls() != 1 {
-		t.Fatalf("%v %v calls %d", i1, i2, r.NumCalls())
+	if i1.Address == "" || i1.Address != i2.Address || len(r.DepositCalls()) != 1 {
+		t.Fatalf("%v %v calls %d", i1, i2, len(r.DepositCalls()))
 	}
 }
 
@@ -198,7 +199,7 @@ func TestAmountFirstThenOtherAmountCredited(t *testing.T) {
 
 func TestMethodInTwoCurrencies(t *testing.T) {
 	s, a, r := depositSetup(t, payments.DepositLimits{})
-	if err := s.Receiver("usd", &paymentstest.Receiver{Method: "chain"}, payments.DepositLimits{}); err != nil {
+	if err := s.Receiver("usd", r, payments.DepositLimits{}); err != nil { // one Receiver, two currencies
 		t.Fatal(err)
 	}
 	u := a.User("ann")
@@ -242,5 +243,45 @@ func TestDepositOff(t *testing.T) {
 	}
 	if a.Balance(u, "usdt") != 9 {
 		t.Fatal("Off must not stop crediting")
+	}
+}
+
+func TestDepositInfoJSON(t *testing.T) {
+	_, a, _ := depositSetup(t, payments.DepositLimits{})
+	u := a.User("ann")
+	raw, cerr := a.Call(u, "payments.deposit", map[string]any{"currency": "usdt", "method": "chain"})
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	_, hasURL := m["url"]
+	_, hasExp := m["expires_at"]
+	if m["address"] == "" || m["address"] == nil || m["invoice_id"] != "" || m["amount"] != float64(0) || hasURL || hasExp || len(m) != 3 {
+		t.Fatalf("%s", raw)
+	}
+}
+
+// sameAddr answers one address for everyone (a broken receiver).
+type sameAddr struct{ paymentstest.Receiver }
+
+func (*sameAddr) Deposit(context.Context, payments.DepositRequest) (payments.DepositInfo, error) {
+	return payments.DepositInfo{Address: "shared"}, nil
+}
+
+func TestDepositAddressOfAnotherUser(t *testing.T) {
+	s, a := setup(t)
+	if err := s.Receiver("usdt", &sameAddr{paymentstest.Receiver{Method: "chain"}}, payments.DepositLimits{}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := payments.DepositRPC(ctx, s, a.User("ann"), "usdt", "chain", 0); err != nil {
+		t.Fatal(err)
+	}
+	_, err := payments.DepositRPC(ctx, s, a.User("bob"), "usdt", "chain", 0)
+	if err == nil || !strings.Contains(err.Error(), "another user") {
+		t.Fatalf("%v", err)
 	}
 }

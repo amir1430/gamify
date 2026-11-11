@@ -148,7 +148,7 @@ func TestReject(t *testing.T) {
 // stuck leaves a sending withdrawal: the sender errors, so it is never settled.
 func stuck(t *testing.T, e env) int64 {
 	t.Helper()
-	e.snd.Err = context.DeadlineExceeded
+	e.snd.SetErr(context.DeadlineExceeded)
 	id := e.withdraw(t, "k", 400)
 	if st, body := e.act(e.op, id, "approve", map[string]any{}); st != 204 {
 		t.Fatalf("approve: %d %v", st, body)

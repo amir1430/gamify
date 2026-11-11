@@ -128,8 +128,8 @@ func TestSendPaid(t *testing.T) {
 	if d := after["house"] - before["house"]; d != 10 {
 		t.Fatalf("house +%d", d)
 	}
-	if len(snd.Sent) != 1 || snd.Sent[0].Amount != 390 || snd.Sent[0].ID != w.ID || snd.Sent[0].Destination != "addr" {
-		t.Fatalf("sent %+v", snd.Sent)
+	if sent := snd.SentPayouts(); len(sent) != 1 || sent[0].Amount != 390 || sent[0].ID != w.ID || sent[0].Destination != "addr" {
+		t.Fatalf("sent %+v", sent)
 	}
 	// One push per status change, and one when the money settles.
 	if p := pushed(a, u); !slices.Equal(p, []string{"approved", "sending", "paid", "paid"}) {
@@ -159,7 +159,8 @@ func TestWithdrawReturnsBeforeSend(t *testing.T) {
 }
 
 func TestSendFailedRefunds(t *testing.T) {
-	snd := &countSender{Sender: &paymentstest.Sender{Next: []payments.Result{{State: payments.StateFailed, Reason: "closed"}}}}
+	snd := &countSender{Sender: &paymentstest.Sender{}}
+	snd.SetNext(payments.Result{State: payments.StateFailed, Reason: "closed"})
 	s, a := sendSetup(t, shortLease, snd, 1000)
 	u := a.User("ann")
 	a.Fund(u, "usdt", 1000)
@@ -177,7 +178,8 @@ func TestSendFailedRefunds(t *testing.T) {
 }
 
 func TestSendErrorNeverVoids(t *testing.T) {
-	snd := &countSender{Sender: &paymentstest.Sender{Err: errors.New("timeout")}}
+	snd := &countSender{Sender: &paymentstest.Sender{}}
+	snd.SetErr(errors.New("timeout"))
 	s, a := sendSetup(t, shortLease, snd, 1000)
 	u := a.User("ann")
 	a.Fund(u, "usdt", 1000)
@@ -193,20 +195,20 @@ func TestSendErrorNeverVoids(t *testing.T) {
 		}
 	}
 	held("send error")
-	snd.Err = nil
-	snd.StatusErr = errors.New("unreachable")
+	snd.SetErr(nil)
+	snd.SetStatusErr(errors.New("unreachable"))
 	for range 3 {
 		reconcile(a)
 		held("status error")
 	}
-	snd.StatusErr = nil
-	snd.Statuses = map[int64]payments.Result{w.ID: {State: payments.StatePending, Ref: "tx1"}}
+	snd.SetStatusErr(nil)
+	snd.SetStatus(w.ID, payments.Result{State: payments.StatePending, Ref: "tx1"})
 	reconcile(a)
 	held("pending")
 	if g := status(t, s, w.ID); g.Ref != "tx1" {
 		t.Fatalf("ref %q", g.Ref)
 	}
-	snd.Statuses[w.ID] = payments.Result{State: payments.StatePaid}
+	snd.SetStatus(w.ID, payments.Result{State: payments.StatePaid})
 	reconcile(a)
 	if g := status(t, s, w.ID); g.Status != "paid" || g.Ref != "tx1" || !settled(t, a, w.ID) {
 		t.Fatalf("%+v", g)
@@ -220,22 +222,23 @@ func TestSendErrorNeverVoids(t *testing.T) {
 }
 
 func TestUnknownResends(t *testing.T) {
-	snd := &countSender{Sender: &paymentstest.Sender{Err: errors.New("timeout")}}
+	snd := &countSender{Sender: &paymentstest.Sender{}}
+	snd.SetErr(errors.New("timeout"))
 	s, a := sendSetup(t, shortLease, snd, 1000)
 	u := a.User("ann")
 	a.Fund(u, "usdt", 1000)
 	w := mustWd(t, a, u, "k", 400)
 	payments.WaitSends(s)
-	snd.Err = nil // the sender never saw it: Status says unknown
+	snd.SetErr(nil) // the sender never saw it: Status says unknown
 	reconcile(a)
 	if c := snd.Calls(); !slices.Equal(c, []int64{w.ID, w.ID}) {
 		t.Fatalf("send calls %v", c)
 	}
-	if g := status(t, s, w.ID); g.Status != "paid" || len(snd.Sent) != 1 || a.Balance(u, "usdt") != 600 {
-		t.Fatalf("%+v sent %d", g, len(snd.Sent))
+	if g := status(t, s, w.ID); g.Status != "paid" || len(snd.SentPayouts()) != 1 || a.Balance(u, "usdt") != 600 {
+		t.Fatalf("%+v sent %d", g, len(snd.SentPayouts()))
 	}
 	reconcile(a)
-	if len(snd.Calls()) != 2 || len(snd.Sent) != 1 {
+	if len(snd.Calls()) != 2 || len(snd.SentPayouts()) != 1 {
 		t.Fatalf("calls %v", snd.Calls())
 	}
 }

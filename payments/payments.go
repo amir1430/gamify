@@ -54,10 +54,13 @@ type DepositRequest struct {
 	Amount   int64 // 0: an open address
 }
 
+// DepositInfo is how to pay: an Address, or an invoice (InvoiceID, URL, Amount, ExpiresAt).
 type DepositInfo struct {
-	Address, InvoiceID, URL string
-	Amount                  int64
-	ExpiresAt               time.Time
+	Address   string    `json:"address"`
+	InvoiceID string    `json:"invoice_id"`
+	URL       string    `json:"url,omitempty"`
+	Amount    int64     `json:"amount"`
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
 type Payout struct {
@@ -127,6 +130,7 @@ type Service struct {
 
 	mu        sync.Mutex
 	receivers map[key]Receiver
+	running   map[string]Receiver // method name -> the one Receiver whose Run was started
 	senders   map[key]Sender
 	deposit   map[key]DepositLimits
 	withdraw  map[key]WithdrawLimits
@@ -151,7 +155,7 @@ func Register(ctx context.Context, a *app.App, cfg Config) (*Service, error) {
 		cfg.Lease = time.Minute
 	}
 	s := &Service{a: a, q: store.New(a.Pool), cfg: cfg,
-		receivers: map[key]Receiver{}, senders: map[key]Sender{},
+		receivers: map[key]Receiver{}, running: map[string]Receiver{}, senders: map[key]Sender{},
 		deposit: map[key]DepositLimits{}, withdraw: map[key]WithdrawLimits{}}
 	a.Router.Handle("payments.deposit", realtime.JSON(s.depositRPC))
 	a.Router.Handle("payments.withdraw", realtime.JSON(s.withdrawRPC))
@@ -170,7 +174,9 @@ func checkName(name string) error {
 	return nil
 }
 
-// Receiver registers r as a deposit method for c and starts its Run (call before app.Run).
+// Receiver registers r as a deposit method for c (call before app.Run). Its Run is started once
+// per method name: the same Receiver may serve several currencies, but a different one under a
+// name already taken is refused.
 func (s *Service) Receiver(c ledger.Currency, r Receiver, l DepositLimits) error {
 	name := r.Name()
 	if err := checkName(name); err != nil {
@@ -188,10 +194,16 @@ func (s *Service) Receiver(c ledger.Currency, r Receiver, l DepositLimits) error
 	if s.receivers[k] != nil {
 		return fmt.Errorf("payments: receiver %q registered twice for %s", name, c)
 	}
+	if other, ok := s.running[name]; ok && other != r {
+		return fmt.Errorf("payments: receiver %q: another Receiver already has this name", name)
+	}
 	s.receivers[k] = r
 	s.deposit[k] = l
-	h := &Host{Mux: s.a.HTTP, Method: name, s: s}
-	s.a.Go("payments.receiver."+name, func(ctx context.Context) error { return r.Run(ctx, h) })
+	if s.running[name] == nil {
+		s.running[name] = r
+		h := &Host{Mux: s.a.HTTP, Method: name, s: s}
+		s.a.Go("payments.receiver."+name, func(ctx context.Context) error { return r.Run(ctx, h) })
+	}
 	return nil
 }
 

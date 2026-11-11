@@ -119,3 +119,30 @@ func TestOffOverride(t *testing.T) {
 		t.Fatalf("%v %v", d, err)
 	}
 }
+
+// TestReceiverRunsOncePerMethod: one Receiver for two currencies runs once; another under its name is refused.
+func TestReceiverRunsOncePerMethod(t *testing.T) {
+	s, _ := setup(t)
+	r := &paymentstest.Receiver{Method: "chain"}
+	for _, c := range []ledger.Currency{"usd", "usdt"} {
+		if err := s.Receiver(c, r, payments.DepositLimits{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := payments.Running(s); n != 1 {
+		t.Fatalf("%d runs", n)
+	}
+	if err := s.Receiver("usd", &paymentstest.Receiver{Method: "other"}, payments.DepositLimits{}); err != nil {
+		t.Fatal(err)
+	}
+	s2, _ := setup(t)
+	if err := s2.Receiver("usd", &paymentstest.Receiver{Method: "chain"}, payments.DepositLimits{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.Receiver("usdt", &paymentstest.Receiver{Method: "chain"}, payments.DepositLimits{}); err == nil {
+		t.Fatal("a second Receiver named chain accepted")
+	}
+	if n := payments.Running(s2); n != 1 {
+		t.Fatalf("%d runs", n)
+	}
+}

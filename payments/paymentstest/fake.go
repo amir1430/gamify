@@ -1,10 +1,12 @@
-// Package paymentstest has fake payments drivers for brands' tests.
+// Package paymentstest has fake payments drivers for brands' tests. They are safe to script and
+// read while the payments service calls them from other goroutines.
 package paymentstest
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/amir1430/gamify/payments"
@@ -18,15 +20,15 @@ type Receiver struct {
 	Invoices bool // set before use
 
 	mu    sync.Mutex
-	Calls []payments.DepositRequest
+	calls []payments.DepositRequest
 	h     *payments.Host
 }
 
-// NumCalls is how many times Deposit was called.
-func (r *Receiver) NumCalls() int {
+// DepositCalls lists the Deposit requests so far.
+func (r *Receiver) DepositCalls() []payments.DepositRequest {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return len(r.Calls)
+	return slices.Clone(r.calls)
 }
 
 // Ready reports whether Run has started, so Pay works.
@@ -41,7 +43,7 @@ func (r *Receiver) Name() string { return r.Method }
 func (r *Receiver) Deposit(_ context.Context, req payments.DepositRequest) (payments.DepositInfo, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.Calls = append(r.Calls, req)
+	r.calls = append(r.calls, req)
 	info := payments.DepositInfo{Address: fmt.Sprintf("addr-%d", req.UserID), Amount: req.Amount}
 	if r.Invoices && req.Amount > 0 {
 		info.InvoiceID = fmt.Sprintf("inv-%d-%d", req.UserID, req.Amount)
@@ -68,18 +70,57 @@ func (r *Receiver) Pay(ctx context.Context, in payments.Incoming) error {
 	return h.Received(ctx, in)
 }
 
-// Sender is scripted: each new payout takes the next of Next (default paid), or fails with Err.
-// Sent lists the distinct payouts; sending an ID again returns its first answer.
+// Sender is scripted: each new payout takes the next result of SetNext (default paid, Ref
+// "ref-<id>"), or fails with SetErr's error. Sending an ID again returns its first answer. Status
+// answers SetStatus's result for the ID, else the recorded one, else StateUnknown.
 type Sender struct {
-	Method    string
-	Next      []Result
-	Err       error            // what Send fails with (nothing is recorded)
-	StatusErr error            // what Status fails with
-	Statuses  map[int64]Result // what Status answers; unset: the recorded result, else unknown
+	Method string
 
-	mu      sync.Mutex
-	Sent    []payments.Payout
-	results map[int64]Result
+	mu        sync.Mutex
+	next      []payments.Result
+	err       error
+	statusErr error
+	statuses  map[int64]payments.Result
+	sent      []payments.Payout
+	results   map[int64]payments.Result
+}
+
+// SetNext queues the results of the next new payouts.
+func (s *Sender) SetNext(rs ...payments.Result) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.next = append(s.next, rs...)
+}
+
+// SetErr makes Send fail with err (nothing is recorded); nil sends again.
+func (s *Sender) SetErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.err = err
+}
+
+// SetStatusErr makes Status fail with err; nil answers again.
+func (s *Sender) SetStatusErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.statusErr = err
+}
+
+// SetStatus sets what Status answers for id.
+func (s *Sender) SetStatus(id int64, r payments.Result) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.statuses == nil {
+		s.statuses = map[int64]payments.Result{}
+	}
+	s.statuses[id] = r
+}
+
+// SentPayouts lists the distinct payouts sent so far.
+func (s *Sender) SentPayouts() []payments.Payout {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.sent)
 }
 
 func (s *Sender) Name() string { return s.Method }
@@ -97,31 +138,28 @@ func (s *Sender) Send(_ context.Context, p payments.Payout) (payments.Result, er
 	if r, ok := s.results[p.ID]; ok {
 		return r, nil
 	}
-	if s.Err != nil {
-		return payments.Result{}, s.Err
+	if s.err != nil {
+		return payments.Result{}, s.err
 	}
 	r := payments.Result{State: payments.StatePaid, Ref: fmt.Sprintf("ref-%d", p.ID)}
-	if len(s.Next) > 0 {
-		r, s.Next = s.Next[0], s.Next[1:]
+	if len(s.next) > 0 {
+		r, s.next = s.next[0], s.next[1:]
 	}
 	if s.results == nil {
-		s.results = map[int64]Result{}
+		s.results = map[int64]payments.Result{}
 	}
 	s.results[p.ID] = r
-	s.Sent = append(s.Sent, p)
+	s.sent = append(s.sent, p)
 	return r, nil
 }
-
-// Result is payments.Result, so tests can write paymentstest.Result.
-type Result = payments.Result
 
 func (s *Sender) Status(_ context.Context, id int64) (payments.Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.StatusErr != nil {
-		return payments.Result{}, s.StatusErr
+	if s.statusErr != nil {
+		return payments.Result{}, s.statusErr
 	}
-	if r, ok := s.Statuses[id]; ok {
+	if r, ok := s.statuses[id]; ok {
 		return r, nil
 	}
 	if r, ok := s.results[id]; ok {
