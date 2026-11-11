@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/amir1430/gamify/ledger"
 	"github.com/amir1430/gamify/payments/internal/store"
@@ -31,6 +32,9 @@ func (s *Service) advance(ctx context.Context, id int64) error {
 		return fmt.Errorf("payments: withdrawal %d: no sender %q for %s", id, r.Method, r.Currency)
 	}
 	from := r.Status
+	// The call's deadline is counted from before the claim, less a margin for clock skew, so it ends
+	// before the row's lease does (lease_until is the DB's now() + Lease, taken after this point).
+	start := time.Now()
 	r, err = s.q.ClaimWithdrawal(ctx, store.ClaimWithdrawalParams{ID: id, FromStatus: from, LeaseUs: s.cfg.Lease.Microseconds()})
 	if errors.Is(err, pgx.ErrNoRows) { // another worker holds the lease, or the row moved
 		return nil
@@ -38,13 +42,16 @@ func (s *Service) advance(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	if from == "approved" {
-		s.pushWithdrawal(ctx, r)
-	}
 	p := Payout{ID: r.ID, UserID: r.UserID, Currency: ledger.Currency(r.Currency), Amount: r.Amount - r.Fee,
 		Destination: r.Destination}
-	call, cancel := context.WithTimeout(ctx, s.cfg.Lease) // done before another worker may ask
+	margin := min(s.cfg.Lease/10, 5*time.Second)
+	call, cancel := context.WithDeadline(ctx, start.Add(s.cfg.Lease-margin))
 	defer cancel()
+	if from == "approved" { // bounded: the call's deadline is already fixed, a slow push only shortens it
+		push, cancel := context.WithTimeout(ctx, margin)
+		s.pushWithdrawal(push, r)
+		cancel()
+	}
 	var res Result
 	if from == "approved" {
 		res, err = snd.Send(call, p)

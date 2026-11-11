@@ -34,7 +34,9 @@ type Receiver interface {
 	Run(ctx context.Context, h *Host) error
 }
 
-// Sender pays out for one method. Send must be idempotent per Payout.ID.
+// Sender pays out for one method. Send must be idempotent per Payout.ID. Send and Status must
+// honor ctx: it ends shortly before the withdrawal's lease, after which another worker may ask
+// again (and re-send on StateUnknown) and an operator may Resolve it as failed.
 type Sender interface {
 	Name() string
 	ValidateDestination(dest string) error
@@ -104,8 +106,9 @@ type WithdrawLimits struct {
 }
 
 // Config: zero fields take the defaults (Tick 2 s, Lease 1 min). Tick is how often due withdrawals
-// are sent or asked about. Lease is how long one worker owns a withdrawal's Send or Status call (it
-// is cancelled then) and so how often a pending payout is asked about again.
+// are sent or asked about. Lease is how long one worker owns a withdrawal's Send or Status call,
+// and so how often a pending payout is asked about again; the call's ctx ends min(Lease/10, 5 s)
+// before the lease does.
 type Config struct{ Tick, Lease time.Duration }
 
 type key struct {

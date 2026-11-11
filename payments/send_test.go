@@ -288,3 +288,66 @@ func TestRegisterRejectsNegative(t *testing.T) {
 		}
 	}
 }
+
+// deadlineSender blocks each Send until its ctx ends, then checks what the row looks like at that
+// moment and pays anyway (the worst case: the payout went out just before the deadline).
+type deadlineSender struct {
+	*paymentstest.Sender
+	check func(ctx context.Context, p payments.Payout)
+}
+
+func (d *deadlineSender) Send(ctx context.Context, p payments.Payout) (payments.Result, error) {
+	<-ctx.Done()
+	d.check(ctx, p)
+	return d.Sender.Send(context.Background(), p)
+}
+
+// TestSendDeadlineBeforeLease: a Send is cancelled before the row's lease ends (as the DB sees it),
+// so while it may still be paying, Resolve is refused and no second worker can claim the row.
+func TestSendDeadlineBeforeLease(t *testing.T) {
+	snd := &deadlineSender{Sender: &paymentstest.Sender{Method: "wire"}}
+	cfg := payments.Config{Lease: time.Second, Tick: time.Hour}
+	a := apptest.New(t, apptest.WithCurrencies(
+		ledger.CurrencyConfig{Code: "usdt", Ledger: 3, MinAmount: 1, Decimals: 6, Withdrawable: true}))
+	s, err := payments.Register(context.Background(), a.App, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Sender("usdt", snd, payments.WithdrawLimits{AutoApproveUpTo: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	var checked bool
+	snd.check = func(ctx context.Context, p payments.Payout) {
+		checked = true
+		bg := context.Background()
+		dl, ok := ctx.Deadline()
+		var lease time.Time
+		var live bool
+		if err := a.Pool.QueryRow(bg, `SELECT lease_until, lease_until > now() FROM pay_withdrawals WHERE id = $1`, p.ID).Scan(&lease, &live); err != nil {
+			t.Error(err)
+			return
+		}
+		if !ok || !dl.Before(lease) || !live {
+			t.Errorf("deadline %v (set %v), lease_until %v, live %v", dl, ok, lease, live)
+		}
+		tx, err := a.Pool.Begin(bg)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer tx.Rollback(bg)
+		if _, err := s.Resolve(bg, tx, p.ID, 9, payments.Result{State: payments.StateFailed, Reason: "gave up"}); !errors.Is(err, payments.ErrSendInProgress) {
+			t.Errorf("resolve during send: %v", err)
+		}
+	}
+	u := a.User("ann")
+	a.Fund(u, "usdt", 1000)
+	w := mustWd(t, a, u, "k", 400)
+	payments.WaitSends(s)
+	if !checked {
+		t.Fatal("send never ran")
+	}
+	if g := status(t, s, w.ID); g.Status != "paid" || !settled(t, a, w.ID) || a.Balance(u, "usdt") != 600 {
+		t.Fatalf("%+v balance %d", g, a.Balance(u, "usdt"))
+	}
+}

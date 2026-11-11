@@ -386,7 +386,10 @@ Sender. Amounts are int64 minor units everywhere.
   `StateFailed` (with `Reason`) or `StatePending`.
 - `Status(ctx, id)` answers the same states for an earlier send, and `StateUnknown` only when it
   never saw that ID (gamify then re-sends it).
-- Honor `ctx` deadlines: a call is cancelled when its lease ends.
+- `Send` and `Status` MUST honor `ctx`: its deadline ends a little before the withdrawal's lease
+  (`Config.Lease`, less min(Lease/10, 5 s)). Once the lease ends another worker may ask `Status`
+  and re-send, and an operator may mark it failed, so a call that keeps paying past its `ctx` can pay
+  twice or pay a refunded withdrawal.
 - Only `StateFailed` refunds. A `Send` or `Status` error, or `StatePending`, never does: the money
   stays held and the withdrawal is asked about again until it is paid or failed (or an operator
   settles it in the console).
