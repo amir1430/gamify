@@ -75,6 +75,7 @@ type App struct {
 	logins    []func(ctx context.Context, userID int64) error
 	onLogin   []func(ctx context.Context, l auth.Login, id auth.Identity) error
 	loops     []loop
+	goers     []goer
 	extra     []namedServer
 	historyMu sync.Mutex
 	history   map[string]HistorySource
@@ -150,6 +151,42 @@ func (a *App) LoginCheck(f func(ctx context.Context, userID int64) error) {
 // Call it before Run: Run reads the list without a lock.
 func (a *App) Loop(every time.Duration, f func(context.Context)) {
 	a.loops = append(a.loops, loop{every, f})
+}
+
+// Go runs f in its own goroutine from Run, with Run's context (a module's long-lived worker, like a
+// payment receiver). When f returns before shutdown it is logged and restarted after a backoff of
+// 1 s, doubling to 1 min. Call it before Run: Run reads the list without a lock.
+func (a *App) Go(name string, f func(ctx context.Context) error) {
+	a.goers = append(a.goers, goer{name, f})
+}
+
+type goer struct {
+	name string
+	f    func(ctx context.Context) error
+}
+
+// goBackoff is Go's first restart delay (a var so tests can shorten it).
+var goBackoff = time.Second
+
+func (g goer) run(ctx context.Context) {
+	wait := goBackoff
+	for ctx.Err() == nil {
+		start := time.Now()
+		err := g.f(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		slog.Error("worker stopped, restarting", "worker", g.name, "err", err, "in", wait)
+		if time.Since(start) > time.Minute {
+			wait = goBackoff
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		wait = min(wait*2, time.Minute)
+	}
 }
 
 type loop struct {
@@ -346,6 +383,9 @@ func (a *App) Run(ctx context.Context) error {
 				}
 			}
 		}()
+	}
+	for _, g := range a.goers {
+		go g.run(ctx)
 	}
 	slog.Info("started", "http", servers[0].Addr, "methods", len(a.Router.Methods()))
 	for _, e := range a.extra {

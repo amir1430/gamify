@@ -646,3 +646,51 @@ func TestTimeoutForming(t *testing.T) {
 	}
 	balances(t, e, map[int64]int64{a: 1000, b: 1000})
 }
+
+// Duplicate Finish calls wait on the match row lock; they must do it holding a slot, not a pool
+// connection each, or enough of them starve the pool.
+func TestDuplicateFinishDoesNotStarvePool(t *testing.T) {
+	e := setupOn(t, apptest.New(t, apptest.WithMaxConns(4)))
+	a, b := e.a.User("alice"), e.a.User("bob")
+	m := start(t, e, stakedReq("bet", 100), a, b)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// Stand in for a settling step: hold the match row (one connection) and, while the duplicates
+	// pile up on it, still need a second connection, as the Postgres ledger does.
+	tx, err := e.a.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "SELECT 1 FROM mm_matches WHERE id = $1 FOR UPDATE", m.ID); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, 32)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = e.s.Finish(ctx, m.ID, wins(m, b))
+		}()
+	}
+	time.Sleep(300 * time.Millisecond)
+	short, stop := context.WithTimeout(ctx, 2*time.Second)
+	defer stop()
+	if _, err := e.a.Pool.Exec(short, "SELECT 1"); err != nil {
+		t.Fatalf("the pool is starved by calls waiting on the match lock: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	balances(t, e, map[int64]int64{a: 900, b: 1090})
+	if m := matchOf(t, e, m.ID); m.Status != "settled" {
+		t.Fatalf("match %+v", m)
+	}
+}

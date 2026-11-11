@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
 
 	"github.com/amir1430/gamify/admin"
+	"github.com/amir1430/gamify/apptest"
 	"github.com/amir1430/gamify/ledger"
+	"github.com/amir1430/gamify/payments"
 )
 
 func TestParseCurrencies(t *testing.T) {
@@ -28,7 +32,17 @@ func TestParseCurrencies(t *testing.T) {
 	if err != nil || !gems[0].Transferable || gems[1].Transferable {
 		t.Fatalf("transferable: %+v, %v", gems, err)
 	}
-	for _, bad := range []string{"usd:1", "usd:1:1:0:2:9", "gems:3:1:0:0:x", "gems:3:1:0:0:t:1", "usd:1:1:0:19", "usd:1:1:0:256", "usd:1:1:0:-1", "usd:x:1"} {
+	usdt, err := parseCurrencies("usdt:3:1:0:6:w")
+	if err != nil || !usdt[0].Withdrawable || usdt[0].Transferable {
+		t.Fatalf("withdrawable: %+v, %v", usdt, err)
+	}
+	for _, flags := range []string{"tw", "wt"} {
+		both, err := parseCurrencies("usdt:3:1:0:6:" + flags)
+		if err != nil || !both[0].Withdrawable || !both[0].Transferable {
+			t.Fatalf("%s: %+v, %v", flags, both, err)
+		}
+	}
+	for _, bad := range []string{"usd:1", "usd:1:1:0:2:9", "gems:3:1:0:0:x", "usdt:3:1:0:6:ww", "usdt:3:1:0:6:wx", "gems:3:1:0:0:t:1", "usd:1:1:0:19", "usd:1:1:0:256", "usd:1:1:0:-1", "usd:x:1"} {
 		if _, err := parseCurrencies(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
@@ -93,5 +107,23 @@ func TestParseRole(t *testing.T) {
 	}
 	if _, err := parseRole("root"); err == nil {
 		t.Error("root accepted")
+	}
+}
+
+func TestDevPayments(t *testing.T) {
+	cs := []ledger.CurrencyConfig{{Code: "usd", Ledger: 1, MinAmount: 1}, {Code: "usdt", Ledger: 3, MinAmount: 1, Decimals: 6, Withdrawable: true}}
+	s, err := payments.Register(context.Background(), apptest.New(t, apptest.WithCurrencies(cs...)).App, payments.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := devPayments(s, cs); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, m := range s.Methods() {
+		got = append(got, string(m.Currency)+"/"+m.Name+"/"+m.Kind)
+	}
+	if want := "[usd/dev/deposit usdt/dev/deposit usdt/dev/withdraw]"; fmt.Sprint(got) != want {
+		t.Fatalf("%v, want %s", got, want)
 	}
 }

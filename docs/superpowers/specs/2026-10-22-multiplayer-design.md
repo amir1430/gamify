@@ -3,8 +3,9 @@
 Oct 22, 2026
 
 > **Release split (owner, Oct 22, 2026):** this design is no longer one release. v1.1 shipped
-> parties and matchmaking (§1, §2). Leaderboards (§3) are v1.2, tournaments (§4) v1.3, leagues
-> (§5) v1.4, cross-feature docs v1.5. See `docs/superpowers/plans/2026-10-22-v1.1-index.md`.
+> parties and matchmaking (§1, §2). Leaderboards (§3) are v1.3, tournaments (§4) v1.4, leagues
+> (§5) v1.5, cross-feature docs v1.6 (moved down one on Nov 11, 2026: payments took v1.2). See
+> `docs/superpowers/plans/2026-10-22-v1.1-index.md`.
 
 ## Intent
 

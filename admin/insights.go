@@ -25,6 +25,7 @@ const (
 func (adm *Admin) registerInsights() {
 	adm.handle("GET /api/online", PermView, adm.online)
 	adm.handle("GET /api/system", PermView, adm.system)
+	adm.handle("GET /api/alerts", PermView, adm.alerts)
 }
 
 // connections is every connected user's open connections; nil when the transport can't say (a
@@ -125,8 +126,8 @@ func version() string {
 
 // system is the console's status page (Nakama's Status and Configuration): build, process,
 // connection pool, the dependencies' health, the currencies, the RPCs and activity sources the
-// brand registered, and what each role may do. Nothing secret: no keys, tokens or addresses.
-func (adm *Admin) system(w http.ResponseWriter, r *http.Request, _ *session) error {
+// brand registered, what each role may do, and the modules' status sections the role may see. Nothing secret: no keys, tokens or addresses.
+func (adm *Admin) system(w http.ResponseWriter, r *http.Request, s *session) error {
 	ctx := r.Context()
 	health := map[string]check{"postgres": ping(ctx, adm.a.Pool.Ping), "realtime": ping(ctx, adm.a.Realtime.Ping)}
 	if p, ok := adm.a.Ledger.Driver().(interface{ Ping(context.Context) error }); ok {
@@ -144,7 +145,8 @@ func (adm *Admin) system(w http.ResponseWriter, r *http.Request, _ *session) err
 			above = &n
 		}
 		cur = append(cur, map[string]any{"code": c, "decimals": adm.a.Ledger.Decimals(c),
-			"min_amount": adm.a.Ledger.MinAmount(c), "approve_above": above, "default": c == adm.a.Ledger.Default()})
+			"min_amount": adm.a.Ledger.MinAmount(c), "approve_above": above, "default": c == adm.a.Ledger.Default(),
+			"transferable": adm.a.Ledger.Transferable(c), "withdrawable": adm.a.Ledger.Withdrawable(c)})
 	}
 
 	history := slices.Sorted(maps.Keys(adm.a.HistorySources()))
@@ -174,6 +176,7 @@ func (adm *Admin) system(w http.ResponseWriter, r *http.Request, _ *session) err
 		"rpcs":       rpcs,
 		"history":    history,
 		"roles":      roles,
+		"sections":   adm.statusSections(ctx, s.Role),
 		"console": map[string]any{
 			"telegram_login": adm.cfg.TelegramBotToken != "",
 			"fairness":       adm.cfg.Fairness != nil,

@@ -30,7 +30,7 @@ case: a pot's entries and the pot itself may come from two tables under one ID, 
 never overlap.
 
 Changing an ID, or reusing another game's, makes retries and reconciliation move money twice. IDs
-below `ledger.FirstBrandGame` are the platform's; yours are `FirstBrandGame..MaxGame`. Call
+below `ledger.FirstBrandGame` are the platform's (1 matchmaking, 2 payments); yours are `FirstBrandGame..MaxGame`. Call
 `a.Ledger.RegisterGame(Game, "arena")` first thing in `Register`: a duplicate ID in the deployment
 then fails at startup.
 
@@ -363,6 +363,62 @@ All in `QueueConfig`, all with defaults:
   maps are required to match. The client can't send these and never sees them (`Ticket.Server` is
   not in the JSON). Prepare gets a copy of the ticket: only `Server` is kept.
 - `Compatible(a, b Ticket) bool`: a last veto on any two tickets in a match.
+
+## Deposits and withdrawals
+
+Real-money currencies move in and out through `payments`: you write a `Receiver` (money in) and a
+`Sender` (money out) per method; gamify does the ledger, limits, approvals and retries. The
+currency must be `Withdrawable` (`CurrencyConfig.Withdrawable`, `w` in `CURRENCIES`) to have a
+Sender. Amounts are int64 minor units everywhere.
+
+**Receiver**
+- `Deposit(ctx, DepositRequest)` returns a `DepositInfo`: an `Address` (amount 0: the user's open
+  address, stored and reused) or an invoice (`InvoiceID`, `URL`, `Amount`, `ExpiresAt`).
+- `Run(ctx, *Host)` listens (a chain watcher, or a webhook on `h.Mux`) and reports each confirmed
+  payment with `h.Received(ctx, Incoming{ExternalID, Address, InvoiceID, Currency, Amount})`.
+  `Received` is idempotent per `ExternalID`, so report again after a restart. Return when `ctx` ends;
+  a return is restarted with a backoff.
+- One Receiver may serve several currencies: register the same value for each, and its `Run` starts
+  once (`Received` checks the payment's currency). Another Receiver under a taken name is refused.
+
+**Sender**
+- `ValidateDestination(dest)` rejects a bad address before any money is held.
+- `Send(ctx, Payout)` must be idempotent per `Payout.ID`: a second call with the same ID must not
+  pay twice. `Payout.Amount` is already minus the fee. Answer `StatePaid` (with `Ref`),
+  `StateFailed` (with `Reason`) or `StatePending`.
+- `Status(ctx, id)` answers the same states for an earlier send, and `StateUnknown` only when it
+  never saw that ID (gamify then re-sends it).
+- `Send` and `Status` MUST honor `ctx`: its deadline ends a little before the withdrawal's lease
+  (`Config.Lease`, less min(Lease/10, 5 s)). Once the lease ends another worker may ask `Status`
+  and re-send, and an operator may mark it failed, so a call that keeps paying past its `ctx` can pay
+  twice or pay a refunded withdrawal.
+- Only `StateFailed` refunds. A `Send` or `Status` error, or `StatePending`, never does: the money
+  stays held and the withdrawal is asked about again until it is paid or failed (or an operator
+  settles it in the console).
+
+```go
+pay, err := payments.Register(ctx, a, payments.Config{})
+err = pay.Receiver("usdt", &myChain{}, payments.DepositLimits{Min: 5_000_000})
+err = pay.Sender("usdt", &myChain{}, payments.WithdrawLimits{
+	Min: 10_000_000, Fee: 1_000_000, DailyCap: 1_000_000_000, AutoApproveUpTo: 100_000_000})
+// after admin.Register: err = paymentsadmin.Register(adm, pay, paymentsadmin.Config{})
+```
+
+Register before `a.Run`. Limits are Go defaults the console can edit (zero is no limit, except
+`AutoApproveUpTo`: 0 means every withdrawal waits for an admin; above `SecondApprovalAbove` a second
+admin must approve). `DailyCap` is per user over 24 h: the user's withdrawals in all methods of the
+currency count against the cap of the method being requested. `Off` stops new deposits or
+withdrawals of a method. RPCs: `payments.deposit`,
+`payments.withdraw` (needs an `idem_key`), `payments.cancel`, `payments.history`; pushes
+`payments.updated`. Client errors use codes 1040-1049.
+
+**Test it** with `payments/paymentstest`: `Receiver.Pay` simulates an incoming payment, and
+`Sender` is scripted (`SetNext`, `SetErr`, `SetStatusErr`, `SetStatus`; read `SentPayouts`,
+`Receiver.DepositCalls`), safe to change while sends run in the background. With `apptest`, `Register` payments,
+add the fakes, fund or `Pay`, call `payments.withdraw`, then `pay.Wait()` (sends run in the
+background) and assert `a.Balance` and the withdrawal's status. The sample's `DEV_FAUCET=true` registers these fakes as method `dev`: its withdrawals are
+auto-approved and paid; its deposits only return an address and are never credited. Never with
+real money.
 
 ## Checklist
 

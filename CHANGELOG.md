@@ -5,6 +5,52 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.2.0] - 2026-11-11
+
+### Added
+- `app.App.Go`: run a long-lived worker with Run's context, restarted with a 1 s to 1 min backoff when it returns.
+- `apptest.WithMaxConns(n)`: the test app's Postgres pool size.
+- `payments` module: `Receiver` (deposit methods; one Receiver may serve several currencies and its `Run` starts once per method name) and `Sender` (withdrawal methods) registration, per-method limits with Go defaults overlaid by the console, `paymentstest` fakes. Migrations: `goose_payments`.
+- `payments`: deposits. RPC `payments.deposit {currency, method, amount}` returns a `DepositInfo` `{address, invoice_id, url?, amount, expires_at?}` (amount 0: the user's open address, stored and reused); a Receiver reports payments through `Host.Received`, credited once per external ID (`ErrDepositsOff` 1041 when `DepositLimits.Off`, push `payments.updated`). Payments below the method's minimum are `ignored`; unknown addresses, wrong currency and invoice amount mismatches are `unmatched` and never credited. The reconciler finishes `crediting` rows.
+- `payments`: withdrawal requests. RPC `payments.withdraw {currency, method, amount, destination, idem_key}` returns a `Withdrawal`: checks the method's `WithdrawLimits` (min, max, flat fee stored on the row, amount must exceed the fee, per-user 24 h `DailyCap`, `Off`) and the Sender's `ValidateDestination`, then holds the amount in the ledger; `approved` up to `AutoApproveUpTo`, else `requested`. A repeated `idem_key` returns the stored withdrawal. RPC `payments.cancel {id}` cancels the caller's own `requested` withdrawal and releases the hold at once. `Service.Get`. Push `payments.updated` with `withdrawal` on every change. Errors `ErrBadDestination` 1042, `ErrLimit` 1043, `ErrDailyCap` 1044, `ErrInsufficient` 1045, `ErrNotCancellable` 1046, `ErrWithdrawalsOff` 1047, `ErrNotFound` 1049. The reconciler finishes withdrawals a crash left before their hold and releases cancelled ones.
+- `payments`: sending and settling withdrawals. Approved withdrawals are sent through their `Sender` (`Payout.Amount` = amount − fee) in the background right after the RPC returns, and by a loop every `Config.Tick`, one worker at a time under a `Config.Lease` (the Send/Status `ctx` ends min(Lease/10, 5 s) before the lease: Senders must honor it); `paid` posts the hold and the fee to `house`, `failed` releases it; the Sender's `Ref` and `Reason` are stored on the row. Money-safety rule: a `Send`/`Status` error or a pending answer never refunds; the row stays `sending` and `Status` is asked again after the lease (re-sent with the same `Payout.ID` only when the Sender answers `StateUnknown`), so only a definite `StateFailed` refunds. `Register` rejects a negative `Tick` or `Lease`. `paymentstest.Sender` is scripted with `SetNext`, `SetErr`, `SetStatusErr`, `SetStatus` and read with `SentPayouts` (`Receiver.DepositCalls`), all goroutine-safe.
+- `payments`: reads and the Go API. RPC `payments.history {kind?, status?, before?, limit?}` returns the caller's own `{deposits, withdrawals}` newest first (limit 1..100, default 20 per kind; `before` is an ID of that kind and needs `kind`). `Service.Withdrawals` / `Deposits(ctx, Filter, before, limit)`, and `Approve`, `Reject`, `Resolve` (take the admin's tx) with `Advance` (waits for the Sender) or `AdvanceAsync` for the `After` hook: `Approve` needs a second admin above `WithdrawLimits.SecondApprovalAbove` (`ErrSameApprover` 1048); `Reject` only `requested` or `approved` rows, never `sending` (`ErrWrongStatus`, a plain Go error); `Resolve` settles a `sending` row by hand as `paid` (with Ref) or `failed` (with reason), refused with `ErrSendInProgress` while a send holds its lease; `Approve` of a method no longer registered returns `ErrUnknownMethod`. `Withdrawal.Settled`. `a.History("payments")`: one `app.Activity` per deposit (`Payout`) and withdrawal (`Amount`); its `ID` is an opaque paging cursor (pass the last one as `beforeID`), the row's own ID and kind are in `Detail`. `Service.AdvanceAsync` (the console's `After` hooks use it, so a request never waits for a Sender) and `Service.Wait` (waits for background sends: call it in tests before asserting a withdrawal's status).
+- `payments/paymentsadmin`: console pages Withdrawals (approve, reject, mark paid / mark failed for a stuck send; detail with the player's credited deposits and paid withdrawals), Deposits and Methods (edit limits), as tabs on the player page. Permissions `payments.approve` (`admin.PermPayApprove`; owner, operator), `payments.resolve` (`admin.PermPayResolve`) and `payments.limits` (`admin.PermPayLimits`) (owner); a brand's custom roles need them added to see the actions. `payments.Service.Methods`.
+- `ledger`: withdrawals. `CurrencyConfig.Withdrawable` (off by default) and `Ledger.Withdrawable`;
+  `Withdraw(ctx, g, c, withdrawalID, userID, amount)` holds the amount (pending user -> new
+  `outflow` system account; the welcome grant stays play-only, `ErrInsufficientFunds`),
+  `PostWithdraw` settles it with an optional fee to `house` (transfer kind `withdraw_fee`),
+  `VoidWithdraw` releases it. Keyed by game `g` and the withdrawal ID, like `Spend`, so each is safe
+  to repeat and two tables never collide.
+  `ErrNotWithdrawable` in a currency without the flag, `ErrWithdrawSettled` for a post after a void
+  or a void after a post. New system account `outflow` and transfer kinds `withdraw` and `withdraw_fee`.
+- `ledger.DepositFor(ctx, g, c, depositID, userID, amount)`: `Deposit` keyed by a game's deposit rows, so a module's deposit IDs never collide with another's or with `Deposit`'s. `payments` uses it. `Deposit` is unchanged.
+- `admin.Alert` and `GET /api/alerts`: a module registers a count an operator should look at (name, title, hint, `Perm`, tone `AlertWarn`/`AlertDanger`, an optional `View` with `Filters` to link to). The dashboard lists the ones above zero under "Needs attention", and a count with a view badges it in the menu. A failing `Count` shows that alert as unavailable, never a failed page.
+- `admin.Status`: a module's table on the system page (`Columns` like a view's, `Rows`), shown to roles with its `Perm`. `GET /api/system` gains `sections` and each currency's `transferable` and `withdrawable`; the system page shows both flags.
+- `GET /api/views`: each view lists `audit_actions` (every action's audit name, whatever the role may run), and the audit log's action filter gains a group per view.
+- `ledger.Ledger.Transferable(c)`.
+- `payments`: `Service.CountWithdrawals` and `CountDeposits(ctx, Filter)`; `Filter.Statuses` (any of them) for the lists and counts. `Service.Health()`: per method since start, the Receiver's `Run` (running, restarts) and when `Received` or `Send`/`Status` last answered or failed (`MethodHealth`, in memory).
+- `paymentsadmin`: dashboard alerts `pay-approve` (withdrawals waiting for an approver, to `payments.approve` holders), `pay-stuck` (approved or sending, requested more than `Config.StuckAfter` ago, default 1 h) and `pay-unmatched` (unmatched deposits within `Config.UnmatchedWithin`, default 24 h), and the system page's "Payment methods" table with each method's health. The treasury page shows "Withdrawals out", and the `outflow` account and `withdraw_fee` kind have proper labels.
+- `cmd/gamify`: the sixth `CURRENCIES` field takes flags `t` (transferable) and `w`
+  (withdrawable), in any order: `usdt:3:1:0:6:w`, `gems:3:1:0:0:tw`.
+
+### Changed
+- `ledger`: `SystemAccounts()` and `TransferKinds()` gain `outflow`, `withdraw` and `withdraw_fee`, so the treasury page lists them. `Entry.Game` is set for `DepositFor` and withdrawal transfers.
+- `cmd/gamify`: registers `payments` and `paymentsadmin` (the console only when it is on). With `DEV_FAUCET=true` it adds a fake method `dev` (`paymentstest`): withdrawals of every withdrawable currency are auto-approved and paid at once; deposits only return an address and are never credited (nothing pays it). It moves no real money: never use it where money is real.
+
+### Fixed
+- `matchmaking`: `Finish` and `Cancel` take a slot like the matcher's steps do, so many duplicate calls for one match waiting on its row lock can no longer exhaust the Postgres pool.
+
+### Upgrade notes
+- New goose table `goose_payments`: `payments.Register` runs its migrations on start. Nothing to run by hand.
+- `payments` claims platform ledger game 2 (`payments.Game`, registered as "payments"): a brand that registered game ID 2 for its own game gets a startup error; brand games belong in `FirstBrandGame..MaxGame`.
+- `ledger.Init` creates the `outflow` system account for every existing currency on the next start
+  (idempotent, nothing to run). Existing currencies stay non-withdrawable until you set
+  `CurrencyConfig.Withdrawable` (or the `w` flag in `CURRENCIES`).
+- New admin permissions `payments.approve`, `payments.resolve` and `payments.limits`: a brand's custom roles need them to see the actions. The built-in `operator` role gains `payments.approve` by default: operators can approve and reject withdrawals once `paymentsadmin` is registered.
+- `payments` migration 00002 adds indexes on `(status, created_at)` of `pay_withdrawals` and `pay_deposits` for the console's alerts. It runs on start.
+- Client error codes 1040-1049 are reserved for `payments` (`ErrNotFound` is 1049). Don't use them in your own games.
+
 ## [1.1.13] - 2026-11-04
 
 ### Added

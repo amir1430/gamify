@@ -27,6 +27,7 @@ type Admin struct {
 	h      http.Handler
 	logins chan struct{} // login attempts in flight, at most maxLogins
 	views  views         // brand views (View)
+	extras extras        // alerts and status sections (Alert, Status)
 
 	started time.Time // when Register ran (the system page's uptime)
 }

@@ -26,6 +26,7 @@ export const ACCOUNTS: { name: string; label: string; about: string }[] = [
   { name: 'sales', label: 'Sales', about: 'What players spent in the shop: extra lives, items.' },
   { name: 'adjust', label: 'Adjustments', about: 'Console credits out and debits in.' },
   { name: 'inflow', label: 'Deposits', about: 'Confirmed deposits enter the ledger from here (goes negative).' },
+  { name: 'outflow', label: 'Withdrawals', about: 'Paid withdrawals leave the ledger here; their fees go on to House.' },
   { name: 'exchange', label: 'Exchange', about: 'Currency swaps pass through here.' },
   { name: 'grant', label: 'Welcome grants', about: 'Welcome amounts given on sign-up (goes negative).' },
   { name: 'floor', label: 'Play-only floor', about: 'Welcome amounts pass through and straight back: keeps grants play-only.' },
@@ -33,7 +34,7 @@ export const ACCOUNTS: { name: string; label: string; about: string }[] = [
 ]
 export const accountLabel = (n: string) => ACCOUNTS.find((a) => a.name === n)?.label ?? n[0].toUpperCase() + n.slice(1)
 
-const KIND_LABEL: Record<string, string> = { top_up: 'Top-up', adjustment: 'Adjustment' }
+const KIND_LABEL: Record<string, string> = { top_up: 'Top-up', adjustment: 'Adjustment', withdraw: 'Withdrawal', withdraw_fee: 'Withdrawal fee' }
 export const kindLabel = (k: string) => KIND_LABEL[k] ?? k[0].toUpperCase() + k.slice(1).replace(/_/g, ' ')
 
 const STAGE: Record<Entry['stage'], { label: string; tone: 'ok' | 'warn' | 'neutral' | 'brand' }> = {

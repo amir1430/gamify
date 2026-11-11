@@ -35,7 +35,7 @@ func SystemAccounts() []string {
 // Transfer kinds, as Entry.Kind and HistoryFilter.Kind name them.
 var transferKinds = map[uint16]string{codeCharge: "charge", codePayout: "payout", codeTopUp: "top_up",
 	codeDeposit: "deposit", codeWelcome: "welcome", codeSwap: "swap", codeReward: "reward",
-	codeAdjustment: "adjustment", codeSpend: "spend", codeTransfer: "transfer", codeFloor: "floor"}
+	codeAdjustment: "adjustment", codeSpend: "spend", codeTransfer: "transfer", codeFloor: "floor", codeWithdraw: "withdraw", codeWithdrawFee: "withdraw_fee"}
 
 // TransferKinds names every kind of transfer, in a stable order.
 func TransferKinds() []string {
@@ -207,7 +207,7 @@ func entry(self ID, t StoredTransfer) Entry {
 	}
 	// Game operations: game<<8 | leg, alone (ns 0) or in a namespace keyed by game.
 	switch ns := t.ID.Hi >> 32; ns {
-	case 0, nsSpend, nsTransfer, nsPrize:
+	case 0, nsSpend, nsTransfer, nsPrize, nsDeposit, nsWithdraw: // Deposit's own IDs: game 0
 		e.Game = Game(t.ID.Hi>>8) & MaxGame
 	}
 	return e
