@@ -160,6 +160,7 @@ func (s *Service) credit(ctx context.Context, d store.PayDeposit) error {
 
 // Reconcile finishes what a crash left half done. Later tasks add their steps here.
 func (s *Service) Reconcile(ctx context.Context) {
+	s.reconcileWithdrawals(ctx)
 	rows, err := s.q.CreditingDeposits(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "payments: list crediting deposits", "err", err)

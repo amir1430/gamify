@@ -135,6 +135,8 @@ func Register(ctx context.Context, a *app.App, cfg Config) (*Service, error) {
 		receivers: map[key]Receiver{}, senders: map[key]Sender{},
 		deposit: map[key]DepositLimits{}, withdraw: map[key]WithdrawLimits{}}
 	a.Router.Handle("payments.deposit", realtime.JSON(s.depositRPC))
+	a.Router.Handle("payments.withdraw", realtime.JSON(s.withdrawRPC))
+	a.Router.Handle("payments.cancel", realtime.JSON(s.cancelRPC))
 	a.Reconcile(s.Reconcile)
 	return s, nil
 }

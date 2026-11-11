@@ -9,6 +9,42 @@ import (
 	"context"
 )
 
+const cancelWithdrawal = `-- name: CancelWithdrawal :one
+UPDATE pay_withdrawals SET status = 'cancelled', settled = false, updated_at = now()
+WHERE id = $1 AND user_id = $2 AND status = 'requested'
+RETURNING id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at
+`
+
+type CancelWithdrawalParams struct {
+	ID     int64
+	UserID int64
+}
+
+func (q *Queries) CancelWithdrawal(ctx context.Context, arg CancelWithdrawalParams) (PayWithdrawal, error) {
+	row := q.db.QueryRow(ctx, cancelWithdrawal, arg.ID, arg.UserID)
+	var i PayWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Method,
+		&i.Amount,
+		&i.Fee,
+		&i.Destination,
+		&i.IdemKey,
+		&i.Status,
+		&i.Settled,
+		&i.Ref,
+		&i.Reason,
+		&i.FirstApprover,
+		&i.DecidedBy,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const creditingDeposits = `-- name: CreditingDeposits :many
 SELECT id, method, currency, external_id, user_id, target_id, amount, status, reason, created_at FROM pay_deposits WHERE status = 'crediting' ORDER BY id LIMIT 100
 `
@@ -121,6 +157,77 @@ func (q *Queries) GetLimits(ctx context.Context, arg GetLimitsParams) (GetLimits
 	return i, err
 }
 
+const getWithdrawal = `-- name: GetWithdrawal :one
+SELECT id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at FROM pay_withdrawals WHERE id = $1
+`
+
+func (q *Queries) GetWithdrawal(ctx context.Context, id int64) (PayWithdrawal, error) {
+	row := q.db.QueryRow(ctx, getWithdrawal, id)
+	var i PayWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Method,
+		&i.Amount,
+		&i.Fee,
+		&i.Destination,
+		&i.IdemKey,
+		&i.Status,
+		&i.Settled,
+		&i.Ref,
+		&i.Reason,
+		&i.FirstApprover,
+		&i.DecidedBy,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const holdingWithdrawals = `-- name: HoldingWithdrawals :many
+SELECT id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at FROM pay_withdrawals WHERE status = 'holding' ORDER BY id LIMIT 100
+`
+
+func (q *Queries) HoldingWithdrawals(ctx context.Context) ([]PayWithdrawal, error) {
+	rows, err := q.db.Query(ctx, holdingWithdrawals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PayWithdrawal
+	for rows.Next() {
+		var i PayWithdrawal
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Currency,
+			&i.Method,
+			&i.Amount,
+			&i.Fee,
+			&i.Destination,
+			&i.IdemKey,
+			&i.Status,
+			&i.Settled,
+			&i.Ref,
+			&i.Reason,
+			&i.FirstApprover,
+			&i.DecidedBy,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertDeposit = `-- name: InsertDeposit :one
 INSERT INTO pay_deposits (method, currency, external_id, user_id, target_id, amount, status, reason)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -205,6 +312,65 @@ func (q *Queries) InsertTarget(ctx context.Context, arg InsertTargetParams) (Pay
 	return i, err
 }
 
+const insertWithdrawal = `-- name: InsertWithdrawal :one
+INSERT INTO pay_withdrawals (user_id, currency, method, amount, fee, destination, idem_key, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, 'holding')
+RETURNING id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at
+`
+
+type InsertWithdrawalParams struct {
+	UserID      int64
+	Currency    string
+	Method      string
+	Amount      int64
+	Fee         int64
+	Destination string
+	IdemKey     string
+}
+
+func (q *Queries) InsertWithdrawal(ctx context.Context, arg InsertWithdrawalParams) (PayWithdrawal, error) {
+	row := q.db.QueryRow(ctx, insertWithdrawal,
+		arg.UserID,
+		arg.Currency,
+		arg.Method,
+		arg.Amount,
+		arg.Fee,
+		arg.Destination,
+		arg.IdemKey,
+	)
+	var i PayWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Method,
+		&i.Amount,
+		&i.Fee,
+		&i.Destination,
+		&i.IdemKey,
+		&i.Status,
+		&i.Settled,
+		&i.Ref,
+		&i.Reason,
+		&i.FirstApprover,
+		&i.DecidedBy,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockUserWithdrawals = `-- name: LockUserWithdrawals :exec
+SELECT pg_advisory_xact_lock(hashtext('payments:withdraw'), ($1::bigint % 2147483647)::int)
+`
+
+// Serializes one user's withdrawal requests (users 2^31-1 apart share a lock: harmless).
+func (q *Queries) LockUserWithdrawals(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, lockUserWithdrawals, userID)
+	return err
+}
+
 const markCredited = `-- name: MarkCredited :one
 UPDATE pay_deposits SET status = 'credited' WHERE id = $1 AND status = 'crediting' RETURNING id, method, currency, external_id, user_id, target_id, amount, status, reason, created_at
 `
@@ -223,6 +389,81 @@ func (q *Queries) MarkCredited(ctx context.Context, id int64) (PayDeposit, error
 		&i.Status,
 		&i.Reason,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const markSettled = `-- name: MarkSettled :one
+UPDATE pay_withdrawals SET settled = true, updated_at = now() WHERE id = $1 AND NOT settled RETURNING id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at
+`
+
+func (q *Queries) MarkSettled(ctx context.Context, id int64) (PayWithdrawal, error) {
+	row := q.db.QueryRow(ctx, markSettled, id)
+	var i PayWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Method,
+		&i.Amount,
+		&i.Fee,
+		&i.Destination,
+		&i.IdemKey,
+		&i.Status,
+		&i.Settled,
+		&i.Ref,
+		&i.Reason,
+		&i.FirstApprover,
+		&i.DecidedBy,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const moveWithdrawal = `-- name: MoveWithdrawal :one
+UPDATE pay_withdrawals SET status = $1, settled = $2, reason = $3, updated_at = now()
+WHERE id = $4 AND status = $5
+RETURNING id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at
+`
+
+type MoveWithdrawalParams struct {
+	Status     string
+	Settled    bool
+	Reason     string
+	ID         int64
+	FromStatus string
+}
+
+// A status change from an expected status; no row: it already moved.
+func (q *Queries) MoveWithdrawal(ctx context.Context, arg MoveWithdrawalParams) (PayWithdrawal, error) {
+	row := q.db.QueryRow(ctx, moveWithdrawal,
+		arg.Status,
+		arg.Settled,
+		arg.Reason,
+		arg.ID,
+		arg.FromStatus,
+	)
+	var i PayWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Method,
+		&i.Amount,
+		&i.Fee,
+		&i.Destination,
+		&i.IdemKey,
+		&i.Status,
+		&i.Settled,
+		&i.Ref,
+		&i.Reason,
+		&i.FirstApprover,
+		&i.DecidedBy,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -282,4 +523,99 @@ type SetWithdrawLimitsParams struct {
 func (q *Queries) SetWithdrawLimits(ctx context.Context, arg SetWithdrawLimitsParams) error {
 	_, err := q.db.Exec(ctx, setWithdrawLimits, arg.Currency, arg.Method, arg.Withdraw)
 	return err
+}
+
+const unsettledWithdrawals = `-- name: UnsettledWithdrawals :many
+SELECT id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at FROM pay_withdrawals WHERE NOT settled AND status IN ('rejected', 'cancelled', 'failed') ORDER BY id LIMIT 100
+`
+
+func (q *Queries) UnsettledWithdrawals(ctx context.Context) ([]PayWithdrawal, error) {
+	rows, err := q.db.Query(ctx, unsettledWithdrawals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PayWithdrawal
+	for rows.Next() {
+		var i PayWithdrawal
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Currency,
+			&i.Method,
+			&i.Amount,
+			&i.Fee,
+			&i.Destination,
+			&i.IdemKey,
+			&i.Status,
+			&i.Settled,
+			&i.Ref,
+			&i.Reason,
+			&i.FirstApprover,
+			&i.DecidedBy,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const withdrawalByKey = `-- name: WithdrawalByKey :one
+SELECT id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at FROM pay_withdrawals WHERE user_id = $1 AND idem_key = $2
+`
+
+type WithdrawalByKeyParams struct {
+	UserID  int64
+	IdemKey string
+}
+
+func (q *Queries) WithdrawalByKey(ctx context.Context, arg WithdrawalByKeyParams) (PayWithdrawal, error) {
+	row := q.db.QueryRow(ctx, withdrawalByKey, arg.UserID, arg.IdemKey)
+	var i PayWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Method,
+		&i.Amount,
+		&i.Fee,
+		&i.Destination,
+		&i.IdemKey,
+		&i.Status,
+		&i.Settled,
+		&i.Ref,
+		&i.Reason,
+		&i.FirstApprover,
+		&i.DecidedBy,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const withdrawnSince = `-- name: WithdrawnSince :one
+SELECT COALESCE(sum(amount), 0)::bigint FROM pay_withdrawals
+WHERE user_id = $1 AND currency = $2 AND created_at > now() - interval '24 hours'
+  AND status NOT IN ('rejected', 'cancelled', 'failed')
+`
+
+type WithdrawnSinceParams struct {
+	UserID   int64
+	Currency string
+}
+
+// What counts against the daily cap: everything not refused, cancelled or failed.
+func (q *Queries) WithdrawnSince(ctx context.Context, arg WithdrawnSinceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, withdrawnSince, arg.UserID, arg.Currency)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }

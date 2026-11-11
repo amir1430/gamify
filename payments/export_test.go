@@ -21,3 +21,10 @@ func LeaveTarget(ctx context.Context, s *Service, method string, user int64, cur
 	_, err := s.q.InsertTarget(ctx, store.InsertTargetParams{Method: method, Currency: cur, UserID: user, Address: addr})
 	return err
 }
+
+// LeaveHolding inserts a withdrawal row as the RPC does before its ledger hold, and stops there.
+func LeaveHolding(ctx context.Context, s *Service, user int64, cur, method, key string, amount int64) (int64, error) {
+	r, err := s.q.InsertWithdrawal(ctx, store.InsertWithdrawalParams{UserID: user, Currency: cur, Method: method,
+		Amount: amount, Destination: "addr", IdemKey: key})
+	return r.ID, err
+}
