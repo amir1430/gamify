@@ -2,6 +2,7 @@ package payments_test
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 
@@ -196,6 +197,10 @@ func TestDailyCapConcurrent(t *testing.T) {
 	}
 	if w := mustWd(t, a, u, "c", 200); w.Status != "requested" { // exactly up to the cap
 		t.Fatalf("%+v", w)
+	}
+	// sum + amount would overflow int64 and pass the cap.
+	if _, e := wd(a, u, "d", math.MaxInt64-100); e == nil || e.Code != payments.ErrDailyCap.Code {
+		t.Fatalf("huge amount: %v", e)
 	}
 }
 

@@ -152,6 +152,9 @@ func notDecidable(ctx context.Context, q *store.Queries, id int64, from []string
 // ErrSameApprover, another admin makes it `approved`. The send starts with Advance (call it from
 // the After hook), else the loop picks it up.
 func (s *Service) Approve(ctx context.Context, tx pgx.Tx, id, adminID int64) (Withdrawal, error) {
+	if err := checkAdmin(adminID); err != nil {
+		return Withdrawal{}, err
+	}
 	q := s.q.WithTx(tx)
 	r, err := q.LockWithdrawal(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -182,6 +185,15 @@ func (s *Service) Approve(ctx context.Context, tx pgx.Tx, id, adminID int64) (Wi
 	return s.decide(ctx, q, id, adminID, "approved", []string{"requested"}, false, Result{})
 }
 
+// checkAdmin refuses a missing admin ID: 0 is "no first approver", so it would break the
+// two-approver rule.
+func checkAdmin(adminID int64) error {
+	if adminID <= 0 {
+		return fmt.Errorf("payments: admin ID %d: must be positive", adminID)
+	}
+	return nil
+}
+
 func (s *Service) decide(ctx context.Context, q *store.Queries, id, adminID int64, status string, from []string, leaseExpired bool, res Result) (Withdrawal, error) {
 	r, err := q.DecideWithdrawal(ctx, store.DecideWithdrawalParams{ID: id, AdminID: adminID, Status: status,
 		FromStatuses: from, LeaseExpired: leaseExpired, Ref: res.Ref, Reason: res.Reason})
@@ -197,6 +209,9 @@ func (s *Service) decide(ctx context.Context, q *store.Queries, id, adminID int6
 // released by Advance after the tx commits (call it from the After hook); the reconciler does it
 // otherwise.
 func (s *Service) Reject(ctx context.Context, tx pgx.Tx, id, adminID int64, reason string) (Withdrawal, error) {
+	if err := checkAdmin(adminID); err != nil {
+		return Withdrawal{}, err
+	}
 	return s.decide(ctx, s.q.WithTx(tx), id, adminID, "rejected", []string{"requested", "approved"}, false, Result{Reason: reason})
 }
 
@@ -206,6 +221,9 @@ func (s *Service) Reject(ctx context.Context, tx pgx.Tx, id, adminID int64, reas
 // retry after the lease. Result: StatePaid with the Ref, or StateFailed with a reason. Advance posts or releases after the
 // tx commits.
 func (s *Service) Resolve(ctx context.Context, tx pgx.Tx, id, adminID int64, r Result) (Withdrawal, error) {
+	if err := checkAdmin(adminID); err != nil {
+		return Withdrawal{}, err
+	}
 	var status string
 	switch {
 	case r.State == StatePaid && r.Ref != "":
@@ -218,10 +236,23 @@ func (s *Service) Resolve(ctx context.Context, tx pgx.Tx, id, adminID int64, r R
 	return s.decide(ctx, s.q.WithTx(tx), id, adminID, status, []string{"sending"}, true, r)
 }
 
-// Advance sends an approved or sending withdrawal, or settles a finished one: for an After hook,
-// once the admin's tx has committed. Errors are logged; the loop and reconciler retry.
+// Advance sends an approved or sending withdrawal, or settles a finished one, once the admin's tx
+// has committed. It waits for the Sender (up to Config.Lease); an After hook that answers a request
+// should use AdvanceAsync. Errors are logged; the loop and reconciler retry.
 func (s *Service) Advance(ctx context.Context, id int64) {
 	if err := s.advance(ctx, id); err != nil {
 		slog.ErrorContext(ctx, "payments: advance withdrawal", "withdrawal", id, "err", err)
 	}
 }
+
+// AdvanceAsync is Advance in the background, so a console request never waits for a Sender. Wait
+// waits for it.
+func (s *Service) AdvanceAsync(id int64) { s.goAdvance(context.Background(), id) }
+
+func (s *Service) goAdvance(ctx context.Context, id int64) {
+	s.sending.Go(func() { s.Advance(ctx, id) })
+}
+
+// Wait waits for the background sends (the withdraw RPC's and AdvanceAsync's): for brands' tests,
+// before asserting a withdrawal's status.
+func (s *Service) Wait() { s.sending.Wait() }

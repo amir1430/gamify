@@ -97,7 +97,7 @@ func TestApprove(t *testing.T) {
 	if st, body := e.act(e.op, id, "approve", map[string]any{}); st != 204 {
 		t.Fatalf("approve: %d %v", st, body)
 	}
-	e.a.ReconcileNow()
+	e.s.Wait() // the send runs in the background
 	if got := e.status(t, id); got != "paid" {
 		t.Fatalf("status %s", got)
 	}
@@ -125,6 +125,7 @@ func TestSecondApproval(t *testing.T) {
 	if st, body := e.act(e.cons.Login(admin.RoleOwner), id, "approve", map[string]any{}); st != 204 {
 		t.Fatalf("second: %d %v", st, body)
 	}
+	e.s.Wait()
 	if got := e.status(t, id); got != "paid" {
 		t.Fatalf("status %s", got)
 	}
@@ -139,7 +140,7 @@ func TestReject(t *testing.T) {
 	if st, body := e.act(e.op, id, "reject", map[string]any{"reason": "kyc"}); st != 204 {
 		t.Fatalf("reject: %d %v", st, body)
 	}
-	e.a.ReconcileNow()
+	e.s.Wait()
 	if b := e.a.Balance(e.u, "usdt"); e.status(t, id) != "rejected" || b != 2000 {
 		t.Fatalf("balance %d", b)
 	}
@@ -153,6 +154,7 @@ func stuck(t *testing.T, e env) int64 {
 	if st, body := e.act(e.op, id, "approve", map[string]any{}); st != 204 {
 		t.Fatalf("approve: %d %v", st, body)
 	}
+	e.s.Wait()
 	if got := e.status(t, id); got != "sending" {
 		t.Fatalf("status %s", got)
 	}
@@ -167,10 +169,11 @@ func TestMarkFailedRefunds(t *testing.T) {
 	}
 	e = setup(t)
 	id = stuck(t, e)
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond) // the 1 ms send lease ends
 	if st, body := e.act(e.cons.Login(admin.RoleOwner), id, "mark-failed", map[string]any{"reason": "bank said no"}); st != 204 {
 		t.Fatalf("mark-failed: %d %v", st, body)
 	}
+	e.s.Wait()
 	if got := e.status(t, id); got != "failed" {
 		t.Fatalf("status %s", got)
 	}
@@ -182,13 +185,16 @@ func TestMarkFailedRefunds(t *testing.T) {
 func TestMarkPaid(t *testing.T) {
 	e := setup(t)
 	id := stuck(t, e)
-	time.Sleep(10 * time.Millisecond)
-	if st, _ := e.act(e.cons.Login(admin.RoleOwner), id, "mark-paid", map[string]any{"reason": "r"}); st != 400 { // ref required
-		t.Fatalf("no ref: %d", st)
+	time.Sleep(10 * time.Millisecond)                         // the 1 ms send lease ends
+	for _, in := range []map[string]any{nil, {"ref": "  "}} { // ref required
+		if st, _ := e.act(e.cons.Login(admin.RoleOwner), id, "mark-paid", map[string]any{"reason": "r", "input": in}); st != 400 {
+			t.Fatalf("ref %v: %d", in, st)
+		}
 	}
 	if st, body := e.act(e.cons.Login(admin.RoleOwner), id, "mark-paid", map[string]any{"reason": "wire", "input": map[string]any{"ref": "tx9"}}); st != 204 {
 		t.Fatalf("mark-paid: %d %v", st, body)
 	}
+	e.s.Wait()
 	w, _ := e.s.Get(context.Background(), id)
 	if w.Status != "paid" || w.Ref != "tx9" || e.a.Balance(e.u, "usdt") != 1600 {
 		t.Fatalf("%+v", w)
@@ -257,6 +263,19 @@ func TestEditLimits(t *testing.T) {
 	}
 	if st, _ := owner.Do("POST", path(did), map[string]any{"input": map[string]any{"max": 7}}); st != 400 {
 		t.Fatalf("withdraw field on a deposit method: %d", st)
+	}
+	// The audit names the method, not just the row's place in the list.
+	var before, after map[string]any
+	if err := e.a.Pool.QueryRow(context.Background(), `SELECT before, after FROM admin_audit WHERE action = 'view.pay-methods.edit' ORDER BY id LIMIT 1`).Scan(&before, &after); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []map[string]any{before, after} {
+		if m["currency"] != "usdt" || m["method"] != "wire" || m["kind"] != "withdraw" || m["limits"] == nil {
+			t.Fatalf("audit before %v after %v", before, after)
+		}
+	}
+	if after["limits"].(map[string]any)["Fee"] != 5.0 {
+		t.Fatalf("after %v", after)
 	}
 }
 

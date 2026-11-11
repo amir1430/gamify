@@ -115,7 +115,7 @@ func (s *Service) withdrawRPC(ctx context.Context, user int64, req withdrawReq) 
 				if err != nil {
 					return err
 				}
-				if sum+req.Amount > l.DailyCap {
+				if req.Amount > l.DailyCap-sum { // sum + amount could overflow
 					return ErrDailyCap
 				}
 			}
@@ -135,12 +135,7 @@ func (s *Service) withdrawRPC(ctx context.Context, user int64, req withdrawReq) 
 		return Withdrawal{}, ErrInsufficient
 	}
 	if row.Status == "approved" { // send now, in the background; the loop and the reconciler retry
-		bg := context.WithoutCancel(ctx)
-		s.sending.Go(func() {
-			if err := s.advance(bg, row.ID); err != nil {
-				slog.WarnContext(bg, "payments: send withdrawal", "withdrawal", row.ID, "err", err)
-			}
-		})
+		s.goAdvance(context.WithoutCancel(ctx), row.ID)
 	}
 	return toWithdrawal(row), nil
 }

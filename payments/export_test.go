@@ -43,7 +43,7 @@ func DepositRPC(ctx context.Context, s *Service, user int64, c, method string, a
 }
 
 // WaitSends waits for the sends the withdraw RPC started in the background.
-func WaitSends(s *Service) { s.sending.Wait() }
+func WaitSends(s *Service) { s.Wait() }
 
 // Advance is advance, for tests that race it.
 func Advance(ctx context.Context, s *Service, id int64) error { return s.advance(ctx, id) }

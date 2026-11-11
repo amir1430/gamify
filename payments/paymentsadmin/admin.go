@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/amir1430/gamify/admin"
 	"github.com/amir1430/gamify/ledger"
@@ -116,7 +117,7 @@ func withdrawals(s *payments.Service) admin.View {
 			return map[string]any{"status": before.Status}, map[string]any{"status": after.Status}, nil
 		}
 	}
-	advance := func(ctx context.Context, c admin.Call, _, _ any) { s.Advance(ctx, c.ID) } // once the tx has committed
+	advance := func(_ context.Context, c admin.Call, _, _ any) { s.AdvanceAsync(c.ID) } // once the tx has committed
 	return admin.View{
 		Name: "pay-withdrawals", Title: "Withdrawals", Group: "Payments", Perm: admin.PermView, UserFilter: "user_id",
 		Summary: []string{"id", "user_id", "amount", "method", "status"},
@@ -205,7 +206,7 @@ func withdrawals(s *payments.Service) admin.View {
 				},
 				Run: act(func(ctx context.Context, tx pgx.Tx, c admin.Call) (payments.Withdrawal, error) {
 					ref, _ := c.Input["ref"].(string)
-					if ref == "" {
+					if ref = strings.TrimSpace(ref); ref == "" {
 						return payments.Withdrawal{}, admin.BadInput("ref is required")
 					}
 					return s.Resolve(ctx, tx, c.ID, c.Admin.ID, payments.Result{State: payments.StatePaid, Ref: ref, Reason: c.Reason})
@@ -262,14 +263,17 @@ func deposits(s *payments.Service) admin.View {
 	}
 }
 
+// minor ends each money field's help: inputs are not converted from decimals.
+const minor = "minor units of the method's currency"
+
 // limitFields are the edit inputs; the deposit side only has min and off.
 var limitFields = []admin.Field{
-	{Key: "min", Label: "Min", Type: admin.Money, Help: "0: no minimum"},
-	{Key: "max", Label: "Max", Type: admin.Money, Help: "withdrawals only; 0: no maximum", Group: "Withdrawals only"},
-	{Key: "daily_cap", Label: "Daily cap per user (24 h)", Type: admin.Money, Help: "0: no cap", Group: "Withdrawals only"},
-	{Key: "fee", Label: "Flat fee", Type: admin.Money, Group: "Withdrawals only"},
-	{Key: "auto_approve_up_to", Label: "Auto-approve up to", Type: admin.Money, Help: "0: every withdrawal needs an admin", Group: "Withdrawals only"},
-	{Key: "second_approval_above", Label: "Second approver above", Type: admin.Money, Help: "0: one admin is enough", Group: "Withdrawals only"},
+	{Key: "min", Label: "Min", Type: admin.Money, Help: "0: no minimum; " + minor},
+	{Key: "max", Label: "Max", Type: admin.Money, Help: "withdrawals only; 0: no maximum; " + minor, Group: "Withdrawals only"},
+	{Key: "daily_cap", Label: "Daily cap per user (24 h)", Type: admin.Money, Help: "0: no cap; the user's withdrawals in all the currency's methods count against this method's cap; " + minor, Group: "Withdrawals only"},
+	{Key: "fee", Label: "Flat fee", Type: admin.Money, Help: minor, Group: "Withdrawals only"},
+	{Key: "auto_approve_up_to", Label: "Auto-approve up to", Type: admin.Money, Help: "0: every withdrawal needs an admin; " + minor, Group: "Withdrawals only"},
+	{Key: "second_approval_above", Label: "Second approver above", Type: admin.Money, Help: "0: one admin is enough; " + minor, Group: "Withdrawals only"},
 	{Key: "off", Label: "Off", Type: admin.Bool, Help: "stops new requests"},
 }
 
@@ -328,6 +332,10 @@ func methods(s *payments.Service) admin.View {
 					return nil, nil, refusal(err)
 				}
 				off, _ := c.Input["off"].(bool)
+				// The audit names the method: a row ID is only its place in today's list.
+				audit := func(l any) map[string]any {
+					return map[string]any{"currency": m.Currency, "method": m.Name, "kind": m.Kind, "limits": l}
+				}
 				if m.Kind == "deposit" {
 					for _, k := range []string{"max", "daily_cap", "fee", "auto_approve_up_to", "second_approval_above"} {
 						if num(c, k) != 0 {
@@ -335,11 +343,11 @@ func methods(s *payments.Service) admin.View {
 						}
 					}
 					nd := payments.DepositLimits{Min: num(c, "min"), Off: off}
-					return d, nd, limitErr(s.SetLimits(ctx, tx, m.Currency, m.Name, &nd, nil))
+					return audit(d), audit(nd), limitErr(s.SetLimits(ctx, tx, m.Currency, m.Name, &nd, nil))
 				}
 				nw := payments.WithdrawLimits{Min: num(c, "min"), Max: num(c, "max"), DailyCap: num(c, "daily_cap"), Fee: num(c, "fee"),
 					AutoApproveUpTo: num(c, "auto_approve_up_to"), SecondApprovalAbove: num(c, "second_approval_above"), Off: off}
-				return w, nw, limitErr(s.SetLimits(ctx, tx, m.Currency, m.Name, nil, &nw))
+				return audit(w), audit(nw), limitErr(s.SetLimits(ctx, tx, m.Currency, m.Name, nil, &nw))
 			}}},
 	}
 }

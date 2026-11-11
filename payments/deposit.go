@@ -97,6 +97,9 @@ func (s *Service) depositRPC(ctx context.Context, user int64, req depositReq) (D
 // Received records an incoming payment and credits the user. Safe to call again for the same
 // ExternalID.
 func (h *Host) Received(ctx context.Context, in Incoming) error {
+	if h == nil || h.s == nil {
+		return errors.New("payments: Received on a Host payments did not make")
+	}
 	s := h.s
 	if in.ExternalID == "" || in.Amount <= 0 {
 		return errors.New("payments: Received needs an ExternalID and a positive Amount")

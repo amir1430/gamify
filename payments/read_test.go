@@ -363,3 +363,30 @@ func TestApproveUnknownMethodFailsClosed(t *testing.T) {
 		t.Fatalf("%+v", g)
 	}
 }
+
+// TestDecideNeedsAdmin: an admin ID of 0 would read as "no first approver".
+func TestDecideNeedsAdmin(t *testing.T) {
+	s, a := withdrawSetup(t, payments.WithdrawLimits{SecondApprovalAbove: 100})
+	u := a.User("ann")
+	a.Fund(u, "usdt", 1000)
+	w := mustWd(t, a, u, "k", 400)
+	ctx := context.Background()
+	for _, admin := range []int64{0, -1} {
+		if _, err := approve(t, s, a, w.ID, admin); err == nil {
+			t.Fatalf("approve by %d", admin)
+		}
+		if _, err := reject(t, s, a, w.ID, admin); err == nil {
+			t.Fatalf("reject by %d", admin)
+		}
+		err := inTx(t, a, func(tx pgx.Tx) error {
+			_, err := s.Resolve(ctx, tx, w.ID, admin, payments.Result{State: payments.StateFailed, Reason: "r"})
+			return err
+		})
+		if err == nil {
+			t.Fatalf("resolve by %d", admin)
+		}
+	}
+	if g := status(t, s, w.ID); g.Status != "requested" {
+		t.Fatalf("%+v", g)
+	}
+}

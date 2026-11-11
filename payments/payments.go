@@ -92,6 +92,7 @@ type Incoming struct {
 }
 
 // Host is what a Receiver's Run gets: the HTTP mux for webhooks and a way to report payments.
+// Only payments constructs it (one per method); a zero Host's Received returns an error.
 type Host struct {
 	Mux    *http.ServeMux
 	Method string

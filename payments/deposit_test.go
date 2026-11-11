@@ -285,3 +285,9 @@ func TestDepositAddressOfAnotherUser(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestZeroHost(t *testing.T) {
+	if err := (&payments.Host{}).Received(context.Background(), payments.Incoming{ExternalID: "x", Amount: 1}); err == nil {
+		t.Fatal("zero Host accepted a payment")
+	}
+}
