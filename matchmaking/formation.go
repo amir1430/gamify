@@ -378,21 +378,31 @@ func (s *Service) advance(ctx context.Context, id int64) error {
 	}
 }
 
-// step does one locked step; again is true when the match moved to a status with more to do. Its
-// transaction holds one of s.slots until it commits or rolls back.
-func (s *Service) step(ctx context.Context, id int64) (again bool, err error) {
+// beginSlot waits for one of s.slots and begins a pool transaction that holds it until it commits
+// or rolls back. Anything that may wait on a match row lock takes one, so waiters never hold more
+// than their share of the pool.
+func (s *Service) beginSlot(ctx context.Context) (slotTx, error) {
 	select {
 	case s.slots <- struct{}{}:
 	case <-ctx.Done():
-		return false, ctx.Err()
+		return slotTx{}, ctx.Err()
 	}
 	release := sync.OnceFunc(func() { <-s.slots })
 	ptx, err := s.a.Pool.Begin(ctx)
 	if err != nil {
 		release()
+		return slotTx{}, err
+	}
+	return slotTx{ptx, release}, nil
+}
+
+// step does one locked step; again is true when the match moved to a status with more to do. Its
+// transaction holds one of s.slots until it commits or rolls back.
+func (s *Service) step(ctx context.Context, id int64) (again bool, err error) {
+	tx, err := s.beginSlot(ctx)
+	if err != nil {
 		return false, err
 	}
-	tx := slotTx{ptx, release}
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	row, err := q.LockMatch(ctx, id)

@@ -24,10 +24,23 @@ import (
 // payouts. An OnFinish error is returned too; the match stays settled and the reconciler calls
 // OnFinish again until it returns nil.
 func (s *Service) Finish(ctx context.Context, id int64, r Result) error {
-	if err := pgx.BeginFunc(ctx, s.a.Pool, func(tx pgx.Tx) error { return s.Report(ctx, tx, id, r) }); err != nil {
+	if err := s.inSlot(ctx, func(tx pgx.Tx) error { return s.Report(ctx, tx, id, r) }); err != nil {
 		return err
 	}
 	return s.advance(ctx, id)
+}
+
+// inSlot runs f in a transaction that holds a slot, committing if f succeeds.
+func (s *Service) inSlot(ctx context.Context, f func(pgx.Tx) error) error {
+	tx, err := s.beginSlot(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := f(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // Report is Finish without the settlement, in the caller's transaction (an admin's "report
@@ -85,7 +98,7 @@ func (s *Service) Report(ctx context.Context, tx pgx.Tx, id int64, r Result) err
 // be in the ledger). When the refund fails Cancel returns
 // the error, the match stays cancelling and the reconciler retries.
 func (s *Service) Cancel(ctx context.Context, id int64, reason string) error {
-	if err := pgx.BeginFunc(ctx, s.a.Pool, func(tx pgx.Tx) error { return s.MarkCancel(ctx, tx, id, reason) }); err != nil {
+	if err := s.inSlot(ctx, func(tx pgx.Tx) error { return s.MarkCancel(ctx, tx, id, reason) }); err != nil {
 		return err
 	}
 	return s.advance(ctx, id)

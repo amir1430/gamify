@@ -51,13 +51,21 @@ type App struct {
 	Transport *Transport
 }
 
-type options struct{ currencies []ledger.CurrencyConfig }
+type options struct {
+	currencies []ledger.CurrencyConfig
+	maxConns   int32
+}
 
 type Option func(*options)
 
 // WithCurrencies replaces the default currencies.
 func WithCurrencies(c ...ledger.CurrencyConfig) Option {
 	return func(o *options) { o.currencies = c }
+}
+
+// WithMaxConns sets the Postgres pool's MaxConns (the DSN's or pgx's default otherwise).
+func WithMaxConns(n int32) Option {
+	return func(o *options) { o.maxConns = n }
 }
 
 // New starts an App on a fresh database. Everything is released when the test ends.
@@ -68,7 +76,7 @@ func New(t testing.TB, opts ...Option) *App {
 		f(&o)
 	}
 	ctx := context.Background()
-	pool := freshDatabase(t)
+	pool := freshDatabase(t, o.maxConns)
 	if err := db.Migrate(ctx, pool, postgres.Migrations, "goose_ledger"); err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +244,7 @@ func (provider) Verify(_ context.Context, c json.RawMessage, _ time.Time) (auth.
 }
 
 // freshDatabase creates an empty database next to TEST_DATABASE_URL's and drops it at the end.
-func freshDatabase(t testing.TB) *pgxpool.Pool {
+func freshDatabase(t testing.TB, maxConns int32) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -259,6 +267,9 @@ func freshDatabase(t testing.TB) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	cfg.ConnConfig.Database = name
+	if maxConns > 0 {
+		cfg.MaxConns = maxConns
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)

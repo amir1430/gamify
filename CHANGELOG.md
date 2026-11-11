@@ -5,6 +5,9 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+### Fixed
+- `matchmaking`: `Finish` and `Cancel` take a slot like the matcher's steps do, so many duplicate calls for one match waiting on its row lock can no longer exhaust the Postgres pool.
+
 ## [1.1.13] - 2026-11-04
 
 ### Added
