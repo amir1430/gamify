@@ -35,7 +35,7 @@ func SystemAccounts() []string {
 // Transfer kinds, as Entry.Kind and HistoryFilter.Kind name them.
 var transferKinds = map[uint16]string{codeCharge: "charge", codePayout: "payout", codeTopUp: "top_up",
 	codeDeposit: "deposit", codeWelcome: "welcome", codeSwap: "swap", codeReward: "reward",
-	codeAdjustment: "adjustment", codeSpend: "spend", codeTransfer: "transfer", codeFloor: "floor"}
+	codeAdjustment: "adjustment", codeSpend: "spend", codeTransfer: "transfer", codeFloor: "floor", codeWithdraw: "withdraw"}
 
 // TransferKinds names every kind of transfer, in a stable order.
 func TransferKinds() []string {

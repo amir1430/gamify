@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -192,14 +193,14 @@ func adminConfig(getenv func(string) string) (admin.Config, bool, error) {
 	return cfg, true, nil
 }
 
-// parseCurrencies reads "code:ledger:minamount[:welcome[:decimals[:transferable]]],…", the first being
-// the default; transferable is "t" or omitted.
+// parseCurrencies reads "code:ledger:minamount[:welcome[:decimals[:flags]]],…", the first being
+// the default; flags are "t" (transferable) and "w" (withdrawable), in any order, or omitted.
 func parseCurrencies(s string) ([]ledger.CurrencyConfig, error) {
 	var out []ledger.CurrencyConfig
 	for _, part := range strings.Split(s, ",") {
 		f := strings.Split(strings.TrimSpace(part), ":")
 		if len(f) < 3 || len(f) > 6 {
-			return nil, fmt.Errorf("CURRENCIES: %q: want code:ledger:minamount[:welcome[:decimals[:transferable]]]", part)
+			return nil, fmt.Errorf("CURRENCIES: %q: want code:ledger:minamount[:welcome[:decimals[:flags]]]", part)
 		}
 		f = append(f, []string{"", "", "", "0", "0", ""}[len(f):]...)
 		lg, err1 := strconv.ParseUint(f[1], 10, 32)
@@ -209,14 +210,14 @@ func parseCurrencies(s string) ([]ledger.CurrencyConfig, error) {
 		if err := errors.Join(err1, err2, err3, err4); err != nil {
 			return nil, fmt.Errorf("CURRENCIES: %q: %w", part, err)
 		}
-		if f[5] != "" && f[5] != "t" {
-			return nil, fmt.Errorf("CURRENCIES: %q: transferable is t or omitted", part)
+		if !slices.Contains([]string{"", "t", "w", "tw", "wt"}, f[5]) {
+			return nil, fmt.Errorf("CURRENCIES: %q: transferable/withdrawable flags: t, w", part)
 		}
 		if decimals > 18 {
 			return nil, fmt.Errorf("CURRENCIES: %q: decimals %d > 18", part, decimals)
 		}
 		out = append(out, ledger.CurrencyConfig{Code: ledger.Currency(f[0]), Ledger: uint32(lg), MinAmount: minAmount,
-			Welcome: welcome, Decimals: uint8(decimals), Transferable: f[5] == "t"})
+			Welcome: welcome, Decimals: uint8(decimals), Transferable: strings.Contains(f[5], "t"), Withdrawable: strings.Contains(f[5], "w")})
 	}
 	return out, nil
 }

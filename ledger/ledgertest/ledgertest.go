@@ -15,11 +15,12 @@ import (
 	"github.com/amir1430/gamify/ledger"
 )
 
-// Currencies are the suite's: usd (ledger 1, not transferable) and tickets (ledger 2, 1,000
-// welcome tickets, transferable between users).
+// Currencies are the suite's: usd (ledger 1, not transferable), tickets (ledger 2, 1,000
+// welcome tickets, transferable between users) and usdt (ledger 3, 100 welcome, withdrawable).
 var (
 	USD     = ledger.CurrencyConfig{Code: "usd", Ledger: 1, MinAmount: 1}
 	Tickets = ledger.CurrencyConfig{Code: "tickets", Ledger: 2, MinAmount: 10, Welcome: 1000, Transferable: true}
+	USDT    = ledger.CurrencyConfig{Code: "usdt", Ledger: 3, MinAmount: 1, Welcome: 100, Withdrawable: true}
 )
 
 const (
@@ -360,7 +361,7 @@ type fixture struct {
 }
 
 func newFixture(t *testing.T, d ledger.Driver) fixture {
-	l, err := ledger.New(d, USD, Tickets)
+	l, err := ledger.New(d, USD, Tickets, USDT)
 	must(t, err)
 	must(t, l.Init(context.Background()))
 	must(t, l.Init(context.Background())) // safe to repeat
@@ -624,7 +625,7 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 		sb, err := f.l.SystemBalances(ctx, "usd")
 		must(t, err)
 		want(t, "adjust account", sb["adjust"]-sb0["adjust"], -300)
-		for _, k := range []string{"house", "pot", "exchange", "inflow", "faucet", "grant", "floor", "rewards", "adjust", "sales"} {
+		for _, k := range []string{"house", "pot", "exchange", "inflow", "faucet", "grant", "floor", "rewards", "adjust", "sales", "outflow"} {
 			if _, ok := sb[k]; !ok {
 				t.Fatalf("system balances: no %q in %v", k, sb)
 			}
@@ -704,6 +705,75 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 		want(t, "receiver after refusals", f.bal(b, "tickets"), 2500)
 		if err := f.l.Transfer(ctx, gift, "eur", int64(rid()), a, b, 1); err == nil {
 			t.Fatal("unknown currency accepted")
+		}
+	})
+
+	t.Run("withdraw", func(t *testing.T) {
+		u := f.user()
+		if err := f.l.Withdraw(ctx, "usd", int64(rid()), u, 10); !errors.Is(err, ledger.ErrNotWithdrawable) {
+			t.Fatalf("usd: %v", err)
+		}
+		if !f.l.Withdrawable("usdt") || f.l.Withdrawable("usd") || f.l.Withdrawable("eur") {
+			t.Fatal("Withdrawable")
+		}
+		must(t, f.l.Deposit(ctx, "usdt", int64(rid()), u, 1000))
+		want(t, "deposited", f.bal(u, "usdt"), 1100)
+		for _, amount := range []int64{0, -1} {
+			if err := f.l.Withdraw(ctx, "usdt", int64(rid()), u, amount); err == nil {
+				t.Fatalf("withdraw %d accepted", amount)
+			}
+		}
+		w1, w2, w3 := int64(rid()), int64(rid()), int64(rid())
+		for range 2 { // retry: held once
+			must(t, f.l.Withdraw(ctx, "usdt", w1, u, 400))
+		}
+		want(t, "held", f.bal(u, "usdt"), 700)
+		sb0, err := f.l.SystemBalances(ctx, "usdt")
+		must(t, err)
+		for range 2 { // retry: posted once
+			must(t, f.l.PostWithdraw(ctx, "usdt", w1, u, 400, 10))
+		}
+		want(t, "posted", f.bal(u, "usdt"), 700)
+		sb, err := f.l.SystemBalances(ctx, "usdt")
+		must(t, err)
+		want(t, "outflow", sb["outflow"]-sb0["outflow"], 390)
+		want(t, "house", sb["house"]-sb0["house"], 10)
+		if err := f.l.VoidWithdraw(ctx, "usdt", w1, u, 400); !errors.Is(err, ledger.ErrWithdrawSettled) {
+			t.Fatalf("void after post: %v", err)
+		}
+
+		must(t, f.l.Withdraw(ctx, "usdt", w2, u, 300))
+		want(t, "held again", f.bal(u, "usdt"), 400)
+		for range 2 { // retry: released once
+			must(t, f.l.VoidWithdraw(ctx, "usdt", w2, u, 300))
+		}
+		want(t, "released", f.bal(u, "usdt"), 700)
+		if err := f.l.PostWithdraw(ctx, "usdt", w2, u, 300, 0); !errors.Is(err, ledger.ErrWithdrawSettled) {
+			t.Fatalf("post after void: %v", err)
+		}
+
+		// Only 600 is above the play-only welcome 100.
+		if err := f.l.Withdraw(ctx, "usdt", w3, u, 601); !errors.Is(err, ledger.ErrInsufficientFunds) {
+			t.Fatalf("into the welcome grant: %v", err)
+		}
+		for range 2 { // never held: nothing to release
+			must(t, f.l.VoidWithdraw(ctx, "usdt", w3, u, 601))
+		}
+		if err := f.l.Withdraw(ctx, "usdt", int64(rid()), f.user(), 1); !errors.Is(err, ledger.ErrInsufficientFunds) {
+			t.Fatalf("welcome only: %v", err)
+		}
+		want(t, "after refusals", f.bal(u, "usdt"), 700)
+
+		if f.l.HasHistory() {
+			h, err := f.l.History(ctx, "usdt", ledger.Party{User: u}, ledger.HistoryFilter{Limit: 100, Kind: "withdraw"})
+			must(t, err)
+			stages := map[string]int{}
+			for _, e := range h {
+				stages[e.Stage]++
+			}
+			want(t, "held entries", stages["held"], 2)
+			want(t, "settled entries", stages["settled"], 1)
+			want(t, "released entries", stages["released"], 1)
 		}
 	})
 

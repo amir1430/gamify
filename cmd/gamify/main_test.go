@@ -28,7 +28,17 @@ func TestParseCurrencies(t *testing.T) {
 	if err != nil || !gems[0].Transferable || gems[1].Transferable {
 		t.Fatalf("transferable: %+v, %v", gems, err)
 	}
-	for _, bad := range []string{"usd:1", "usd:1:1:0:2:9", "gems:3:1:0:0:x", "gems:3:1:0:0:t:1", "usd:1:1:0:19", "usd:1:1:0:256", "usd:1:1:0:-1", "usd:x:1"} {
+	usdt, err := parseCurrencies("usdt:3:1:0:6:w")
+	if err != nil || !usdt[0].Withdrawable || usdt[0].Transferable {
+		t.Fatalf("withdrawable: %+v, %v", usdt, err)
+	}
+	for _, flags := range []string{"tw", "wt"} {
+		both, err := parseCurrencies("usdt:3:1:0:6:" + flags)
+		if err != nil || !both[0].Withdrawable || !both[0].Transferable {
+			t.Fatalf("%s: %+v, %v", flags, both, err)
+		}
+	}
+	for _, bad := range []string{"usd:1", "usd:1:1:0:2:9", "gems:3:1:0:0:x", "usdt:3:1:0:6:ww", "usdt:3:1:0:6:wx", "gems:3:1:0:0:t:1", "usd:1:1:0:19", "usd:1:1:0:256", "usd:1:1:0:-1", "usd:x:1"} {
 		if _, err := parseCurrencies(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}

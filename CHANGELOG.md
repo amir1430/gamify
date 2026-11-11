@@ -5,6 +5,21 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+### Added
+- `ledger`: withdrawals. `CurrencyConfig.Withdrawable` (off by default) and `Ledger.Withdrawable`;
+  `Withdraw` holds the amount (pending user -> new `outflow` system account; the welcome grant
+  stays play-only, `ErrInsufficientFunds`), `PostWithdraw` settles it with an optional fee to
+  `house`, `VoidWithdraw` releases it. Keyed by the withdrawal ID, so each is safe to repeat.
+  `ErrNotWithdrawable` in a currency without the flag, `ErrWithdrawSettled` for a post after a void
+  or a void after a post. New system account `outflow` and transfer kind `withdraw`.
+- `cmd/gamify`: the sixth `CURRENCIES` field takes flags `t` (transferable) and `w`
+  (withdrawable), in any order: `usdt:3:1:0:6:w`, `gems:3:1:0:0:tw`.
+
+### Upgrade notes
+- `ledger.Init` creates the `outflow` account for every existing currency on the next start
+  (idempotent, nothing to run). `SystemAccounts()` and `TransferKinds()` gain `outflow` and
+  `withdraw`, so the treasury page lists them. Existing currencies stay non-withdrawable.
+
 ### Fixed
 - `matchmaking`: `Finish` and `Cancel` take a slot like the matcher's steps do, so many duplicate calls for one match waiting on its row lock can no longer exhaust the Postgres pool.
 
