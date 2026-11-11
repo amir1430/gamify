@@ -3,10 +3,12 @@
 package payments
 
 import (
+	"cmp"
 	"context"
 	"embed"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -204,4 +206,28 @@ func (s *Service) Sender(c ledger.Currency, snd Sender, l WithdrawLimits) error 
 	s.senders[k] = snd
 	s.withdraw[k] = l
 	return nil
+}
+
+// MethodInfo is one registered method of one kind ("deposit" or "withdraw").
+type MethodInfo struct {
+	Currency ledger.Currency
+	Name     string
+	Kind     string
+}
+
+// Methods lists every registered Receiver and Sender, ordered by currency, name, then kind.
+func (s *Service) Methods() []MethodInfo {
+	s.mu.Lock()
+	var out []MethodInfo
+	for k := range s.receivers {
+		out = append(out, MethodInfo{k.c, k.method, "deposit"})
+	}
+	for k := range s.senders {
+		out = append(out, MethodInfo{k.c, k.method, "withdraw"})
+	}
+	s.mu.Unlock()
+	slices.SortFunc(out, func(a, b MethodInfo) int {
+		return cmp.Or(cmp.Compare(a.Currency, b.Currency), cmp.Compare(a.Name, b.Name), cmp.Compare(a.Kind, b.Kind))
+	})
+	return out
 }

@@ -74,11 +74,14 @@ const (
 	PermMatchReport  Perm = "matchmaking.report" // matchmakingadmin: report a match's result
 	PermPartyDisband Perm = "party.disband"      // partyadmin: disband a party
 	PermRestrict     Perm = "restrict.set"       // restrictadmin: suspend or restrict a player
+	PermPayApprove   Perm = "payments.approve"   // paymentsadmin: approve or reject a withdrawal
+	PermPayResolve   Perm = "payments.resolve"   // paymentsadmin: settle a stuck withdrawal by hand
+	PermPayLimits    Perm = "payments.limits"    // paymentsadmin: edit a method's limits
 )
 
 var rolePerms = map[Role][]Perm{
-	RoleOwner:    {PermView, PermIdentity, PermLimits, PermAdjust, PermApprove, PermAdmins, PermMatchCancel, PermMatchReport, PermPartyDisband, PermRestrict},
-	RoleOperator: {PermView, PermIdentity, PermLimits, PermAdjust, PermMatchCancel, PermMatchReport, PermPartyDisband, PermRestrict},
+	RoleOwner:    {PermView, PermIdentity, PermLimits, PermAdjust, PermApprove, PermAdmins, PermMatchCancel, PermMatchReport, PermPartyDisband, PermRestrict, PermPayApprove, PermPayResolve, PermPayLimits},
+	RoleOperator: {PermView, PermIdentity, PermLimits, PermAdjust, PermMatchCancel, PermMatchReport, PermPartyDisband, PermRestrict, PermPayApprove},
 	RoleSupport:  {PermView, PermIdentity, PermRestrict},
 	RoleViewer:   {PermView},
 }
