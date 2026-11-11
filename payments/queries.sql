@@ -78,4 +78,24 @@ UPDATE pay_withdrawals SET settled = true, updated_at = now() WHERE id = $1 AND 
 SELECT * FROM pay_withdrawals WHERE status = 'holding' ORDER BY id LIMIT 100;
 
 -- name: UnsettledWithdrawals :many
-SELECT * FROM pay_withdrawals WHERE NOT settled AND status IN ('rejected', 'cancelled', 'failed') ORDER BY id LIMIT 100;
+SELECT * FROM pay_withdrawals WHERE NOT settled AND status IN ('paid', 'rejected', 'cancelled', 'failed') ORDER BY id LIMIT 100;
+
+-- name: DueWithdrawals :many
+-- Rows to send (approved) or to ask about (sending, its lease expired).
+SELECT id FROM pay_withdrawals
+WHERE NOT settled AND status IN ('approved', 'sending') AND lease_until < now()
+ORDER BY id LIMIT 100;
+
+-- name: ClaimWithdrawal :one
+-- Takes the row's lease, so one worker at a time calls its Sender; no row: another holds it, or it moved.
+UPDATE pay_withdrawals
+SET status = 'sending', lease_until = now() + sqlc.arg(lease_us)::bigint * interval '1 microsecond', updated_at = now()
+WHERE id = sqlc.arg(id) AND status = sqlc.arg(from_status) AND lease_until < now()
+RETURNING *;
+
+-- name: SendResult :one
+-- Records the Sender's answer on a sending row (status stays 'sending' for a pending one); an empty ref keeps the old one.
+UPDATE pay_withdrawals
+SET status = sqlc.arg(status), ref = COALESCE(NULLIF(sqlc.arg(ref)::text, ''), ref), reason = sqlc.arg(reason), updated_at = now()
+WHERE id = sqlc.arg(id) AND status = 'sending'
+RETURNING *;

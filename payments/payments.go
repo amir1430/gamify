@@ -101,7 +101,9 @@ type WithdrawLimits struct {
 	Off                                                           bool
 }
 
-// Config: zero fields take the defaults (Tick 2 s, Lease 1 min).
+// Config: zero fields take the defaults (Tick 2 s, Lease 1 min). Tick is how often due withdrawals
+// are sent or asked about. Lease is how long one worker owns a withdrawal's Send or Status call (it
+// is cancelled then) and so how often a pending payout is asked about again.
 type Config struct{ Tick, Lease time.Duration }
 
 type key struct {
@@ -122,6 +124,9 @@ type Service struct {
 }
 
 func Register(ctx context.Context, a *app.App, cfg Config) (*Service, error) {
+	if cfg.Tick < 0 || cfg.Lease < 0 {
+		return nil, fmt.Errorf("payments: negative Tick %v or Lease %v", cfg.Tick, cfg.Lease)
+	}
 	if err := a.Migrate(ctx, Migrations, "goose_payments"); err != nil {
 		return nil, err
 	}
@@ -138,6 +143,7 @@ func Register(ctx context.Context, a *app.App, cfg Config) (*Service, error) {
 	a.Router.Handle("payments.withdraw", realtime.JSON(s.withdrawRPC))
 	a.Router.Handle("payments.cancel", realtime.JSON(s.cancelRPC))
 	a.Reconcile(s.Reconcile)
+	a.Loop(cfg.Tick, s.sendDue)
 	return s, nil
 }
 

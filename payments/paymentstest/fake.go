@@ -71,10 +71,11 @@ func (r *Receiver) Pay(ctx context.Context, in payments.Incoming) error {
 // Sender is scripted: each new payout takes the next of Next (default paid), or fails with Err.
 // Sent lists the distinct payouts; sending an ID again returns its first answer.
 type Sender struct {
-	Method   string
-	Next     []Result
-	Err      error
-	Statuses map[int64]Result // what Status answers; unset: the recorded result, else unknown
+	Method    string
+	Next      []Result
+	Err       error            // what Send fails with (nothing is recorded)
+	StatusErr error            // what Status fails with
+	Statuses  map[int64]Result // what Status answers; unset: the recorded result, else unknown
 
 	mu      sync.Mutex
 	Sent    []payments.Payout
@@ -117,6 +118,9 @@ type Result = payments.Result
 func (s *Sender) Status(_ context.Context, id int64) (payments.Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.StatusErr != nil {
+		return payments.Result{}, s.StatusErr
+	}
 	if r, ok := s.Statuses[id]; ok {
 		return r, nil
 	}

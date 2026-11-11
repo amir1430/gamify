@@ -28,3 +28,6 @@ func LeaveHolding(ctx context.Context, s *Service, user int64, cur, method, key 
 		Amount: amount, Destination: "addr", IdemKey: key})
 	return r.ID, err
 }
+
+// Advance is advance, for tests that race it.
+func Advance(ctx context.Context, s *Service, id int64) error { return s.advance(ctx, id) }

@@ -45,6 +45,45 @@ func (q *Queries) CancelWithdrawal(ctx context.Context, arg CancelWithdrawalPara
 	return i, err
 }
 
+const claimWithdrawal = `-- name: ClaimWithdrawal :one
+UPDATE pay_withdrawals
+SET status = 'sending', lease_until = now() + $1::bigint * interval '1 microsecond', updated_at = now()
+WHERE id = $2 AND status = $3 AND lease_until < now()
+RETURNING id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at
+`
+
+type ClaimWithdrawalParams struct {
+	LeaseUs    int64
+	ID         int64
+	FromStatus string
+}
+
+// Takes the row's lease, so one worker at a time calls its Sender; no row: another holds it, or it moved.
+func (q *Queries) ClaimWithdrawal(ctx context.Context, arg ClaimWithdrawalParams) (PayWithdrawal, error) {
+	row := q.db.QueryRow(ctx, claimWithdrawal, arg.LeaseUs, arg.ID, arg.FromStatus)
+	var i PayWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Method,
+		&i.Amount,
+		&i.Fee,
+		&i.Destination,
+		&i.IdemKey,
+		&i.Status,
+		&i.Settled,
+		&i.Ref,
+		&i.Reason,
+		&i.FirstApprover,
+		&i.DecidedBy,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const creditingDeposits = `-- name: CreditingDeposits :many
 SELECT id, method, currency, external_id, user_id, target_id, amount, status, reason, created_at FROM pay_deposits WHERE status = 'crediting' ORDER BY id LIMIT 100
 `
@@ -73,6 +112,33 @@ func (q *Queries) CreditingDeposits(ctx context.Context) ([]PayDeposit, error) {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dueWithdrawals = `-- name: DueWithdrawals :many
+SELECT id FROM pay_withdrawals
+WHERE NOT settled AND status IN ('approved', 'sending') AND lease_until < now()
+ORDER BY id LIMIT 100
+`
+
+// Rows to send (approved) or to ask about (sending, its lease expired).
+func (q *Queries) DueWithdrawals(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.Query(ctx, dueWithdrawals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -493,6 +559,51 @@ func (q *Queries) OpenTarget(ctx context.Context, arg OpenTargetParams) (PayTarg
 	return i, err
 }
 
+const sendResult = `-- name: SendResult :one
+UPDATE pay_withdrawals
+SET status = $1, ref = COALESCE(NULLIF($2::text, ''), ref), reason = $3, updated_at = now()
+WHERE id = $4 AND status = 'sending'
+RETURNING id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at
+`
+
+type SendResultParams struct {
+	Status string
+	Ref    string
+	Reason string
+	ID     int64
+}
+
+// Records the Sender's answer on a sending row (status stays 'sending' for a pending one); an empty ref keeps the old one.
+func (q *Queries) SendResult(ctx context.Context, arg SendResultParams) (PayWithdrawal, error) {
+	row := q.db.QueryRow(ctx, sendResult,
+		arg.Status,
+		arg.Ref,
+		arg.Reason,
+		arg.ID,
+	)
+	var i PayWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Method,
+		&i.Amount,
+		&i.Fee,
+		&i.Destination,
+		&i.IdemKey,
+		&i.Status,
+		&i.Settled,
+		&i.Ref,
+		&i.Reason,
+		&i.FirstApprover,
+		&i.DecidedBy,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setDepositLimits = `-- name: SetDepositLimits :exec
 INSERT INTO pay_limits (currency, method, deposit) VALUES ($1, $2, $3)
 ON CONFLICT (currency, method) DO UPDATE SET deposit = excluded.deposit, updated_at = now()
@@ -526,7 +637,7 @@ func (q *Queries) SetWithdrawLimits(ctx context.Context, arg SetWithdrawLimitsPa
 }
 
 const unsettledWithdrawals = `-- name: UnsettledWithdrawals :many
-SELECT id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at FROM pay_withdrawals WHERE NOT settled AND status IN ('rejected', 'cancelled', 'failed') ORDER BY id LIMIT 100
+SELECT id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at FROM pay_withdrawals WHERE NOT settled AND status IN ('paid', 'rejected', 'cancelled', 'failed') ORDER BY id LIMIT 100
 `
 
 func (q *Queries) UnsettledWithdrawals(ctx context.Context) ([]PayWithdrawal, error) {

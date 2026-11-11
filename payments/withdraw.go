@@ -133,6 +133,11 @@ func (s *Service) withdrawRPC(ctx context.Context, user int64, req withdrawReq) 
 	if holding && row.Status == "failed" {
 		return Withdrawal{}, ErrInsufficient
 	}
+	if row.Status == "approved" { // send at once; the loop and the reconciler retry
+		if err := s.advance(context.WithoutCancel(ctx), row.ID); err != nil {
+			slog.WarnContext(ctx, "payments: send withdrawal", "withdrawal", row.ID, "err", err)
+		}
+	}
 	return toWithdrawal(row), nil
 }
 
@@ -196,8 +201,8 @@ func (s *Service) cancelRPC(ctx context.Context, user int64, req cancelReq) (Wit
 	return toWithdrawal(r), nil
 }
 
-// settle moves the money of a finished withdrawal once: a rejected, cancelled or failed one is
-// released. Rows reach those statuses only after their hold was confirmed (a refused hold is
+// settle moves the money of a finished withdrawal once: a paid one is posted (the fee to the
+// house), a rejected, cancelled or failed one is released. Rows reach those statuses only after their hold was confirmed (a refused hold is
 // failed and already settled), so a void never runs before its hold. Safe to repeat; only the call
 // that marks it settled pushes.
 func (s *Service) settle(ctx context.Context, id int64) error {
@@ -207,6 +212,8 @@ func (s *Service) settle(ctx context.Context, id int64) error {
 	}
 	c := ledger.Currency(r.Currency)
 	switch r.Status {
+	case "paid":
+		err = s.a.Ledger.PostWithdraw(ctx, c, r.ID, r.UserID, r.Amount, r.Fee)
 	case "rejected", "cancelled", "failed":
 		err = s.a.Ledger.VoidWithdraw(ctx, c, r.ID, r.UserID, r.Amount)
 	default:
@@ -233,8 +240,8 @@ func (s *Service) pushWithdrawal(ctx context.Context, r store.PayWithdrawal) {
 	}
 }
 
-// reconcileWithdrawals holds `holding` rows a crash left before their hold, and settles finished
-// ones whose ledger step never ran.
+// reconcileWithdrawals holds `holding` rows a crash left before their hold, sends or asks about
+// due ones, and settles finished ones whose ledger step never ran.
 func (s *Service) reconcileWithdrawals(ctx context.Context) {
 	holding, err := s.q.HoldingWithdrawals(ctx)
 	if err != nil {
@@ -245,6 +252,7 @@ func (s *Service) reconcileWithdrawals(ctx context.Context) {
 			slog.ErrorContext(ctx, "payments: hold withdrawal", "withdrawal", r.ID, "err", err)
 		}
 	}
+	s.sendDue(ctx)
 	unsettled, err := s.q.UnsettledWithdrawals(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "payments: list unsettled withdrawals", "err", err)
