@@ -5,6 +5,9 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+### Fixed
+- `admin`: wrong TOTP enrolment codes are audited (`login.fail`, reason `enrol_code`) and limited: the 5th since the login (`maxLoginFails`) ends the enrolment (429 `enrol_ended`), deleting the `mfa=false` session and its pending secret, so the next try needs the password again. Before, `POST /api/totp/enrol` took unlimited guesses for the session's whole life, unaudited, so a session token leaked before enrolment could brute-force the six digits into a full session.
+
 ## [1.2.0] - 2026-11-11
 
 ### Added
