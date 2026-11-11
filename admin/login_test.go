@@ -535,3 +535,44 @@ func TestLoginBusy(t *testing.T) {
 		t.Fatalf("cap %d", cap(adm.logins))
 	}
 }
+
+// Wrong enrolment codes are audited, and the maxLoginFails-th ends the enrolment: a token leaked
+// before enrolment can't guess the code through one session.
+func TestEnrolGuessesEnd(t *testing.T) {
+	a, _, srv := newAdmin(t)
+	pw := addUser(t, a, "new@brand.example", RoleOperator)
+	c := client(t, srv)
+	st, body := call(t, c, srv, "POST", "/api/login", map[string]string{"email": "new@brand.example", "password": pw})
+	if st != 200 || body["enrol"] != true {
+		t.Fatalf("login: %d %v", st, body)
+	}
+	e := enrolFrom(t, body["otpauth_uri"].(string))
+	for range maxLoginFails - 1 {
+		st, body = call(t, c, srv, "POST", "/api/totp/enrol", map[string]string{"code": "000000x"})
+		wantErr(t, "wrong code", st, body, 400, "invalid_code")
+	}
+	st, body = call(t, c, srv, "POST", "/api/totp/enrol", map[string]string{"code": "000000x"})
+	wantErr(t, "last wrong code", st, body, 429, "enrol_ended")
+	var id int64
+	if err := a.Pool.QueryRow(context.Background(), `SELECT id FROM admin_users WHERE email = 'new@brand.example'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if n := auditCount(t, a, "login.fail", "admin:"+strconv.FormatInt(id, 10)); n != maxLoginFails {
+		t.Fatalf("%d wrong codes audited, want %d", n, maxLoginFails)
+	}
+	// The session and its secret are gone: even the right code no longer enrols through it.
+	if st, _ := call(t, c, srv, "POST", "/api/totp/enrol", map[string]string{"code": e.nextCode(t)}); st != 401 {
+		t.Fatalf("enrol after the end: %d, want 401", st)
+	}
+	// A new login starts a new enrolment, with a fresh count, which the right code finishes.
+	st, body = call(t, c, srv, "POST", "/api/login", map[string]string{"email": "new@brand.example", "password": pw})
+	if st != 200 || body["enrol"] != true {
+		t.Fatalf("login again: %d %v", st, body)
+	}
+	e = enrolFrom(t, body["otpauth_uri"].(string))
+	st, body = call(t, c, srv, "POST", "/api/totp/enrol", map[string]string{"code": "000000x"})
+	wantErr(t, "wrong code after a new login", st, body, 400, "invalid_code")
+	if st, body := call(t, c, srv, "POST", "/api/totp/enrol", map[string]string{"code": e.nextCode(t)}); st != 200 {
+		t.Fatalf("enrol: %d %v", st, body)
+	}
+}

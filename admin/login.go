@@ -34,6 +34,7 @@ var (
 	errLocked       = &apiError{http.StatusTooManyRequests, "locked", "too many failed logins, try again in 15 minutes"}
 	errInvalidCode  = &apiError{http.StatusBadRequest, "invalid_code", "wrong code"}
 	errNotEnrolling = &apiError{http.StatusConflict, "not_enrolling", "no TOTP enrolment in progress, log in again"}
+	errEnrolEnded   = &apiError{http.StatusTooManyRequests, "enrol_ended", "too many wrong codes, log in again"}
 	errBusy         = &apiError{http.StatusTooManyRequests, "busy", "too many logins at once, retry in a second"}
 )
 
@@ -265,7 +266,7 @@ func (adm *Admin) enrol(w http.ResponseWriter, r *http.Request, s *session) erro
 	}
 	step, ok := verifyTOTP(secret, req.Code, time.Now(), u.TotpLastStep)
 	if !ok {
-		return errInvalidCode
+		return adm.enrolFailed(ctx, r, s, u)
 	}
 	var ck *http.Cookie
 	if err := pgx.BeginFunc(ctx, adm.a.Pool, func(tx pgx.Tx) error {
@@ -290,4 +291,37 @@ func (adm *Admin) enrol(w http.ResponseWriter, r *http.Request, s *session) erro
 	http.SetCookie(w, ck)
 	writeJSON(w, http.StatusOK, struct{}{})
 	return nil
+}
+
+// enrolFailed audits a wrong enrolment code (login.fail, reason enrol_code) and, at the
+// maxLoginFails-th since the login, ends the enrolment: the session and the pending secret are
+// dropped. Without it the six digits could be guessed through one mfa=false session for its whole
+// life; now each round of maxLoginFails guesses costs a login, whose own failures are limited.
+func (adm *Admin) enrolFailed(ctx context.Context, r *http.Request, s *session, u store.AdminUser) error {
+	ended := false
+	err := pgx.BeginFunc(ctx, adm.a.Pool, func(tx pgx.Tx) error {
+		q := store.New(tx)
+		if _, err := q.LockUser(ctx, u.ID); err != nil { // concurrent guesses count one at a time
+			return err
+		}
+		if err := adm.audit(ctx, tx, s, r, "login.fail", adminTarget(u.ID), nil, nil, "enrol_code"); err != nil {
+			return err
+		}
+		n, err := q.CountEnrolFails(ctx, &u.ID)
+		if err != nil || n < maxLoginFails {
+			return err
+		}
+		ended = true
+		if err := q.ClearTOTPPending(ctx, store.ClearTOTPPendingParams{ID: u.ID, Pending: u.TotpPending}); err != nil {
+			return err
+		}
+		return q.DeleteSession(ctx, s.ID)
+	})
+	switch {
+	case err != nil:
+		return err
+	case ended:
+		return errEnrolEnded
+	}
+	return errInvalidCode
 }

@@ -23,6 +23,18 @@ UPDATE admin_users SET totp_last_step = @step WHERE id = @id AND totp_last_step 
 UPDATE admin_users SET totp_secret = totp_pending, totp_pending = NULL, totp_last_step = @step
 WHERE id = @id AND totp_pending = @pending;
 
+-- ClearTOTPPending ends an enrolment: the next login starts a new one with a new secret.
+-- name: ClearTOTPPending :exec
+UPDATE admin_users SET totp_pending = NULL WHERE id = @id AND totp_pending = @pending;
+
+-- CountEnrolFails counts wrong enrolment codes since the user's last successful login (each login
+-- starts an enrolment with a new secret).
+-- name: CountEnrolFails :one
+SELECT count(*) FROM admin_audit f
+WHERE f.action = 'login.fail' AND f.reason = 'enrol_code' AND f.admin_id = @admin_id
+  AND f.created_at >= coalesce((SELECT max(o.created_at) FROM admin_audit o
+                                WHERE o.action = 'login.ok' AND o.admin_id = @admin_id), '-infinity');
+
 -- LockLogin serialises login attempts for one lockout target ("email:…", "telegram:…") until the
 -- transaction ends, so the count, the check and the audit row can't interleave.
 -- name: LockLogin :exec

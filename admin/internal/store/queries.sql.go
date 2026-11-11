@@ -50,6 +50,21 @@ func (q *Queries) ChangePasswordHash(ctx context.Context, arg ChangePasswordHash
 	return result.RowsAffected(), nil
 }
 
+const clearTOTPPending = `-- name: ClearTOTPPending :exec
+UPDATE admin_users SET totp_pending = NULL WHERE id = $1 AND totp_pending = $2
+`
+
+type ClearTOTPPendingParams struct {
+	ID      int64
+	Pending []byte
+}
+
+// ClearTOTPPending ends an enrolment: the next login starts a new one with a new secret.
+func (q *Queries) ClearTOTPPending(ctx context.Context, arg ClearTOTPPendingParams) error {
+	_, err := q.db.Exec(ctx, clearTOTPPending, arg.ID, arg.Pending)
+	return err
+}
+
 const confirmTOTP = `-- name: ConfirmTOTP :execrows
 UPDATE admin_users SET totp_secret = totp_pending, totp_pending = NULL, totp_last_step = $1
 WHERE id = $2 AND totp_pending = $3
@@ -99,6 +114,22 @@ func (q *Queries) CountAdjustments(ctx context.Context) ([]CountAdjustmentsRow, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const countEnrolFails = `-- name: CountEnrolFails :one
+SELECT count(*) FROM admin_audit f
+WHERE f.action = 'login.fail' AND f.reason = 'enrol_code' AND f.admin_id = $1
+  AND f.created_at >= coalesce((SELECT max(o.created_at) FROM admin_audit o
+                                WHERE o.action = 'login.ok' AND o.admin_id = $1), '-infinity')
+`
+
+// CountEnrolFails counts wrong enrolment codes since the user's last successful login (each login
+// starts an enrolment with a new secret).
+func (q *Queries) CountEnrolFails(ctx context.Context, adminID *int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countEnrolFails, adminID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const countLoginFails = `-- name: CountLoginFails :one
