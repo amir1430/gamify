@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"time"
@@ -18,7 +19,9 @@ import (
 
 var (
 	ErrSameApprover = &realtime.ClientError{Code: 1048, Message: "a second admin must approve"}
-	ErrWrongStatus  = &realtime.ClientError{Code: 1050, Message: "withdrawal is not in a status that allows this"}
+	ErrWrongStatus  = errors.New("payments: withdrawal is not in a status that allows this")
+	// ErrSendInProgress: a Sender call holds the withdrawal's lease, so it cannot be resolved by hand yet.
+	ErrSendInProgress = fmt.Errorf("%w: a send is in progress", ErrWrongStatus)
 )
 
 // Filter selects rows for Withdrawals and Deposits; zero fields are no filter. Since is inclusive,
@@ -58,7 +61,7 @@ func (s *Service) Deposits(ctx context.Context, f Filter, before int64, limit in
 type historyReq struct {
 	Kind   string `json:"kind"` // "deposit", "withdrawal" or empty: both
 	Status string `json:"status"`
-	Before int64  `json:"before"` // an ID of the kind listed: only older rows
+	Before int64  `json:"before"` // an ID of the kind listed (needs kind): only older rows
 	Limit  int32  `json:"limit"`  // 1..100, default 20, per kind
 }
 
@@ -72,7 +75,8 @@ func (s *Service) historyRPC(ctx context.Context, user int64, req historyReq) (h
 	if req.Limit == 0 {
 		req.Limit = 20
 	}
-	if req.Limit < 1 || req.Limit > 100 || req.Before < 0 || (req.Kind != "" && req.Kind != "deposit" && req.Kind != "withdrawal") {
+	// Deposit and withdrawal IDs are separate sequences: one cursor only makes sense for one kind.
+	if req.Limit < 1 || req.Limit > 100 || req.Before < 0 || (req.Before > 0 && req.Kind == "") || (req.Kind != "" && req.Kind != "deposit" && req.Kind != "withdrawal") {
 		return historyResp{}, &realtime.ClientError{Code: realtime.CodeBadPayload, Message: "bad history request"}
 	}
 	f := Filter{UserID: user, Status: req.Status}
@@ -127,12 +131,17 @@ func (s *Service) history(ctx context.Context, userID, beforeID int64, limit int
 	return out, nil
 }
 
-// notDecidable explains why a conditional update matched no row: there is none, or it moved.
-func notDecidable(ctx context.Context, q *store.Queries, id int64) error {
-	if _, err := q.GetWithdrawal(ctx, id); errors.Is(err, pgx.ErrNoRows) {
+// notDecidable explains why a conditional update matched no row: there is none, it moved, or (a
+// sending row) a send holds its lease.
+func notDecidable(ctx context.Context, q *store.Queries, id int64, from []string) error {
+	r, err := q.GetWithdrawal(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return err
+	}
+	if r.Status == "sending" && slices.Contains(from, "sending") {
+		return ErrSendInProgress
 	}
 	return ErrWrongStatus
 }
@@ -155,7 +164,7 @@ func (s *Service) Approve(ctx context.Context, tx pgx.Tx, id, adminID int64) (Wi
 		return Withdrawal{}, ErrWrongStatus
 	}
 	_, l, err := s.Limits(ctx, ledger.Currency(r.Currency), r.Method)
-	if err != nil && !errors.Is(err, ErrUnknownMethod) { // a method since removed: one approval
+	if err != nil { // incl. a method since removed: the second-approval rule is unknown, so never approve
 		return Withdrawal{}, err
 	}
 	if l.SecondApprovalAbove > 0 && r.Amount > l.SecondApprovalAbove {
@@ -170,14 +179,14 @@ func (s *Service) Approve(ctx context.Context, tx pgx.Tx, id, adminID int64) (Wi
 			return toWithdrawal(r), err
 		}
 	}
-	return s.decide(ctx, q, id, adminID, "approved", []string{"requested"}, Result{})
+	return s.decide(ctx, q, id, adminID, "approved", []string{"requested"}, false, Result{})
 }
 
-func (s *Service) decide(ctx context.Context, q *store.Queries, id, adminID int64, status string, from []string, res Result) (Withdrawal, error) {
+func (s *Service) decide(ctx context.Context, q *store.Queries, id, adminID int64, status string, from []string, leaseExpired bool, res Result) (Withdrawal, error) {
 	r, err := q.DecideWithdrawal(ctx, store.DecideWithdrawalParams{ID: id, AdminID: adminID, Status: status,
-		FromStatuses: from, Ref: res.Ref, Reason: res.Reason})
+		FromStatuses: from, LeaseExpired: leaseExpired, Ref: res.Ref, Reason: res.Reason})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Withdrawal{}, notDecidable(ctx, q, id)
+		return Withdrawal{}, notDecidable(ctx, q, id, from)
 	}
 	return toWithdrawal(r), err
 }
@@ -188,11 +197,13 @@ func (s *Service) decide(ctx context.Context, q *store.Queries, id, adminID int6
 // released by Advance after the tx commits (call it from the After hook); the reconciler does it
 // otherwise.
 func (s *Service) Reject(ctx context.Context, tx pgx.Tx, id, adminID int64, reason string) (Withdrawal, error) {
-	return s.decide(ctx, s.q.WithTx(tx), id, adminID, "rejected", []string{"requested", "approved"}, Result{Reason: reason})
+	return s.decide(ctx, s.q.WithTx(tx), id, adminID, "rejected", []string{"requested", "approved"}, false, Result{Reason: reason})
 }
 
 // Resolve settles a `sending` withdrawal by hand, inside the caller's tx, when its Sender cannot
-// say: StatePaid with the Ref, or StateFailed with a reason. Advance posts or releases after the
+// say. It is refused (ErrSendInProgress) while a Send or Status call holds the row's lease, so it
+// can never race a payout in flight (a refund of money already sent, or a post of a failed payout);
+// retry after the lease. Result: StatePaid with the Ref, or StateFailed with a reason. Advance posts or releases after the
 // tx commits.
 func (s *Service) Resolve(ctx context.Context, tx pgx.Tx, id, adminID int64, r Result) (Withdrawal, error) {
 	var status string
@@ -204,7 +215,7 @@ func (s *Service) Resolve(ctx context.Context, tx pgx.Tx, id, adminID int64, r R
 	default:
 		return Withdrawal{}, &realtime.ClientError{Code: realtime.CodeBadPayload, Message: "paid needs a ref, failed a reason"}
 	}
-	return s.decide(ctx, s.q.WithTx(tx), id, adminID, status, []string{"sending"}, r)
+	return s.decide(ctx, s.q.WithTx(tx), id, adminID, status, []string{"sending"}, true, r)
 }
 
 // Advance sends an approved or sending withdrawal, or settles a finished one: for an After hook,

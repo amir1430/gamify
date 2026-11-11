@@ -126,6 +126,7 @@ UPDATE pay_withdrawals
 SET status = $1, decided_by = $2, settled = false,
     ref = COALESCE(NULLIF($3::text, ''), ref), reason = $4, updated_at = now()
 WHERE id = $5 AND status = ANY($6::text[])
+  AND (NOT $7::bool OR lease_until < now())
 RETURNING id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at
 `
 
@@ -136,6 +137,7 @@ type DecideWithdrawalParams struct {
 	Reason       string
 	ID           int64
 	FromStatuses []string
+	LeaseExpired bool
 }
 
 // A human's decision from an allowed status (an array: reject takes requested or approved, never
@@ -148,6 +150,7 @@ func (q *Queries) DecideWithdrawal(ctx context.Context, arg DecideWithdrawalPara
 		arg.Reason,
 		arg.ID,
 		arg.FromStatuses,
+		arg.LeaseExpired,
 	)
 	var i PayWithdrawal
 	err := row.Scan(

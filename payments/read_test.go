@@ -86,7 +86,7 @@ func TestHistoryOwnOnly(t *testing.T) {
 	if h, _ = apptest.Call[hist](a, ann, "payments.history", map[string]any{"kind": "deposit"}); len(h.Withdrawals) != 0 || len(h.Deposits) != 1 {
 		t.Fatalf("%+v", h)
 	}
-	for _, bad := range []map[string]any{{"limit": 101}, {"limit": -1}, {"kind": "x"}} {
+	for _, bad := range []map[string]any{{"limit": 101}, {"limit": -1}, {"kind": "x"}, {"before": 5}} {
 		if _, cerr := apptest.Call[hist](a, ann, "payments.history", bad); cerr == nil || cerr.Code != realtime.CodeBadPayload {
 			t.Fatalf("%v: %v", bad, cerr)
 		}
@@ -307,6 +307,18 @@ func TestResolveOnlySending(t *testing.T) {
 		return w.ID
 	}
 	id := mk("p")
+	lw := mk("live")
+	if _, err := a.Pool.Exec(context.Background(), `UPDATE pay_withdrawals SET lease_until = now() + interval '1 hour' WHERE id = $1`, lw); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []payments.Result{{State: payments.StateFailed, Reason: "x"}, {State: payments.StatePaid, Ref: "x"}} {
+		if _, err := resolve(t, s, a, lw, r); !errors.Is(err, payments.ErrSendInProgress) || !errors.Is(err, payments.ErrWrongStatus) {
+			t.Fatalf("live lease: %v", err)
+		}
+	}
+	if g := status(t, s, lw); g.Status != "sending" {
+		t.Fatalf("%+v", g)
+	}
 	for _, bad := range []payments.Result{{State: payments.StatePaid}, {State: payments.StateFailed},
 		{State: payments.StatePending, Ref: "x", Reason: "y"}, {State: payments.StateUnknown}} {
 		if _, err := resolve(t, s, a, id, bad); err == nil {
@@ -331,5 +343,23 @@ func TestResolveOnlySending(t *testing.T) {
 	s.Advance(context.Background(), id)
 	if a.Balance(u, "usdt") != before+100 {
 		t.Fatalf("not refunded: %d", a.Balance(u, "usdt"))
+	}
+}
+
+func TestApproveUnknownMethodFailsClosed(t *testing.T) {
+	s, a := withdrawSetup(t, payments.WithdrawLimits{SecondApprovalAbove: 100})
+	u := a.User("ann")
+	id, err := payments.LeaveHolding(context.Background(), s, u, "usdt", "gone", "k", 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Pool.Exec(context.Background(), `UPDATE pay_withdrawals SET status = 'requested' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := approve(t, s, a, id, 1); !errors.Is(err, payments.ErrUnknownMethod) {
+		t.Fatalf("%v", err)
+	}
+	if g := status(t, s, id); g.Status != "requested" {
+		t.Fatalf("%+v", g)
 	}
 }

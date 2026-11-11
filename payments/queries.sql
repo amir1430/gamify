@@ -139,4 +139,5 @@ UPDATE pay_withdrawals
 SET status = sqlc.arg(status), decided_by = sqlc.arg(admin_id), settled = false,
     ref = COALESCE(NULLIF(sqlc.arg(ref)::text, ''), ref), reason = sqlc.arg(reason), updated_at = now()
 WHERE id = sqlc.arg(id) AND status = ANY(sqlc.arg(from_statuses)::text[])
+  AND (NOT sqlc.arg(lease_expired)::bool OR lease_until < now())
 RETURNING *;

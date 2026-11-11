@@ -62,7 +62,13 @@ func (s *Service) advance(ctx context.Context, id int64) error {
 		next = "failed"
 	}
 	m, err := s.q.SendResult(ctx, store.SendResultParams{ID: id, Status: next, Ref: res.Ref, Reason: res.Reason})
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && next == "sending") {
+	if errors.Is(err, pgx.ErrNoRows) {
+		if next != "sending" { // the row left `sending` under a live lease: should not happen
+			slog.ErrorContext(ctx, "payments: definite send answer not recorded", "withdrawal", id, "answer", next, "ref", res.Ref)
+		}
+		return nil
+	}
+	if err == nil && next == "sending" {
 		return nil
 	}
 	if err != nil {
