@@ -24,6 +24,10 @@ import (
 //go:embed migrations/*.sql
 var Migrations embed.FS
 
+// Game is payments' ID space in the ledger (a platform game, below ledger.FirstBrandGame): its
+// deposit and withdrawal transfers are keyed by row ID within it. Never change it.
+const Game ledger.Game = 2
+
 var ErrUnknownMethod = &realtime.ClientError{Code: 1040, Message: "unknown payment method"}
 
 // Receiver takes deposits for one method. Run listens for incoming payments (a webhook on h.Mux, a
@@ -133,6 +137,9 @@ type Service struct {
 func Register(ctx context.Context, a *app.App, cfg Config) (*Service, error) {
 	if cfg.Tick < 0 || cfg.Lease < 0 {
 		return nil, fmt.Errorf("payments: negative Tick %v or Lease %v", cfg.Tick, cfg.Lease)
+	}
+	if err := a.Ledger.RegisterGame(Game, "payments"); err != nil {
+		return nil, err
 	}
 	if err := a.Migrate(ctx, Migrations, "goose_payments"); err != nil {
 		return nil, err

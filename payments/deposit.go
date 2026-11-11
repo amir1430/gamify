@@ -141,7 +141,7 @@ func (h *Host) Received(ctx context.Context, in Incoming) error {
 // ledger transfer is keyed by the row ID, so running it twice credits once; only the call that
 // flips the status pushes.
 func (s *Service) credit(ctx context.Context, d store.PayDeposit) error {
-	if err := s.a.Ledger.Deposit(ctx, ledger.Currency(d.Currency), d.ID, d.UserID, d.Amount); err != nil {
+	if err := s.a.Ledger.DepositFor(ctx, Game, ledger.Currency(d.Currency), d.ID, d.UserID, d.Amount); err != nil {
 		return err
 	}
 	d, err := s.q.MarkCredited(ctx, d.ID)

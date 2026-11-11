@@ -33,6 +33,8 @@ const (
 	shop    ledger.Game = 7
 	gift    ledger.Game = 8
 	prize   ledger.Game = 9
+	pay     ledger.Game = 10
+	pay2    ledger.Game = 11
 )
 
 // Run runs the whole suite on drivers from newDriver.
@@ -557,6 +559,16 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 			must(t, f.l.Deposit(ctx, "usd", dep, u, 500))
 		}
 		want(t, "deposited", f.bal(u, "usd"), 1500)
+		// The same row ID in Deposit's space and two games' spaces: three deposits, each once.
+		v := f.user()
+		for range 2 {
+			must(t, f.l.DepositFor(ctx, pay, "usd", dep, v, 100))
+			must(t, f.l.DepositFor(ctx, pay2, "usd", dep, v, 10))
+		}
+		want(t, "deposited for games", f.bal(v, "usd"), 1110)
+		if err := f.l.DepositFor(ctx, 0, "usd", dep, v, 1); !errors.Is(err, ledger.ErrBadGame) {
+			t.Fatalf("game 0: %v", err)
+		}
 		paid0, err := f.l.RewardsPaid(ctx, "tickets")
 		must(t, err)
 		claim := int64(rid())
@@ -710,7 +722,7 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 
 	t.Run("withdraw", func(t *testing.T) {
 		u := f.user()
-		if err := f.l.Withdraw(ctx, "usd", int64(rid()), u, 10); !errors.Is(err, ledger.ErrNotWithdrawable) {
+		if err := f.l.Withdraw(ctx, pay, "usd", int64(rid()), u, 10); !errors.Is(err, ledger.ErrNotWithdrawable) {
 			t.Fatalf("usd: %v", err)
 		}
 		if !f.l.Withdrawable("usdt") || f.l.Withdrawable("usd") || f.l.Withdrawable("eur") {
@@ -719,50 +731,59 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 		must(t, f.l.Deposit(ctx, "usdt", int64(rid()), u, 1000))
 		want(t, "deposited", f.bal(u, "usdt"), 1100)
 		for _, amount := range []int64{0, -1} {
-			if err := f.l.Withdraw(ctx, "usdt", int64(rid()), u, amount); err == nil {
+			if err := f.l.Withdraw(ctx, pay, "usdt", int64(rid()), u, amount); err == nil {
 				t.Fatalf("withdraw %d accepted", amount)
 			}
 		}
 		w1, w2, w3 := int64(rid()), int64(rid()), int64(rid())
 		for range 2 { // retry: held once
-			must(t, f.l.Withdraw(ctx, "usdt", w1, u, 400))
+			must(t, f.l.Withdraw(ctx, pay, "usdt", w1, u, 400))
 		}
 		want(t, "held", f.bal(u, "usdt"), 700)
 		sb0, err := f.l.SystemBalances(ctx, "usdt")
 		must(t, err)
 		for range 2 { // retry: posted once
-			must(t, f.l.PostWithdraw(ctx, "usdt", w1, u, 400, 10))
+			must(t, f.l.PostWithdraw(ctx, pay, "usdt", w1, u, 400, 10))
 		}
 		want(t, "posted", f.bal(u, "usdt"), 700)
 		sb, err := f.l.SystemBalances(ctx, "usdt")
 		must(t, err)
 		want(t, "outflow", sb["outflow"]-sb0["outflow"], 390)
 		want(t, "house", sb["house"]-sb0["house"], 10)
-		if err := f.l.VoidWithdraw(ctx, "usdt", w1, u, 400); !errors.Is(err, ledger.ErrWithdrawSettled) {
+		if err := f.l.VoidWithdraw(ctx, pay, "usdt", w1, u, 400); !errors.Is(err, ledger.ErrWithdrawSettled) {
 			t.Fatalf("void after post: %v", err)
 		}
 
-		must(t, f.l.Withdraw(ctx, "usdt", w2, u, 300))
+		must(t, f.l.Withdraw(ctx, pay, "usdt", w2, u, 300))
 		want(t, "held again", f.bal(u, "usdt"), 400)
 		for range 2 { // retry: released once
-			must(t, f.l.VoidWithdraw(ctx, "usdt", w2, u, 300))
+			must(t, f.l.VoidWithdraw(ctx, pay, "usdt", w2, u, 300))
 		}
 		want(t, "released", f.bal(u, "usdt"), 700)
-		if err := f.l.PostWithdraw(ctx, "usdt", w2, u, 300, 0); !errors.Is(err, ledger.ErrWithdrawSettled) {
+		if err := f.l.PostWithdraw(ctx, pay, "usdt", w2, u, 300, 0); !errors.Is(err, ledger.ErrWithdrawSettled) {
 			t.Fatalf("post after void: %v", err)
 		}
 
 		// Only 600 is above the play-only welcome 100.
-		if err := f.l.Withdraw(ctx, "usdt", w3, u, 601); !errors.Is(err, ledger.ErrInsufficientFunds) {
+		if err := f.l.Withdraw(ctx, pay, "usdt", w3, u, 601); !errors.Is(err, ledger.ErrInsufficientFunds) {
 			t.Fatalf("into the welcome grant: %v", err)
 		}
 		for range 2 { // never held: nothing to release
-			must(t, f.l.VoidWithdraw(ctx, "usdt", w3, u, 601))
+			must(t, f.l.VoidWithdraw(ctx, pay, "usdt", w3, u, 601))
 		}
-		if err := f.l.Withdraw(ctx, "usdt", int64(rid()), f.user(), 1); !errors.Is(err, ledger.ErrInsufficientFunds) {
+		if err := f.l.Withdraw(ctx, pay, "usdt", int64(rid()), f.user(), 1); !errors.Is(err, ledger.ErrInsufficientFunds) {
 			t.Fatalf("welcome only: %v", err)
 		}
 		want(t, "after refusals", f.bal(u, "usdt"), 700)
+		if err := f.l.Withdraw(ctx, 0, "usdt", int64(rid()), u, 1); !errors.Is(err, ledger.ErrBadGame) {
+			t.Fatalf("game 0: %v", err)
+		}
+
+		// w1's ID in another game is another withdrawal: held and released on its own.
+		must(t, f.l.Withdraw(ctx, pay2, "usdt", w1, u, 50))
+		want(t, "other game held", f.bal(u, "usdt"), 650)
+		must(t, f.l.VoidWithdraw(ctx, pay2, "usdt", w1, u, 50))
+		want(t, "other game released", f.bal(u, "usdt"), 700)
 
 		if f.l.HasHistory() {
 			h, err := f.l.History(ctx, "usdt", ledger.Party{User: u}, ledger.HistoryFilter{Limit: 100, Kind: "withdraw"})
@@ -771,9 +792,25 @@ func ledgerSuite(t *testing.T, d ledger.Driver) {
 			for _, e := range h {
 				stages[e.Stage]++
 			}
-			want(t, "held entries", stages["held"], 2)
+			want(t, "held entries", stages["held"], 3)
 			want(t, "settled entries", stages["settled"], 1)
-			want(t, "released entries", stages["released"], 1)
+			want(t, "released entries", stages["released"], 2)
+			for _, e := range h {
+				if e.Game != pay && e.Game != pay2 {
+					t.Fatalf("entry game %d", e.Game)
+				}
+			}
+			fees, err := f.l.History(ctx, "usdt", ledger.Party{System: "house"}, ledger.HistoryFilter{Limit: 100, Kind: "withdraw_fee"})
+			must(t, err)
+			var fee *ledger.Entry
+			for i, e := range fees {
+				if e.Op == w1 {
+					fee = &fees[i]
+				}
+			}
+			if fee == nil || fee.Kind != "withdraw_fee" || fee.Amount != 10 || fee.Game != pay || fee.Other.System != "outflow" {
+				t.Fatalf("fee entry %+v", fee)
+			}
 		}
 	})
 

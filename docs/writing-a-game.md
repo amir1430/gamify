@@ -30,7 +30,7 @@ case: a pot's entries and the pot itself may come from two tables under one ID, 
 never overlap.
 
 Changing an ID, or reusing another game's, makes retries and reconciliation move money twice. IDs
-below `ledger.FirstBrandGame` are the platform's; yours are `FirstBrandGame..MaxGame`. Call
+below `ledger.FirstBrandGame` are the platform's (1 matchmaking, 2 payments); yours are `FirstBrandGame..MaxGame`. Call
 `a.Ledger.RegisterGame(Game, "arena")` first thing in `Register`: a duplicate ID in the deployment
 then fails at startup.
 

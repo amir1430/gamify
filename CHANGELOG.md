@@ -14,16 +14,19 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 - `payments`: reads and the Go API. RPC `payments.history {kind?, status?, before?, limit?}` returns the caller's own `{deposits, withdrawals}` newest first (limit 1..100, default 20 per kind; `before` is an ID of that kind and needs `kind`). `Service.Withdrawals` / `Deposits(ctx, Filter, before, limit)`, and `Approve`, `Reject`, `Resolve` (take the admin's tx) with `Advance` for the `After` hook: `Approve` needs a second admin above `WithdrawLimits.SecondApprovalAbove` (`ErrSameApprover` 1048); `Reject` only `requested` or `approved` rows, never `sending` (`ErrWrongStatus`, a plain Go error); `Resolve` settles a `sending` row by hand as `paid` (with Ref) or `failed` (with reason), refused with `ErrSendInProgress` while a send holds its lease; `Approve` of a method no longer registered returns `ErrUnknownMethod`. `Withdrawal.Settled`. `a.History("payments")`: one `app.Activity` per deposit (`Payout`) and withdrawal (`Amount`); its `ID` is the creation time in Unix microseconds, which is also its paging cursor.
 - `payments/paymentsadmin`: console pages Withdrawals (approve, reject, mark paid / mark failed for a stuck send; detail with the player's credited deposits and paid withdrawals), Deposits and Methods (edit limits), as tabs on the player page. Permissions `payments.approve` (owner, operator), `payments.resolve` and `payments.limits` (owner); a brand's custom roles need them added to see the actions. `payments.Service.Methods`.
 - `ledger`: withdrawals. `CurrencyConfig.Withdrawable` (off by default) and `Ledger.Withdrawable`;
-  `Withdraw` holds the amount (pending user -> new `outflow` system account; the welcome grant
-  stays play-only, `ErrInsufficientFunds`), `PostWithdraw` settles it with an optional fee to
-  `house`, `VoidWithdraw` releases it. Keyed by the withdrawal ID, so each is safe to repeat.
+  `Withdraw(ctx, g, c, withdrawalID, userID, amount)` holds the amount (pending user -> new
+  `outflow` system account; the welcome grant stays play-only, `ErrInsufficientFunds`),
+  `PostWithdraw` settles it with an optional fee to `house` (transfer kind `withdraw_fee`),
+  `VoidWithdraw` releases it. Keyed by game `g` and the withdrawal ID, like `Spend`, so each is safe
+  to repeat and two tables never collide.
   `ErrNotWithdrawable` in a currency without the flag, `ErrWithdrawSettled` for a post after a void
-  or a void after a post. New system account `outflow` and transfer kind `withdraw`.
+  or a void after a post. New system account `outflow` and transfer kinds `withdraw` and `withdraw_fee`.
+- `ledger.DepositFor(ctx, g, c, depositID, userID, amount)`: `Deposit` keyed by a game's deposit rows, so a module's deposit IDs never collide with another's or with `Deposit`'s. `payments` uses it. `Deposit` is unchanged.
 - `cmd/gamify`: the sixth `CURRENCIES` field takes flags `t` (transferable) and `w`
   (withdrawable), in any order: `usdt:3:1:0:6:w`, `gems:3:1:0:0:tw`.
 
 ### Changed
-- `ledger`: `SystemAccounts()` and `TransferKinds()` gain `outflow` and `withdraw`, so the treasury page lists them.
+- `ledger`: `SystemAccounts()` and `TransferKinds()` gain `outflow`, `withdraw` and `withdraw_fee`, so the treasury page lists them. `Entry.Game` is set for `DepositFor` and withdrawal transfers.
 - `cmd/gamify`: registers `payments` and `paymentsadmin` (the console only when it is on). With `DEV_FAUCET=true` it adds a fake method `dev` (`paymentstest`): a receiver for every currency and an auto-approved, always-paid sender for every withdrawable one. It moves no real money: never use it where money is real.
 
 ### Fixed
@@ -31,6 +34,7 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ### Upgrade notes
 - New goose table `goose_payments`: `payments.Register` runs its migrations on start. Nothing to run by hand.
+- `payments` claims platform ledger game 2 (`payments.Game`, registered as "payments"): a brand that registered game ID 2 for its own game gets a startup error; brand games belong in `FirstBrandGame..MaxGame`.
 - `ledger.Init` creates the `outflow` system account for every existing currency on the next start
   (idempotent, nothing to run). Existing currencies stay non-withdrawable until you set
   `CurrencyConfig.Withdrawable` (or the `w` flag in `CURRENCIES`).

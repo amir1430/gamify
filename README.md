@@ -224,7 +224,7 @@ balance themselves. Amounts are `int64` minor units, never floats.
 | The brand sells something | `Spend` (into the per-currency `sales` account) |
 | Player to player | `Transfer` (only in a `Transferable` currency) |
 | The brand gives something | `Reward`, welcome grants |
-| Outside the games | `Deposit`, `Withdraw` (`PostWithdraw`, `VoidWithdraw`; `Withdrawable` currencies), `Swap`, `Adjust` (admin) |
+| Outside the games | `Deposit` / `DepositFor` (keyed by a game's deposit rows), `Withdraw` (`PostWithdraw`, `VoidWithdraw`; `Withdrawable` currencies, keyed by a game's withdrawal rows), `Swap`, `Adjust` (admin) |
 
 Every call is idempotent: transfer IDs come from the game ID and the row ID, so a retry or the
 reconciler can't move money twice. A refused ID stays refused (`ErrAlreadyFailed`).
@@ -237,7 +237,7 @@ move between players unless the brand opts in. Never change a currency's `Ledger
 
 ID layout, the same on every driver: user account `(ledger, user)`, system account
 `(0, ledger<<8 | kind)`, game operation transfer `(game<<8 | leg, row)`, spends and transfers
-`(ns<<32 | game<<8 | leg, row)`, others `(ns<<32 …, row)`. The casino's TigerBeetle data uses fixed
+`(ns<<32 | game<<8 | leg, row)` (also `DepositFor` and withdrawals), others `(ns<<32 …, row)`. The casino's TigerBeetle data uses fixed
 system account IDs and other namespaces, so moving the casino onto this platform needs a balance
 migration (or a compat layout); it can't reuse its cluster as-is.
 

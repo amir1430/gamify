@@ -154,7 +154,7 @@ func (s *Service) hold(ctx context.Context, r store.PayWithdrawal) (store.PayWit
 	}
 	c := ledger.Currency(r.Currency)
 	next := store.MoveWithdrawalParams{ID: r.ID, FromStatus: "holding", Status: "requested"}
-	err := s.a.Ledger.Withdraw(ctx, c, r.ID, r.UserID, r.Amount)
+	err := s.a.Ledger.Withdraw(ctx, Game, c, r.ID, r.UserID, r.Amount)
 	switch {
 	case errors.Is(err, ledger.ErrInsufficientFunds), errors.Is(err, ledger.ErrAlreadyFailed):
 		next.Status, next.Settled, next.Reason = "failed", true, "insufficient funds"
@@ -217,9 +217,9 @@ func (s *Service) settle(ctx context.Context, id int64) error {
 	c := ledger.Currency(r.Currency)
 	switch r.Status {
 	case "paid":
-		err = s.a.Ledger.PostWithdraw(ctx, c, r.ID, r.UserID, r.Amount, r.Fee)
+		err = s.a.Ledger.PostWithdraw(ctx, Game, c, r.ID, r.UserID, r.Amount, r.Fee)
 	case "rejected", "cancelled", "failed":
-		err = s.a.Ledger.VoidWithdraw(ctx, c, r.ID, r.UserID, r.Amount)
+		err = s.a.Ledger.VoidWithdraw(ctx, Game, c, r.ID, r.UserID, r.Amount)
 	default:
 		return nil
 	}

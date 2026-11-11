@@ -51,23 +51,24 @@ const (
 
 // Transfer codes.
 const (
-	codeCharge     uint16 = 10
-	codePayout     uint16 = 11
-	codeTopUp      uint16 = 12
-	codeDeposit    uint16 = 13
-	codeWelcome    uint16 = 14
-	codeSwap       uint16 = 15
-	codeReward     uint16 = 16
-	codeAdjustment uint16 = 18
-	codeSpend      uint16 = 20
-	codeTransfer   uint16 = 21
-	codeWithdraw   uint16 = 23
+	codeCharge      uint16 = 10
+	codePayout      uint16 = 11
+	codeTopUp       uint16 = 12
+	codeDeposit     uint16 = 13
+	codeWelcome     uint16 = 14
+	codeSwap        uint16 = 15
+	codeReward      uint16 = 16
+	codeAdjustment  uint16 = 18
+	codeSpend       uint16 = 20
+	codeTransfer    uint16 = 21
+	codeWithdraw    uint16 = 23
+	codeWithdrawFee uint16 = 24 // a withdrawal's fee, outflow -> house
 )
 
 // Game is an ID space for one table of operation IDs: it namespaces the transfer ID, so row IDs
 // from different tables never collide (a module with two such tables registers two). Each game picks
 // its own constant, unique in the deployment, in 1..MaxGame; never reuse or change one. The
-// platform's games use 1..FirstBrandGame-1 (1: matchmaking), a brand's own games FirstBrandGame..MaxGame. Register it
+// platform's games use 1..FirstBrandGame-1 (1: matchmaking, 2: payments), a brand's own games FirstBrandGame..MaxGame. Register it
 // with RegisterGame so a duplicate fails at startup.
 type Game uint64
 
@@ -105,7 +106,7 @@ const MaxExtraHolds = 3
 
 // Transfer ID namespaces (high 32 bits of ID.Hi) of everything that isn't a game operation.
 const (
-	nsDeposit  uint64 = 1
+	nsDeposit  uint64 = 1 // Deposit: ns<<32 alone; DepositFor: keyed by game, as nsSpend
 	nsWelcome  uint64 = 2
 	nsSwap     uint64 = 3
 	nsReward   uint64 = 4
@@ -114,7 +115,7 @@ const (
 	nsSpend    uint64 = 7  // keyed by game: ns<<32 | game<<8 | leg
 	nsTransfer uint64 = 8  // keyed by game, as nsSpend
 	nsPrize    uint64 = 9  // keyed by game, as nsSpend
-	nsWithdraw uint64 = 10 // ns<<32 | leg, keyed by withdrawal ID
+	nsWithdraw uint64 = 10 // keyed by game, as nsSpend
 )
 
 // System accounts, one of each per currency: ID (0, ledger<<8 | kind).
@@ -548,6 +549,21 @@ func (l *Ledger) Deposit(ctx context.Context, c Currency, depositID, userID, amo
 		Ledger: cur.Ledger, Code: codeDeposit}})
 }
 
+// DepositFor credits a confirmed deposit in c for game g's table of deposit rows: the transfer ID
+// is namespaced by g, so it never collides with Deposit's IDs or another game's rows. Safe to repeat.
+func (l *Ledger) DepositFor(ctx context.Context, g Game, c Currency, depositID, userID, amount int64) error {
+	if err := g.check(); err != nil {
+		return err
+	}
+	cur, err := l.currency(c)
+	if err != nil {
+		return err
+	}
+	return l.createTransfers(ctx, []Transfer{{ID: nsOpID(nsDeposit, g, 1, depositID),
+		Debit: system(cur, kindInflow), Credit: userAccountID(cur, userID), Amount: uint64(amount),
+		Ledger: cur.Ledger, Code: codeDeposit}})
+}
+
 // Reward pays a claim in c from its rewards account. The transfer ID comes from the claim row, so
 // a retried claim can't pay twice.
 func (l *Ledger) Reward(ctx context.Context, c Currency, claimID, userID, amount int64) error {
@@ -651,7 +667,7 @@ func (l *Ledger) Transfer(ctx context.Context, g Game, c Currency, opID, from, t
 	return l.createTransfers(ctx, transfers)
 }
 
-// Withdrawal legs: ID{nsWithdraw<<32 | leg, withdrawalID}.
+// Withdrawal legs: nsOpID(nsWithdraw, game, leg, withdrawalID).
 const (
 	legWithdrawHold  uint64 = 1
 	legWithdrawFloor uint64 = 2 // welcome amount out to the floor...
@@ -661,17 +677,20 @@ const (
 	legWithdrawVoid  uint64 = 6
 )
 
-func withdrawID(leg uint64, withdrawalID int64) ID {
-	return ID{nsWithdraw<<32 | leg, uint64(withdrawalID)}
+func withdrawID(g Game, leg uint64, withdrawalID int64) ID {
+	return nsOpID(nsWithdraw, g, leg, withdrawalID)
 }
 
-// Withdraw holds amount of c for a withdrawal: a pending transfer user -> outflow, so the money
+// Withdraw holds amount of c for a withdrawal of game g's table (its IDs are namespaced by g): a pending transfer user -> outflow, so the money
 // stops being spendable at once. Only in a Withdrawable currency (else ErrNotWithdrawable). The
 // welcome grant stays play-only as in HoldPot: a linked pair user -> floor -> user of Welcome after
 // the hold fails the batch (ErrInsufficientFunds) if less would be left. The driver refuses an
 // overdraft. Safe to repeat; a refused withdrawal stays refused (ErrInsufficientFunds). A
 // VoidWithdraw before the hold doesn't stop a later Withdraw of the same ID: don't hold after voiding.
-func (l *Ledger) Withdraw(ctx context.Context, c Currency, withdrawalID, userID, amount int64) error {
+func (l *Ledger) Withdraw(ctx context.Context, g Game, c Currency, withdrawalID, userID, amount int64) error {
+	if err := g.check(); err != nil {
+		return err
+	}
 	cur, err := l.currency(c)
 	switch {
 	case err != nil:
@@ -682,13 +701,13 @@ func (l *Ledger) Withdraw(ctx context.Context, c Currency, withdrawalID, userID,
 		return fmt.Errorf("ledger: withdrawal %d of %d", withdrawalID, amount)
 	}
 	user := userAccountID(cur, userID)
-	transfers := []Transfer{{ID: withdrawID(legWithdrawHold, withdrawalID), Debit: user, Credit: system(cur, kindOutflow),
+	transfers := []Transfer{{ID: withdrawID(g, legWithdrawHold, withdrawalID), Debit: user, Credit: system(cur, kindOutflow),
 		Amount: uint64(amount), Ledger: cur.Ledger, Code: codeWithdraw, Flags: Flags{Pending: true}}}
 	if cur.Welcome > 0 {
 		transfers = append(transfers,
-			Transfer{ID: withdrawID(legWithdrawFloor, withdrawalID), Debit: user, Credit: system(cur, kindFloor),
+			Transfer{ID: withdrawID(g, legWithdrawFloor, withdrawalID), Debit: user, Credit: system(cur, kindFloor),
 				Amount: uint64(cur.Welcome), Ledger: cur.Ledger, Code: codeFloor},
-			Transfer{ID: withdrawID(legWithdrawBack, withdrawalID), Debit: system(cur, kindFloor), Credit: user,
+			Transfer{ID: withdrawID(g, legWithdrawBack, withdrawalID), Debit: system(cur, kindFloor), Credit: user,
 				Amount: uint64(cur.Welcome), Ledger: cur.Ledger, Code: codeFloor})
 		link(transfers)
 	}
@@ -709,9 +728,12 @@ func (l *Ledger) Withdraw(ctx context.Context, c Currency, withdrawalID, userID,
 }
 
 // PostWithdraw settles a held withdrawal (the money left): posts amount of the hold and, when fee >
-// 0, moves fee outflow -> house in the same linked batch. ErrWithdrawSettled if it was voided.
+// 0, moves fee outflow -> house (kind withdraw_fee) in the same linked batch. ErrWithdrawSettled if it was voided.
 // Safe to repeat.
-func (l *Ledger) PostWithdraw(ctx context.Context, c Currency, withdrawalID, userID, amount, fee int64) error {
+func (l *Ledger) PostWithdraw(ctx context.Context, g Game, c Currency, withdrawalID, userID, amount, fee int64) error {
+	if err := g.check(); err != nil {
+		return err
+	}
 	cur, err := l.currency(c)
 	switch {
 	case err != nil:
@@ -720,12 +742,12 @@ func (l *Ledger) PostWithdraw(ctx context.Context, c Currency, withdrawalID, use
 		return fmt.Errorf("ledger: withdrawal %d: amount %d, fee %d", withdrawalID, amount, fee)
 	}
 	outflow := system(cur, kindOutflow)
-	transfers := []Transfer{{ID: withdrawID(legWithdrawPost, withdrawalID), PendingID: withdrawID(legWithdrawHold, withdrawalID),
+	transfers := []Transfer{{ID: withdrawID(g, legWithdrawPost, withdrawalID), PendingID: withdrawID(g, legWithdrawHold, withdrawalID),
 		Debit: userAccountID(cur, userID), Credit: outflow, Amount: uint64(amount), Ledger: cur.Ledger,
 		Code: codeWithdraw, Flags: Flags{PostPending: true}}}
 	if fee > 0 {
-		transfers = append(transfers, Transfer{ID: withdrawID(legWithdrawFee, withdrawalID), Debit: outflow,
-			Credit: system(cur, kindHouse), Amount: uint64(fee), Ledger: cur.Ledger, Code: codeWithdraw})
+		transfers = append(transfers, Transfer{ID: withdrawID(g, legWithdrawFee, withdrawalID), Debit: outflow,
+			Credit: system(cur, kindHouse), Amount: uint64(fee), Ledger: cur.Ledger, Code: codeWithdrawFee})
 		link(transfers)
 	}
 	return l.settleWithdraw(ctx, withdrawalID, transfers, false)
@@ -734,13 +756,16 @@ func (l *Ledger) PostWithdraw(ctx context.Context, c Currency, withdrawalID, use
 // VoidWithdraw releases a held withdrawal (rejected, cancelled, failed): the money is spendable
 // again. ErrWithdrawSettled if it was posted. Safe to repeat; a withdrawal never held (a refused
 // Withdraw) has nothing to release and returns nil.
-func (l *Ledger) VoidWithdraw(ctx context.Context, c Currency, withdrawalID, userID, amount int64) error {
+func (l *Ledger) VoidWithdraw(ctx context.Context, g Game, c Currency, withdrawalID, userID, amount int64) error {
+	if err := g.check(); err != nil {
+		return err
+	}
 	cur, err := l.currency(c)
 	if err != nil {
 		return err
 	}
-	return l.settleWithdraw(ctx, withdrawalID, []Transfer{{ID: withdrawID(legWithdrawVoid, withdrawalID),
-		PendingID: withdrawID(legWithdrawHold, withdrawalID), Debit: userAccountID(cur, userID),
+	return l.settleWithdraw(ctx, withdrawalID, []Transfer{{ID: withdrawID(g, legWithdrawVoid, withdrawalID),
+		PendingID: withdrawID(g, legWithdrawHold, withdrawalID), Debit: userAccountID(cur, userID),
 		Credit: system(cur, kindOutflow), Amount: uint64(max(amount, 0)), Ledger: cur.Ledger, Code: codeWithdraw,
 		Flags: Flags{VoidPending: true}}}, true)
 }
