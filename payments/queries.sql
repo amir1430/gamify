@@ -99,3 +99,44 @@ UPDATE pay_withdrawals
 SET status = sqlc.arg(status), ref = COALESCE(NULLIF(sqlc.arg(ref)::text, ''), ref), reason = sqlc.arg(reason), updated_at = now()
 WHERE id = sqlc.arg(id) AND status = 'sending'
 RETURNING *;
+
+-- name: ListWithdrawals :many
+-- Newest first. user_id 0 and empty text filters are no filter; since is inclusive, until exclusive.
+SELECT * FROM pay_withdrawals
+WHERE (sqlc.arg(before_id)::bigint = 0 OR id < sqlc.arg(before_id))
+  AND (sqlc.arg(user_id)::bigint = 0 OR user_id = sqlc.arg(user_id))
+  AND (sqlc.arg(currency)::text = '' OR currency = sqlc.arg(currency))
+  AND (sqlc.arg(method)::text = '' OR method = sqlc.arg(method))
+  AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status))
+  AND (sqlc.narg(since)::timestamptz IS NULL OR created_at >= sqlc.narg(since))
+  AND (sqlc.narg(until)::timestamptz IS NULL OR created_at < sqlc.narg(until))
+ORDER BY id DESC LIMIT sqlc.arg(max_rows);
+
+-- name: ListDeposits :many
+-- As ListWithdrawals.
+SELECT * FROM pay_deposits
+WHERE (sqlc.arg(before_id)::bigint = 0 OR id < sqlc.arg(before_id))
+  AND (sqlc.arg(user_id)::bigint = 0 OR user_id = sqlc.arg(user_id))
+  AND (sqlc.arg(currency)::text = '' OR currency = sqlc.arg(currency))
+  AND (sqlc.arg(method)::text = '' OR method = sqlc.arg(method))
+  AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status))
+  AND (sqlc.narg(since)::timestamptz IS NULL OR created_at >= sqlc.narg(since))
+  AND (sqlc.narg(until)::timestamptz IS NULL OR created_at < sqlc.narg(until))
+ORDER BY id DESC LIMIT sqlc.arg(max_rows);
+
+-- name: LockWithdrawal :one
+SELECT * FROM pay_withdrawals WHERE id = $1 FOR UPDATE;
+
+-- name: FirstApprove :one
+UPDATE pay_withdrawals SET first_approver = $2, updated_at = now()
+WHERE id = $1 AND status = 'requested' AND first_approver = 0
+RETURNING *;
+
+-- name: DecideWithdrawal :one
+-- A human's decision from an allowed status (an array: reject takes requested or approved, never
+-- sending); no row: it moved. Sets the settle flag off so the money step runs.
+UPDATE pay_withdrawals
+SET status = sqlc.arg(status), decided_by = sqlc.arg(admin_id), settled = false,
+    ref = COALESCE(NULLIF(sqlc.arg(ref)::text, ''), ref), reason = sqlc.arg(reason), updated_at = now()
+WHERE id = sqlc.arg(id) AND status = ANY(sqlc.arg(from_statuses)::text[])
+RETURNING *;

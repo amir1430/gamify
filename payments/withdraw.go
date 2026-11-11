@@ -35,6 +35,7 @@ type Withdrawal struct {
 	Status      string          `json:"status"`
 	Ref         string          `json:"ref"`
 	Reason      string          `json:"reason"`
+	Settled     bool            `json:"settled"` // the ledger step is done
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
 }
@@ -42,7 +43,7 @@ type Withdrawal struct {
 func toWithdrawal(r store.PayWithdrawal) Withdrawal {
 	return Withdrawal{ID: r.ID, UserID: r.UserID, Currency: ledger.Currency(r.Currency), Method: r.Method,
 		Amount: r.Amount, Fee: r.Fee, Destination: r.Destination, Status: r.Status, Ref: r.Ref,
-		Reason: r.Reason, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}
+		Reason: r.Reason, Settled: r.Settled, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}
 }
 
 type withdrawReq struct {

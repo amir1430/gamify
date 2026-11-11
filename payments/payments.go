@@ -144,6 +144,8 @@ func Register(ctx context.Context, a *app.App, cfg Config) (*Service, error) {
 	a.Router.Handle("payments.deposit", realtime.JSON(s.depositRPC))
 	a.Router.Handle("payments.withdraw", realtime.JSON(s.withdrawRPC))
 	a.Router.Handle("payments.cancel", realtime.JSON(s.cancelRPC))
+	a.Router.Handle("payments.history", realtime.JSON(s.historyRPC))
+	a.History("payments", s.history)
 	a.Reconcile(s.Reconcile)
 	a.Loop(cfg.Tick, s.sendDue)
 	return s, nil

@@ -7,6 +7,8 @@ package store
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const cancelWithdrawal = `-- name: CancelWithdrawal :one
@@ -119,6 +121,57 @@ func (q *Queries) CreditingDeposits(ctx context.Context) ([]PayDeposit, error) {
 	return items, nil
 }
 
+const decideWithdrawal = `-- name: DecideWithdrawal :one
+UPDATE pay_withdrawals
+SET status = $1, decided_by = $2, settled = false,
+    ref = COALESCE(NULLIF($3::text, ''), ref), reason = $4, updated_at = now()
+WHERE id = $5 AND status = ANY($6::text[])
+RETURNING id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at
+`
+
+type DecideWithdrawalParams struct {
+	Status       string
+	AdminID      int64
+	Ref          string
+	Reason       string
+	ID           int64
+	FromStatuses []string
+}
+
+// A human's decision from an allowed status (an array: reject takes requested or approved, never
+// sending); no row: it moved. Sets the settle flag off so the money step runs.
+func (q *Queries) DecideWithdrawal(ctx context.Context, arg DecideWithdrawalParams) (PayWithdrawal, error) {
+	row := q.db.QueryRow(ctx, decideWithdrawal,
+		arg.Status,
+		arg.AdminID,
+		arg.Ref,
+		arg.Reason,
+		arg.ID,
+		arg.FromStatuses,
+	)
+	var i PayWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Method,
+		&i.Amount,
+		&i.Fee,
+		&i.Destination,
+		&i.IdemKey,
+		&i.Status,
+		&i.Settled,
+		&i.Ref,
+		&i.Reason,
+		&i.FirstApprover,
+		&i.DecidedBy,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const dueWithdrawals = `-- name: DueWithdrawals :many
 SELECT id FROM pay_withdrawals
 WHERE NOT settled AND status IN ('approved', 'sending') AND lease_until < now()
@@ -171,6 +224,42 @@ func (q *Queries) FindTarget(ctx context.Context, arg FindTargetParams) (PayTarg
 		&i.InvoiceID,
 		&i.Amount,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const firstApprove = `-- name: FirstApprove :one
+UPDATE pay_withdrawals SET first_approver = $2, updated_at = now()
+WHERE id = $1 AND status = 'requested' AND first_approver = 0
+RETURNING id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at
+`
+
+type FirstApproveParams struct {
+	ID            int64
+	FirstApprover int64
+}
+
+func (q *Queries) FirstApprove(ctx context.Context, arg FirstApproveParams) (PayWithdrawal, error) {
+	row := q.db.QueryRow(ctx, firstApprove, arg.ID, arg.FirstApprover)
+	var i PayWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Method,
+		&i.Amount,
+		&i.Fee,
+		&i.Destination,
+		&i.IdemKey,
+		&i.Status,
+		&i.Settled,
+		&i.Ref,
+		&i.Reason,
+		&i.FirstApprover,
+		&i.DecidedBy,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -427,6 +516,141 @@ func (q *Queries) InsertWithdrawal(ctx context.Context, arg InsertWithdrawalPara
 	return i, err
 }
 
+const listDeposits = `-- name: ListDeposits :many
+SELECT id, method, currency, external_id, user_id, target_id, amount, status, reason, created_at FROM pay_deposits
+WHERE ($1::bigint = 0 OR id < $1)
+  AND ($2::bigint = 0 OR user_id = $2)
+  AND ($3::text = '' OR currency = $3)
+  AND ($4::text = '' OR method = $4)
+  AND ($5::text = '' OR status = $5)
+  AND ($6::timestamptz IS NULL OR created_at >= $6)
+  AND ($7::timestamptz IS NULL OR created_at < $7)
+ORDER BY id DESC LIMIT $8
+`
+
+type ListDepositsParams struct {
+	BeforeID int64
+	UserID   int64
+	Currency string
+	Method   string
+	Status   string
+	Since    pgtype.Timestamptz
+	Until    pgtype.Timestamptz
+	MaxRows  int32
+}
+
+// As ListWithdrawals.
+func (q *Queries) ListDeposits(ctx context.Context, arg ListDepositsParams) ([]PayDeposit, error) {
+	rows, err := q.db.Query(ctx, listDeposits,
+		arg.BeforeID,
+		arg.UserID,
+		arg.Currency,
+		arg.Method,
+		arg.Status,
+		arg.Since,
+		arg.Until,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PayDeposit
+	for rows.Next() {
+		var i PayDeposit
+		if err := rows.Scan(
+			&i.ID,
+			&i.Method,
+			&i.Currency,
+			&i.ExternalID,
+			&i.UserID,
+			&i.TargetID,
+			&i.Amount,
+			&i.Status,
+			&i.Reason,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWithdrawals = `-- name: ListWithdrawals :many
+SELECT id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at FROM pay_withdrawals
+WHERE ($1::bigint = 0 OR id < $1)
+  AND ($2::bigint = 0 OR user_id = $2)
+  AND ($3::text = '' OR currency = $3)
+  AND ($4::text = '' OR method = $4)
+  AND ($5::text = '' OR status = $5)
+  AND ($6::timestamptz IS NULL OR created_at >= $6)
+  AND ($7::timestamptz IS NULL OR created_at < $7)
+ORDER BY id DESC LIMIT $8
+`
+
+type ListWithdrawalsParams struct {
+	BeforeID int64
+	UserID   int64
+	Currency string
+	Method   string
+	Status   string
+	Since    pgtype.Timestamptz
+	Until    pgtype.Timestamptz
+	MaxRows  int32
+}
+
+// Newest first. user_id 0 and empty text filters are no filter; since is inclusive, until exclusive.
+func (q *Queries) ListWithdrawals(ctx context.Context, arg ListWithdrawalsParams) ([]PayWithdrawal, error) {
+	rows, err := q.db.Query(ctx, listWithdrawals,
+		arg.BeforeID,
+		arg.UserID,
+		arg.Currency,
+		arg.Method,
+		arg.Status,
+		arg.Since,
+		arg.Until,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PayWithdrawal
+	for rows.Next() {
+		var i PayWithdrawal
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Currency,
+			&i.Method,
+			&i.Amount,
+			&i.Fee,
+			&i.Destination,
+			&i.IdemKey,
+			&i.Status,
+			&i.Settled,
+			&i.Ref,
+			&i.Reason,
+			&i.FirstApprover,
+			&i.DecidedBy,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockUserWithdrawals = `-- name: LockUserWithdrawals :exec
 SELECT pg_advisory_xact_lock(hashtext('payments:withdraw'), ($1::bigint % 2147483647)::int)
 `
@@ -435,6 +659,35 @@ SELECT pg_advisory_xact_lock(hashtext('payments:withdraw'), ($1::bigint % 214748
 func (q *Queries) LockUserWithdrawals(ctx context.Context, userID int64) error {
 	_, err := q.db.Exec(ctx, lockUserWithdrawals, userID)
 	return err
+}
+
+const lockWithdrawal = `-- name: LockWithdrawal :one
+SELECT id, user_id, currency, method, amount, fee, destination, idem_key, status, settled, ref, reason, first_approver, decided_by, lease_until, created_at, updated_at FROM pay_withdrawals WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockWithdrawal(ctx context.Context, id int64) (PayWithdrawal, error) {
+	row := q.db.QueryRow(ctx, lockWithdrawal, id)
+	var i PayWithdrawal
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Currency,
+		&i.Method,
+		&i.Amount,
+		&i.Fee,
+		&i.Destination,
+		&i.IdemKey,
+		&i.Status,
+		&i.Settled,
+		&i.Ref,
+		&i.Reason,
+		&i.FirstApprover,
+		&i.DecidedBy,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const markCredited = `-- name: MarkCredited :one
