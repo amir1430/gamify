@@ -9,6 +9,96 @@ import (
 	"context"
 )
 
+const creditingDeposits = `-- name: CreditingDeposits :many
+SELECT id, method, currency, external_id, user_id, target_id, amount, status, reason, created_at FROM pay_deposits WHERE status = 'crediting' ORDER BY id LIMIT 100
+`
+
+func (q *Queries) CreditingDeposits(ctx context.Context) ([]PayDeposit, error) {
+	rows, err := q.db.Query(ctx, creditingDeposits)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PayDeposit
+	for rows.Next() {
+		var i PayDeposit
+		if err := rows.Scan(
+			&i.ID,
+			&i.Method,
+			&i.Currency,
+			&i.ExternalID,
+			&i.UserID,
+			&i.TargetID,
+			&i.Amount,
+			&i.Status,
+			&i.Reason,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const findTarget = `-- name: FindTarget :one
+SELECT id, method, currency, user_id, address, invoice_id, amount, created_at FROM pay_targets
+WHERE method = $1 AND ((address <> '' AND address = $2) OR (invoice_id <> '' AND invoice_id = $3))
+LIMIT 1
+`
+
+type FindTargetParams struct {
+	Method    string
+	Address   string
+	InvoiceID string
+}
+
+func (q *Queries) FindTarget(ctx context.Context, arg FindTargetParams) (PayTarget, error) {
+	row := q.db.QueryRow(ctx, findTarget, arg.Method, arg.Address, arg.InvoiceID)
+	var i PayTarget
+	err := row.Scan(
+		&i.ID,
+		&i.Method,
+		&i.Currency,
+		&i.UserID,
+		&i.Address,
+		&i.InvoiceID,
+		&i.Amount,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getDeposit = `-- name: GetDeposit :one
+SELECT id, method, currency, external_id, user_id, target_id, amount, status, reason, created_at FROM pay_deposits WHERE method = $1 AND external_id = $2
+`
+
+type GetDepositParams struct {
+	Method     string
+	ExternalID string
+}
+
+func (q *Queries) GetDeposit(ctx context.Context, arg GetDepositParams) (PayDeposit, error) {
+	row := q.db.QueryRow(ctx, getDeposit, arg.Method, arg.ExternalID)
+	var i PayDeposit
+	err := row.Scan(
+		&i.ID,
+		&i.Method,
+		&i.Currency,
+		&i.ExternalID,
+		&i.UserID,
+		&i.TargetID,
+		&i.Amount,
+		&i.Status,
+		&i.Reason,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getLimits = `-- name: GetLimits :one
 SELECT deposit, withdraw FROM pay_limits WHERE currency = $1 AND method = $2
 `
@@ -27,6 +117,138 @@ func (q *Queries) GetLimits(ctx context.Context, arg GetLimitsParams) (GetLimits
 	row := q.db.QueryRow(ctx, getLimits, arg.Currency, arg.Method)
 	var i GetLimitsRow
 	err := row.Scan(&i.Deposit, &i.Withdraw)
+	return i, err
+}
+
+const insertDeposit = `-- name: InsertDeposit :one
+INSERT INTO pay_deposits (method, currency, external_id, user_id, target_id, amount, status, reason)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (method, external_id) DO NOTHING
+RETURNING id, method, currency, external_id, user_id, target_id, amount, status, reason, created_at
+`
+
+type InsertDepositParams struct {
+	Method     string
+	Currency   string
+	ExternalID string
+	UserID     int64
+	TargetID   int64
+	Amount     int64
+	Status     string
+	Reason     string
+}
+
+func (q *Queries) InsertDeposit(ctx context.Context, arg InsertDepositParams) (PayDeposit, error) {
+	row := q.db.QueryRow(ctx, insertDeposit,
+		arg.Method,
+		arg.Currency,
+		arg.ExternalID,
+		arg.UserID,
+		arg.TargetID,
+		arg.Amount,
+		arg.Status,
+		arg.Reason,
+	)
+	var i PayDeposit
+	err := row.Scan(
+		&i.ID,
+		&i.Method,
+		&i.Currency,
+		&i.ExternalID,
+		&i.UserID,
+		&i.TargetID,
+		&i.Amount,
+		&i.Status,
+		&i.Reason,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertTarget = `-- name: InsertTarget :one
+INSERT INTO pay_targets (method, currency, user_id, address, invoice_id, amount)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT DO NOTHING
+RETURNING id, method, currency, user_id, address, invoice_id, amount, created_at
+`
+
+type InsertTargetParams struct {
+	Method    string
+	Currency  string
+	UserID    int64
+	Address   string
+	InvoiceID string
+	Amount    int64
+}
+
+func (q *Queries) InsertTarget(ctx context.Context, arg InsertTargetParams) (PayTarget, error) {
+	row := q.db.QueryRow(ctx, insertTarget,
+		arg.Method,
+		arg.Currency,
+		arg.UserID,
+		arg.Address,
+		arg.InvoiceID,
+		arg.Amount,
+	)
+	var i PayTarget
+	err := row.Scan(
+		&i.ID,
+		&i.Method,
+		&i.Currency,
+		&i.UserID,
+		&i.Address,
+		&i.InvoiceID,
+		&i.Amount,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const markCredited = `-- name: MarkCredited :one
+UPDATE pay_deposits SET status = 'credited' WHERE id = $1 AND status = 'crediting' RETURNING id, method, currency, external_id, user_id, target_id, amount, status, reason, created_at
+`
+
+func (q *Queries) MarkCredited(ctx context.Context, id int64) (PayDeposit, error) {
+	row := q.db.QueryRow(ctx, markCredited, id)
+	var i PayDeposit
+	err := row.Scan(
+		&i.ID,
+		&i.Method,
+		&i.Currency,
+		&i.ExternalID,
+		&i.UserID,
+		&i.TargetID,
+		&i.Amount,
+		&i.Status,
+		&i.Reason,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const openTarget = `-- name: OpenTarget :one
+SELECT id, method, currency, user_id, address, invoice_id, amount, created_at FROM pay_targets WHERE method = $1 AND currency = $2 AND user_id = $3 AND amount = 0
+`
+
+type OpenTargetParams struct {
+	Method   string
+	Currency string
+	UserID   int64
+}
+
+func (q *Queries) OpenTarget(ctx context.Context, arg OpenTargetParams) (PayTarget, error) {
+	row := q.db.QueryRow(ctx, openTarget, arg.Method, arg.Currency, arg.UserID)
+	var i PayTarget
+	err := row.Scan(
+		&i.ID,
+		&i.Method,
+		&i.Currency,
+		&i.UserID,
+		&i.Address,
+		&i.InvoiceID,
+		&i.Amount,
+		&i.CreatedAt,
+	)
 	return i, err
 }
 

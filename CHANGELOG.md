@@ -8,6 +8,7 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 ### Added
 - `app.App.Go`: run a long-lived worker with Run's context, restarted with a 1 s to 1 min backoff when it returns.
 - `payments` module: `Receiver` (deposit methods) and `Sender` (withdrawal methods) registration, per-method limits with Go defaults overlaid by the console, `paymentstest` fakes. Migrations: `goose_payments`.
+- `payments`: deposits. RPC `payments.deposit {currency, method, amount}` returns a `DepositInfo` (amount 0: the user's open address, stored and reused); a Receiver reports payments through `Host.Received`, credited once per external ID (`ErrDepositsOff` 1041, push `payments.updated`). Payments below the method's minimum are `ignored`; unknown addresses, wrong currency and invoice amount mismatches are `unmatched` and never credited. The reconciler finishes `crediting` rows.
 - `ledger`: withdrawals. `CurrencyConfig.Withdrawable` (off by default) and `Ledger.Withdrawable`;
   `Withdraw` holds the amount (pending user -> new `outflow` system account; the welcome grant
   stays play-only, `ErrInsufficientFunds`), `PostWithdraw` settles it with an optional fee to

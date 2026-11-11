@@ -36,6 +36,7 @@ type PayDeposit struct {
 	TargetID   int64
 	Amount     int64
 	Status     string
+	Reason     string
 	CreatedAt  pgtype.Timestamptz
 }
 

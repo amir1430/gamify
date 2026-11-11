@@ -20,6 +20,20 @@ type Receiver struct {
 	h     *payments.Host
 }
 
+// NumCalls is how many times Deposit was called.
+func (r *Receiver) NumCalls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.Calls)
+}
+
+// Ready reports whether Run has started, so Pay works.
+func (r *Receiver) Ready() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.h != nil
+}
+
 func (r *Receiver) Name() string { return r.Method }
 
 func (r *Receiver) Deposit(_ context.Context, req payments.DepositRequest) (payments.DepositInfo, error) {

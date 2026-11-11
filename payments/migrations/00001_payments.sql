@@ -33,6 +33,7 @@ CREATE TABLE pay_deposits (
     target_id   bigint      NOT NULL DEFAULT 0,
     amount      bigint      NOT NULL CHECK (amount > 0),
     status      text        NOT NULL CHECK (status IN ('crediting', 'credited', 'ignored', 'unmatched')),
+    reason      text        NOT NULL DEFAULT '',
     created_at  timestamptz NOT NULL DEFAULT now(),
     UNIQUE (method, external_id)
 );

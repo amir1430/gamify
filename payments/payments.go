@@ -5,7 +5,6 @@ package payments
 import (
 	"context"
 	"embed"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -88,12 +87,6 @@ type Host struct {
 	s      *Service
 }
 
-// Received records an incoming payment and credits the user. Safe to call again for the same
-// ExternalID.
-func (h *Host) Received(ctx context.Context, in Incoming) error {
-	return errors.New("payments: Received not implemented yet") // Task 4
-}
-
 // DepositLimits: zero is no limit.
 type DepositLimits struct{ Min int64 }
 
@@ -130,9 +123,12 @@ func Register(ctx context.Context, a *app.App, cfg Config) (*Service, error) {
 	if cfg.Lease == 0 {
 		cfg.Lease = time.Minute
 	}
-	return &Service{a: a, q: store.New(a.Pool), cfg: cfg,
+	s := &Service{a: a, q: store.New(a.Pool), cfg: cfg,
 		receivers: map[key]Receiver{}, senders: map[key]Sender{},
-		deposit: map[key]DepositLimits{}, withdraw: map[key]WithdrawLimits{}}, nil
+		deposit: map[key]DepositLimits{}, withdraw: map[key]WithdrawLimits{}}
+	a.Router.Handle("payments.deposit", realtime.JSON(s.depositRPC))
+	a.Reconcile(s.Reconcile)
+	return s, nil
 }
 
 func checkName(name string) error {
