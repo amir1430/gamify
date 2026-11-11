@@ -6,6 +6,16 @@ Nov 11, 2026
 > leaderboards v1.3, tournaments v1.4, leagues v1.5, cross-feature docs v1.6. See
 > `docs/superpowers/plans/2026-10-22-v1.1-index.md`. Supersedes §3 of `gamify platform changes.md`.
 
+> **Implementation notes, Nov 11, 2026:** where the build differs from the text below.
+> - A new `holding` status: a withdrawal row leaves it only after the ledger hold is confirmed.
+>   §5's "requested rows without their ledger hold" means `holding`.
+> - `DepositLimits` and `WithdrawLimits` have an `Off` switch (stops new requests).
+> - Deposit address targets are per (method, user); amount and currency checks apply only to invoices.
+> - `StateUnknown`: `Sender.Status` answers it only when it never saw the ID; only then is the payout re-sent.
+> - The fee is taken from the requested amount: payout = amount - fee, fee goes to `house`.
+> - `Resolve` needs an expired send lease (`ErrSendInProgress` otherwise).
+> - `ErrWrongStatus` is a plain Go error, not a client error.
+
 ## Intent
 
 Some currencies are real money (USDT in a casino): users deposit them from outside and withdraw

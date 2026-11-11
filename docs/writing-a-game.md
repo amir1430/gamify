@@ -364,6 +364,52 @@ All in `QueueConfig`, all with defaults:
   not in the JSON). Prepare gets a copy of the ticket: only `Server` is kept.
 - `Compatible(a, b Ticket) bool`: a last veto on any two tickets in a match.
 
+## Deposits and withdrawals
+
+Real-money currencies move in and out through `payments`: you write a `Receiver` (money in) and a
+`Sender` (money out) per method; gamify does the ledger, limits, approvals and retries. The
+currency must be `Withdrawable` (`CurrencyConfig.Withdrawable`, `w` in `CURRENCIES`) to have a
+Sender. Amounts are int64 minor units everywhere.
+
+**Receiver**
+- `Deposit(ctx, DepositRequest)` returns a `DepositInfo`: an `Address` (amount 0: the user's open
+  address, stored and reused) or an invoice (`InvoiceID`, `URL`, `Amount`, `ExpiresAt`).
+- `Run(ctx, *Host)` listens (a chain watcher, or a webhook on `h.Mux`) and reports each confirmed
+  payment with `h.Received(ctx, Incoming{ExternalID, Address, InvoiceID, Currency, Amount})`.
+  `Received` is idempotent per `ExternalID`, so report again after a restart. Return when `ctx` ends;
+  a return is restarted with a backoff.
+
+**Sender**
+- `ValidateDestination(dest)` rejects a bad address before any money is held.
+- `Send(ctx, Payout)` must be idempotent per `Payout.ID`: a second call with the same ID must not
+  pay twice. `Payout.Amount` is already minus the fee. Answer `StatePaid` (with `Ref`),
+  `StateFailed` (with `Reason`) or `StatePending`.
+- `Status(ctx, id)` answers the same states for an earlier send, and `StateUnknown` only when it
+  never saw that ID (gamify then re-sends it).
+- Honor `ctx` deadlines: a call is cancelled when its lease ends.
+- Only `StateFailed` refunds. A `Send` or `Status` error, or `StatePending`, never does: the money
+  stays held and the withdrawal is asked about again until it is paid or failed (or an operator
+  settles it in the console).
+
+```go
+pay, err := payments.Register(ctx, a, payments.Config{})
+err = pay.Receiver("usdt", &myChain{}, payments.DepositLimits{Min: 5_000_000})
+err = pay.Sender("usdt", &myChain{}, payments.WithdrawLimits{
+	Min: 10_000_000, Fee: 1_000_000, DailyCap: 1_000_000_000, AutoApproveUpTo: 100_000_000})
+// after admin.Register: err = paymentsadmin.Register(adm, pay)
+```
+
+Register before `a.Run`. Limits are Go defaults the console can edit (zero is no limit, except
+`AutoApproveUpTo`: 0 means every withdrawal waits for an admin; above `SecondApprovalAbove` a second
+admin must approve). `Off` stops new deposits or withdrawals of a method. RPCs: `payments.deposit`,
+`payments.withdraw` (needs an `idem_key`), `payments.cancel`, `payments.history`; pushes
+`payments.updated`. Client errors use codes 1040-1049.
+
+**Test it** with `payments/paymentstest`: `Receiver.Pay` simulates an incoming payment, and
+`Sender` is scripted (`Next`, `Err`, `StatusErr`, `Statuses`). With `apptest`, `Register` payments,
+add the fakes, fund or `Pay`, call `payments.withdraw` and assert `a.Balance` and the withdrawal's
+status. The sample's `DEV_FAUCET=true` registers these fakes as method `dev`; never with real money.
+
 ## Checklist
 
 - [ ] One game ID per table of operation IDs, in `FirstBrandGame..MaxGame`, registered with

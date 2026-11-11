@@ -103,7 +103,7 @@ func onlySending(r admin.Row) admin.ActionState {
 
 func withdrawals(s *payments.Service) admin.View {
 	// act runs one change of a withdrawal and returns the console's before and after.
-	 act := func(do func(ctx context.Context, tx pgx.Tx, c admin.Call) (payments.Withdrawal, error)) func(context.Context, pgx.Tx, admin.Call) (any, any, error) {
+	act := func(do func(ctx context.Context, tx pgx.Tx, c admin.Call) (payments.Withdrawal, error)) func(context.Context, pgx.Tx, admin.Call) (any, any, error) {
 		return func(ctx context.Context, tx pgx.Tx, c admin.Call) (any, any, error) {
 			before, err := s.Get(ctx, c.ID)
 			if err != nil {

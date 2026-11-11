@@ -22,13 +22,20 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 - `cmd/gamify`: the sixth `CURRENCIES` field takes flags `t` (transferable) and `w`
   (withdrawable), in any order: `usdt:3:1:0:6:w`, `gems:3:1:0:0:tw`.
 
-### Upgrade notes
-- `ledger.Init` creates the `outflow` account for every existing currency on the next start
-  (idempotent, nothing to run). `SystemAccounts()` and `TransferKinds()` gain `outflow` and
-  `withdraw`, so the treasury page lists them. Existing currencies stay non-withdrawable.
+### Changed
+- `ledger`: `SystemAccounts()` and `TransferKinds()` gain `outflow` and `withdraw`, so the treasury page lists them.
+- `cmd/gamify`: registers `payments` and `paymentsadmin` (the console only when it is on). With `DEV_FAUCET=true` it adds a fake method `dev` (`paymentstest`): a receiver for every currency and an auto-approved, always-paid sender for every withdrawable one. It moves no real money: never use it where money is real.
 
 ### Fixed
 - `matchmaking`: `Finish` and `Cancel` take a slot like the matcher's steps do, so many duplicate calls for one match waiting on its row lock can no longer exhaust the Postgres pool.
+
+### Upgrade notes
+- New goose table `goose_payments`: `payments.Register` runs its migrations on start. Nothing to run by hand.
+- `ledger.Init` creates the `outflow` system account for every existing currency on the next start
+  (idempotent, nothing to run). Existing currencies stay non-withdrawable until you set
+  `CurrencyConfig.Withdrawable` (or the `w` flag in `CURRENCIES`).
+- New admin permissions `payments.approve`, `payments.resolve` and `payments.limits`: a brand's custom roles need them to see the actions.
+- Client error codes 1040-1049 are reserved for `payments` (`ErrNotFound` is 1049). Don't use them in your own games.
 
 ## [1.1.13] - 2026-11-04
 

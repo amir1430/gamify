@@ -163,6 +163,7 @@ published port (`127.0.0.1:10000`) and `centrifugo.proxy_endpoint` at
 | `admin/` | Opt-in back office (own migrations, goose table `goose_admin`): console users with roles and permissions, argon2id passwords, TOTP, audit log, balance adjustments, brand views, the console UI (`admin/ui`, embedded); `CreateUser` for the first owner |
 | `party/` | Opt-in module (goose table `goose_party`): parties with a leader, join requests, chat, `Lock`/`Unlock` for other modules; `party/partyadmin` is its console view |
 | `restrict/` | Opt-in module (goose table `goose_restrict`): per-player restrictions set by operators. Suspended: no login (`App.LoginCheck`, 403) and every RPC refused; blocks: groups of RPC methods the brand names (`Config.Blocks`; an entry `method?field=value` matches only calls whose payload has that top-level field value, e.g. one game of a shared `duel.create`); each until lifted or a time. Checked in memory (`Router.CheckData`), reloaded every 5 s; a suspension drops the player's connections. `restrict/restrictadmin` is its console page (`PermRestrict`) |
+| `payments/` | Opt-in module (goose table `goose_payments`): deposits and withdrawals through brand-supplied `Receiver`/`Sender` drivers per method, limits, approvals, background sending; `payments/paymentstest` has fakes, `payments/paymentsadmin` is its console views. See `docs/writing-a-game.md` |
 | `matchmaking/` | Opt-in module (goose table `goose_matchmaking`, needs `party`): queues with parties, ratings (OpenSkill), staked matches (`HoldPot`/`SettlePot`), direct matches (`Create`), `Finish`/`Cancel`, timeouts; `matchmaking/matchmakingadmin` is its console views |
 | `gameconfig/` | Admin-set limits per game × currency × variant (code defaults are hard caps) |
 | `metrics/` | Prometheus metrics and request logs |
@@ -223,7 +224,7 @@ balance themselves. Amounts are `int64` minor units, never floats.
 | The brand sells something | `Spend` (into the per-currency `sales` account) |
 | Player to player | `Transfer` (only in a `Transferable` currency) |
 | The brand gives something | `Reward`, welcome grants |
-| Outside the games | `Deposit`, `Swap`, `Adjust` (admin) |
+| Outside the games | `Deposit`, `Withdraw` (`PostWithdraw`, `VoidWithdraw`; `Withdrawable` currencies), `Swap`, `Adjust` (admin) |
 
 Every call is idempotent: transfer IDs come from the game ID and the row ID, so a retry or the
 reconciler can't move money twice. A refused ID stays refused (`ErrAlreadyFailed`).
@@ -275,7 +276,7 @@ Env read by the sample `main` (see `.env.example`):
 | `AUTH_JWT_SECRET` (≥ 32 bytes), `AUTH_JWT_AUDIENCE` | brand-signed JWT login; at least one login provider |
 | `SEED_KEY` (`openssl rand -hex 32`), `SEED_KEY_ID` | seals fairness server seeds; bump the ID with a new key to rotate |
 | `CURRENCIES` | `code:ledger:minamount[:welcome[:decimals[:flags]]]`, comma-separated, e.g. `usd:1:1:0:2,coins:2:1:1000:0:t,usdt:3:1:0:6:w` (`decimals` display only, ≤ 18; `flags`: `t` transferable, `w` withdrawable, combined as `tw`, or omitted) |
-| `DEV_FAUCET` | `true` adds `wallet.faucet` (free test money). Never with real money |
+| `DEV_FAUCET` | `true` adds `wallet.faucet` (free test money) and a fake payment method `dev` (deposits and withdrawals that move no real money). Never with real money |
 | `ADMIN_*` | the console, below |
 
 ## Admin console
@@ -356,6 +357,5 @@ with upgrade notes.
 
 ## Not in the platform yet
 
-Planned modules, each when a brand needs it: leaderboards, referrals, a payments provider
-(deposits and withdrawals, see `gamify platform changes.md`), and an exchange service with rates
+Planned modules, each when a brand needs it: leaderboards, referrals, and an exchange service with rates
 over `ledger.Swap`. Until then a brand builds them on the ledger, realtime and admin views.

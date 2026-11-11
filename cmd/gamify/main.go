@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -29,6 +30,9 @@ import (
 	"github.com/amir1430/gamify/matchmaking/matchmakingadmin"
 	"github.com/amir1430/gamify/party"
 	"github.com/amir1430/gamify/party/partyadmin"
+	"github.com/amir1430/gamify/payments"
+	"github.com/amir1430/gamify/payments/paymentsadmin"
+	"github.com/amir1430/gamify/payments/paymentstest"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -104,6 +108,16 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// A brand registers its own Receivers and Senders here (see docs/writing-a-game.md).
+	pay, err := payments.Register(ctx, a, payments.Config{})
+	if err != nil {
+		return err
+	}
+	if ac.DevFaucet {
+		if err := devPayments(pay, currencies); err != nil {
+			return err
+		}
+	}
 	acfg, adminOn, err := adminConfig(os.Getenv)
 	if err != nil {
 		return err
@@ -114,11 +128,28 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		if err := errors.Join(partyadmin.Register(adm, parties), matchmakingadmin.Register(adm, mm)); err != nil {
+		if err := errors.Join(partyadmin.Register(adm, parties), matchmakingadmin.Register(adm, mm), paymentsadmin.Register(adm, pay)); err != nil {
 			return err
 		}
 	}
 	return a.Run(ctx)
+}
+
+// devPayments registers the fake method "dev" for DEV_FAUCET: a receiver for every currency and a
+// sender (everything auto-approved, always paid) for every withdrawable one. It moves no real
+// money: never use it, or DEV_FAUCET, where money is real.
+func devPayments(s *payments.Service, cs []ledger.CurrencyConfig) error {
+	for _, c := range cs {
+		if err := s.Receiver(c.Code, &paymentstest.Receiver{Method: "dev"}, payments.DepositLimits{}); err != nil {
+			return err
+		}
+		if c.Withdrawable {
+			if err := s.Sender(c.Code, &paymentstest.Sender{Method: "dev"}, payments.WithdrawLimits{AutoApproveUpTo: math.MaxInt64}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // adminCmd runs `gamify admin add-user <email> <role>`: it opens only the Postgres pool.
