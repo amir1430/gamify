@@ -128,7 +128,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		if err := errors.Join(partyadmin.Register(adm, parties), matchmakingadmin.Register(adm, mm), paymentsadmin.Register(adm, pay)); err != nil {
+		if err := errors.Join(partyadmin.Register(adm, parties), matchmakingadmin.Register(adm, mm), paymentsadmin.Register(adm, pay, paymentsadmin.Config{})); err != nil {
 			return err
 		}
 	}

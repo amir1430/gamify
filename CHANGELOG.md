@@ -23,6 +23,12 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   `ErrNotWithdrawable` in a currency without the flag, `ErrWithdrawSettled` for a post after a void
   or a void after a post. New system account `outflow` and transfer kinds `withdraw` and `withdraw_fee`.
 - `ledger.DepositFor(ctx, g, c, depositID, userID, amount)`: `Deposit` keyed by a game's deposit rows, so a module's deposit IDs never collide with another's or with `Deposit`'s. `payments` uses it. `Deposit` is unchanged.
+- `admin.Alert` and `GET /api/alerts`: a module registers a count an operator should look at (name, title, hint, `Perm`, tone `AlertWarn`/`AlertDanger`, an optional `View` with `Filters` to link to). The dashboard lists the ones above zero under "Needs attention", and a count with a view badges it in the menu. A failing `Count` shows that alert as unavailable, never a failed page.
+- `admin.Status`: a module's table on the system page (`Columns` like a view's, `Rows`), shown to roles with its `Perm`. `GET /api/system` gains `sections` and each currency's `transferable` and `withdrawable`; the system page shows both flags.
+- `GET /api/views`: each view lists `audit_actions` (every action's audit name, whatever the role may run), and the audit log's action filter gains a group per view.
+- `ledger.Ledger.Transferable(c)`.
+- `payments`: `Service.CountWithdrawals` and `CountDeposits(ctx, Filter)`; `Filter.Statuses` (any of them) for the lists and counts. `Service.Health()`: per method since start, the Receiver's `Run` (running, restarts) and when `Received` or `Send`/`Status` last answered or failed (`MethodHealth`, in memory).
+- `paymentsadmin`: dashboard alerts `pay-approve` (withdrawals waiting for an approver, to `payments.approve` holders), `pay-stuck` (approved or sending, requested more than `Config.StuckAfter` ago, default 1 h) and `pay-unmatched` (unmatched deposits within `Config.UnmatchedWithin`, default 24 h), and the system page's "Payment methods" table with each method's health. The treasury page shows "Withdrawals out", and the `outflow` account and `withdraw_fee` kind have proper labels.
 - `cmd/gamify`: the sixth `CURRENCIES` field takes flags `t` (transferable) and `w`
   (withdrawable), in any order: `usdt:3:1:0:6:w`, `gems:3:1:0:0:tw`.
 
@@ -40,6 +46,7 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
   (idempotent, nothing to run). Existing currencies stay non-withdrawable until you set
   `CurrencyConfig.Withdrawable` (or the `w` flag in `CURRENCIES`).
 - New admin permissions `payments.approve`, `payments.resolve` and `payments.limits`: a brand's custom roles need them to see the actions. The built-in `operator` role gains `payments.approve` by default: operators can approve and reject withdrawals once `paymentsadmin` is registered.
+- `payments` migration 00002 adds indexes on `(status, created_at)` of `pay_withdrawals` and `pay_deposits` for the console's alerts. It runs on start.
 - Client error codes 1040-1049 are reserved for `payments` (`ErrNotFound` is 1049). Don't use them in your own games.
 
 ## [1.1.13] - 2026-11-04

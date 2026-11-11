@@ -1,7 +1,9 @@
 import { useCustom, useInvalidate } from '@refinedev/core'
 import { Activity, ArrowRight, Clock, Gamepad2, HeartPulse, Landmark, Radio, RefreshCw, ScrollText, UserPlus, Users } from 'lucide-react'
 import { Link } from 'react-router'
+import { AlertsCard } from '@/components/alerts'
 import { BarChart } from '@/components/bars'
+import { accountLabel } from '@/components/ledger'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { count } from '@/lib/format'
@@ -22,9 +24,7 @@ type AuditRow = { id: number; admin_id: number | null; action: string; target: s
 const REFRESH_MS = 15_000
 const RANGES = ['7', '30', '90'] as const
 // System accounts in the order an operator reads them; any other the ledger adds goes after.
-const ACCOUNTS = ['house', 'rewards', 'sales', 'adjust', 'pot', 'exchange', 'inflow', 'faucet', 'grant', 'floor']
-const LABEL: Record<string, string> = { house: 'House', rewards: 'Rewards', sales: 'Sales', adjust: 'Adjustments' }
-const label = (a: string) => LABEL[a] ?? a[0].toUpperCase() + a.slice(1)
+const ACCOUNTS = ['house', 'rewards', 'sales', 'adjust', 'pot', 'exchange', 'inflow', 'outflow', 'faucet', 'grant', 'floor']
 const pct = (n: number, of: number) => (of ? `${Math.round((n / of) * 100)}%` : '—')
 
 // The platform at a glance: who's online, players and sign-ups, what waits for an approver, the
@@ -80,6 +80,8 @@ export function Dashboard() {
           to="/games"
         />
       </div>
+
+      <AlertsCard className="mt-4" />
 
       <div className="mt-4 grid gap-4 xl:grid-cols-3">
         <Card
@@ -164,7 +166,7 @@ function Treasury({ d, loading }: { d?: Dashboard; loading: boolean }) {
         loading={loading}
         rowKey={(a) => a}
         columns={[
-          { key: 'account', title: 'System account', render: (a) => <span className="font-medium">{label(a)}</span> },
+          { key: 'account', title: 'System account', render: (a) => <span className="font-medium">{accountLabel(a)}</span> },
           { key: 'balance', title: 'Balance', align: 'right', render: (a) => <span className="num">{money(sys![a], cur)}</span> },
         ]}
       />

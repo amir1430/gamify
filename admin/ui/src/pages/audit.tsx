@@ -6,6 +6,7 @@ import { Chips, FilterBy, RangeFilter, SearchBox, useLiveParam, useParams, useRa
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { useViews } from './views'
 import { Choice, DataTable, ExportButton, Facts, Faint, Mono, PageHeader, Pill, Toolbar, When, dateTime, downloadCSV, useParam, usePaged, usePerm } from '../ui'
 
 type Entry = {
@@ -20,7 +21,7 @@ type Entry = {
   created_at: string
 }
 
-// The platform's actions by area; brand views add view.<name>.<action> (searchable as text).
+// The platform's actions by area; each view's actions (view.<name>.<action>) join as a group of their own.
 const ACTIONS: { label: string; options: string[] }[] = [
   { label: 'Sign-in', options: ['login.ok', 'login.fail', 'logout', 'totp.enrol'] },
   { label: 'Console users', options: ['admin.create', 'admin.update', 'admin.password'] },
@@ -28,7 +29,6 @@ const ACTIONS: { label: string; options: string[] }[] = [
   { label: 'Players', options: ['user.unlink', 'user.disconnect'] },
   { label: 'Adjustments', options: ['adjust.request', 'adjust.approve', 'adjust.reject'] },
 ]
-const KNOWN = ACTIONS.flatMap((g) => g.options)
 
 type Admin = { id: number; email: string }
 
@@ -36,6 +36,9 @@ type Admin = { id: number; email: string }
 // (?admin=, ?action=, ?target=, a time range) are the API's; a row opens its before/after, and its
 // action or admin filters the log by itself.
 export function Audit() {
+  const views = useViews()
+  const groups = [...ACTIONS, ...(views ?? []).filter((v) => v.audit_actions?.length).map((v) => ({ label: v.group ? `${v.group} · ${v.title}` : v.title, options: v.audit_actions }))]
+  const KNOWN = groups.flatMap((g) => g.options)
   const { set } = useParams()
   const [admin, setAdmin] = useParam('admin')
   const [action, setAction] = useParam('action')
@@ -67,7 +70,7 @@ export function Audit() {
           value={!action || KNOWN.includes(action) ? action : 'other'}
           onChange={(v) => setAction(v || null)}
           options={[{ value: '', label: 'All actions' }, ...(action && !KNOWN.includes(action) ? [{ value: 'other', label: action }] : [])]}
-          groups={ACTIONS.map((g) => ({ label: g.label, options: g.options.map((o) => ({ value: o, label: o })) }))}
+          groups={groups.map((g) => ({ label: g.label, options: g.options.map((o) => ({ value: o, label: o })) }))}
         />
         {canAdmins ? (
           <Choice

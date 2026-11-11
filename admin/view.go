@@ -258,26 +258,10 @@ func (adm *Admin) checkView(v View) (View, error) {
 	if v.List == nil {
 		return v, errors.New("list is required")
 	}
-	cols := map[string]Column{}
-	v.Columns = slices.Clone(v.Columns)
-	for i, c := range v.Columns {
-		if c.Key == "" {
-			return v, fmt.Errorf("column %d: key is required", i)
-		}
-		if _, ok := cols[c.Key]; ok {
-			return v, fmt.Errorf("column %q: duplicate key", c.Key)
-		}
-		if err := checkType(c.Type, c.Scale, c.Options); err != nil {
-			return v, fmt.Errorf("column %q: %w", c.Key, err)
-		}
-		if c.Type == Money && (c.CurrencyKey == "") == (c.Currency == "") {
-			return v, fmt.Errorf("column %q: money needs one of CurrencyKey and Currency", c.Key)
-		}
-		if c.Label == "" {
-			c.Label = c.Key
-		}
-		c.Options, c.OptionLabels = slices.Clone(c.Options), maps.Clone(c.OptionLabels)
-		v.Columns[i], cols[c.Key] = c, c
+	var cols map[string]Column
+	var err error
+	if v.Columns, cols, err = checkColumns(v.Columns); err != nil {
+		return v, err
 	}
 	filters := map[string]Filter{}
 	v.Filters = slices.Clone(v.Filters)
@@ -340,6 +324,35 @@ func (adm *Admin) checkView(v View) (View, error) {
 		}
 	}
 	return v, nil
+}
+
+// checkColumns validates cols and returns a copy with labels defaulted, and the columns by key.
+func checkColumns(in []Column) ([]Column, map[string]Column, error) {
+	if len(in) == 0 {
+		return nil, nil, errors.New("columns: at least one is required")
+	}
+	cols := map[string]Column{}
+	out := slices.Clone(in)
+	for i, c := range out {
+		if c.Key == "" {
+			return nil, nil, fmt.Errorf("column %d: key is required", i)
+		}
+		if _, ok := cols[c.Key]; ok {
+			return nil, nil, fmt.Errorf("column %q: duplicate key", c.Key)
+		}
+		if err := checkType(c.Type, c.Scale, c.Options); err != nil {
+			return nil, nil, fmt.Errorf("column %q: %w", c.Key, err)
+		}
+		if c.Type == Money && (c.CurrencyKey == "") == (c.Currency == "") {
+			return nil, nil, fmt.Errorf("column %q: money needs one of CurrencyKey and Currency", c.Key)
+		}
+		if c.Label == "" {
+			c.Label = c.Key
+		}
+		c.Options, c.OptionLabels = slices.Clone(c.Options), maps.Clone(c.OptionLabels)
+		out[i], cols[c.Key] = c, c
+	}
+	return out, cols, nil
 }
 
 // checkAction validates a and returns a copy with its fields' defaults set.

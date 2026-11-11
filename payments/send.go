@@ -58,6 +58,7 @@ func (s *Service) advance(ctx context.Context, id int64) error {
 	} else if res, err = snd.Status(call, id); err == nil && res.State == StateUnknown {
 		res, err = snd.Send(call, p)
 	}
+	s.note(r.Method, "withdraw", err)
 	if err != nil {
 		return fmt.Errorf("payments: withdrawal %d: %w", id, err) // stays sending: never voided
 	}

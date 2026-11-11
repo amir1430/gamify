@@ -47,3 +47,6 @@ func WaitSends(s *Service) { s.Wait() }
 
 // Advance is advance, for tests that race it.
 func Advance(ctx context.Context, s *Service, id int64) error { return s.advance(ctx, id) }
+
+// RunReceiver runs the named Receiver's Run once, as Register's worker does.
+func RunReceiver(ctx context.Context, s *Service, name string) error { return s.runReceiver(ctx, name) }

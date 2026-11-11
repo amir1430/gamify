@@ -135,6 +135,7 @@ type Service struct {
 	senders   map[key]Sender
 	deposit   map[key]DepositLimits
 	withdraw  map[key]WithdrawLimits
+	health    map[healthKey]*health // since start, for Health
 
 	sending sync.WaitGroup // the RPC's background sends
 }
@@ -157,7 +158,7 @@ func Register(ctx context.Context, a *app.App, cfg Config) (*Service, error) {
 	}
 	s := &Service{a: a, q: store.New(a.Pool), cfg: cfg,
 		receivers: map[key]Receiver{}, running: map[string]Receiver{}, senders: map[key]Sender{},
-		deposit: map[key]DepositLimits{}, withdraw: map[key]WithdrawLimits{}}
+		deposit: map[key]DepositLimits{}, withdraw: map[key]WithdrawLimits{}, health: map[healthKey]*health{}}
 	a.Router.Handle("payments.deposit", realtime.JSON(s.depositRPC))
 	a.Router.Handle("payments.withdraw", realtime.JSON(s.withdrawRPC))
 	a.Router.Handle("payments.cancel", realtime.JSON(s.cancelRPC))
@@ -202,8 +203,7 @@ func (s *Service) Receiver(c ledger.Currency, r Receiver, l DepositLimits) error
 	s.deposit[k] = l
 	if s.running[name] == nil {
 		s.running[name] = r
-		h := &Host{Mux: s.a.HTTP, Method: name, s: s}
-		s.a.Go("payments.receiver."+name, func(ctx context.Context) error { return r.Run(ctx, h) })
+		s.a.Go("payments.receiver."+name, func(ctx context.Context) error { return s.runReceiver(ctx, name) })
 	}
 	return nil
 }

@@ -1,5 +1,5 @@
 import { useCustom } from '@refinedev/core'
-import { Check, Cpu, Database, HeartPulse, KeyRound, Minus, Plug, RefreshCw, Search, Settings2, Wallet } from 'lucide-react'
+import { Blocks, Check, Cpu, Database, HeartPulse, KeyRound, Minus, Plug, RefreshCw, Search, Settings2, Wallet } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -7,7 +7,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { bytes, duration } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Card, DataTable, Faint, Mono, Note, PageHeader, Pill, useMoney, useNow } from '../ui'
+import { labelOf, type ViewColumn, type ViewRow } from '@/lib/views'
 import { HealthRow } from './dashboard'
+import { Cell } from './views'
 
 export type Health = { ok: boolean; ms: number; error: string | null }
 export type SystemInfo = {
@@ -17,12 +19,15 @@ export type SystemInfo = {
   runtime: { os: string; arch: string; cpus: number; gomaxprocs: number; goroutines: number; heap_bytes: number; sys_bytes: number; gc_runs: number }
   pool: { max: number; total: number; idle: number; in_use: number; acquires: number; waited: number }
   health: Record<string, Health>
-  currencies: { code: string; decimals: number; min_amount: number; approve_above: number | null; default: boolean }[]
+  currencies: { code: string; decimals: number; min_amount: number; approve_above: number | null; default: boolean; transferable: boolean; withdrawable: boolean }[]
   rpcs: string[]
   history: string[]
   roles: Record<string, string[]>
   console: { telegram_login: boolean; fairness: boolean; ip_allowlist: number; views: number; brand_perms: number }
+  sections: StatusSection[]
 }
+// A module's status table (admin.Status in Go), drawn with the views' cells.
+export type StatusSection = { name: string; title: string; columns: ViewColumn[]; items: ViewRow[]; error: string | null }
 
 const ROLES = ['owner', 'operator', 'support', 'viewer']
 
@@ -139,6 +144,8 @@ export function System() {
                     align: 'right',
                     render: (c) => (c.approve_above == null ? <Faint>never</Faint> : <span className="num">{money(c.approve_above, c.code)}</span>),
                   },
+                  { key: 'transfer', title: 'Player transfers', render: (c) => <YesNo on={c.transferable} /> },
+                  { key: 'withdraw', title: 'Withdrawable', render: (c) => <YesNo on={c.withdrawable} /> },
                 ]}
               />
             </Card>
@@ -156,6 +163,10 @@ export function System() {
             </Card>
           </div>
 
+          {s.sections.map((sec) => (
+            <Section key={sec.name} section={sec} />
+          ))}
+
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <Rpcs rpcs={s.rpcs} />
             <Card title="Roles & permissions" icon={KeyRound} bodyClassName="p-0">
@@ -165,6 +176,30 @@ export function System() {
         </>
       )}
     </>
+  )
+}
+
+// A module's status table; a section whose rows failed says so instead.
+function Section({ section: sec }: { section: StatusSection }) {
+  return (
+    <Card className="mt-4" title={sec.title} icon={Blocks} bodyClassName="p-0">
+      {sec.error ? (
+        <Note className="m-0 px-4 py-3 text-danger">Couldn't load this section.</Note>
+      ) : (
+        <DataTable
+          className="rounded-none border-0 shadow-none"
+          rows={sec.items.map((r, i) => ({ ...r, id: i }))}
+          rowKey={(r) => r.id}
+          empty="Nothing registered."
+          columns={sec.columns.map((c) => ({
+            key: c.key,
+            title: labelOf(c),
+            align: c.type === 'int' || c.type === 'decimal' || c.type === 'money' ? ('right' as const) : undefined,
+            render: (r: ViewRow) => <Cell col={c} row={r} />,
+          }))}
+        />
+      )}
+    </Card>
   )
 }
 

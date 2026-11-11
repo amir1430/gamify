@@ -86,6 +86,80 @@ func (q *Queries) ClaimWithdrawal(ctx context.Context, arg ClaimWithdrawalParams
 	return i, err
 }
 
+const countDeposits = `-- name: CountDeposits :one
+SELECT count(*) FROM pay_deposits
+WHERE ($1::bigint = 0 OR user_id = $1)
+  AND ($2::text = '' OR currency = $2)
+  AND ($3::text = '' OR method = $3)
+  AND ($4::text = '' OR status = $4)
+  AND (cardinality($5::text[]) = 0 OR status = ANY($5::text[]))
+  AND ($6::timestamptz IS NULL OR created_at >= $6)
+  AND ($7::timestamptz IS NULL OR created_at < $7)
+`
+
+type CountDepositsParams struct {
+	UserID   int64
+	Currency string
+	Method   string
+	Status   string
+	Statuses []string
+	Since    pgtype.Timestamptz
+	Until    pgtype.Timestamptz
+}
+
+// As ListDeposits, without paging.
+func (q *Queries) CountDeposits(ctx context.Context, arg CountDepositsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDeposits,
+		arg.UserID,
+		arg.Currency,
+		arg.Method,
+		arg.Status,
+		arg.Statuses,
+		arg.Since,
+		arg.Until,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countWithdrawals = `-- name: CountWithdrawals :one
+SELECT count(*) FROM pay_withdrawals
+WHERE ($1::bigint = 0 OR user_id = $1)
+  AND ($2::text = '' OR currency = $2)
+  AND ($3::text = '' OR method = $3)
+  AND ($4::text = '' OR status = $4)
+  AND (cardinality($5::text[]) = 0 OR status = ANY($5::text[]))
+  AND ($6::timestamptz IS NULL OR created_at >= $6)
+  AND ($7::timestamptz IS NULL OR created_at < $7)
+`
+
+type CountWithdrawalsParams struct {
+	UserID   int64
+	Currency string
+	Method   string
+	Status   string
+	Statuses []string
+	Since    pgtype.Timestamptz
+	Until    pgtype.Timestamptz
+}
+
+// As ListWithdrawals, without paging.
+func (q *Queries) CountWithdrawals(ctx context.Context, arg CountWithdrawalsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countWithdrawals,
+		arg.UserID,
+		arg.Currency,
+		arg.Method,
+		arg.Status,
+		arg.Statuses,
+		arg.Since,
+		arg.Until,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const creditingDeposits = `-- name: CreditingDeposits :many
 SELECT id, method, currency, external_id, user_id, target_id, amount, status, reason, created_at FROM pay_deposits WHERE status = 'crediting' ORDER BY id LIMIT 100
 `
@@ -526,9 +600,10 @@ WHERE ($1::bigint = 0 OR id < $1)
   AND ($3::text = '' OR currency = $3)
   AND ($4::text = '' OR method = $4)
   AND ($5::text = '' OR status = $5)
-  AND ($6::timestamptz IS NULL OR created_at >= $6)
-  AND ($7::timestamptz IS NULL OR created_at < $7)
-ORDER BY id DESC LIMIT $8
+  AND (cardinality($6::text[]) = 0 OR status = ANY($6::text[]))
+  AND ($7::timestamptz IS NULL OR created_at >= $7)
+  AND ($8::timestamptz IS NULL OR created_at < $8)
+ORDER BY id DESC LIMIT $9
 `
 
 type ListDepositsParams struct {
@@ -537,6 +612,7 @@ type ListDepositsParams struct {
 	Currency string
 	Method   string
 	Status   string
+	Statuses []string
 	Since    pgtype.Timestamptz
 	Until    pgtype.Timestamptz
 	MaxRows  int32
@@ -550,6 +626,7 @@ func (q *Queries) ListDeposits(ctx context.Context, arg ListDepositsParams) ([]P
 		arg.Currency,
 		arg.Method,
 		arg.Status,
+		arg.Statuses,
 		arg.Since,
 		arg.Until,
 		arg.MaxRows,
@@ -590,9 +667,10 @@ WHERE ($1::bigint = 0 OR id < $1)
   AND ($3::text = '' OR currency = $3)
   AND ($4::text = '' OR method = $4)
   AND ($5::text = '' OR status = $5)
-  AND ($6::timestamptz IS NULL OR created_at >= $6)
-  AND ($7::timestamptz IS NULL OR created_at < $7)
-ORDER BY id DESC LIMIT $8
+  AND (cardinality($6::text[]) = 0 OR status = ANY($6::text[]))
+  AND ($7::timestamptz IS NULL OR created_at >= $7)
+  AND ($8::timestamptz IS NULL OR created_at < $8)
+ORDER BY id DESC LIMIT $9
 `
 
 type ListWithdrawalsParams struct {
@@ -601,12 +679,14 @@ type ListWithdrawalsParams struct {
 	Currency string
 	Method   string
 	Status   string
+	Statuses []string
 	Since    pgtype.Timestamptz
 	Until    pgtype.Timestamptz
 	MaxRows  int32
 }
 
-// Newest first. user_id 0 and empty text filters are no filter; since is inclusive, until exclusive.
+// Newest first. user_id 0, empty text filters and an empty statuses are no filter; since is
+// inclusive, until exclusive.
 func (q *Queries) ListWithdrawals(ctx context.Context, arg ListWithdrawalsParams) ([]PayWithdrawal, error) {
 	rows, err := q.db.Query(ctx, listWithdrawals,
 		arg.BeforeID,
@@ -614,6 +694,7 @@ func (q *Queries) ListWithdrawals(ctx context.Context, arg ListWithdrawalsParams
 		arg.Currency,
 		arg.Method,
 		arg.Status,
+		arg.Statuses,
 		arg.Since,
 		arg.Until,
 		arg.MaxRows,

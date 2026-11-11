@@ -49,7 +49,7 @@ export function useViews(): ViewDesc[] | undefined {
 // ── cells ───────────────────────────────────────────────────────────────────────────────────────
 
 // full: the detail dialog's look (whole text and link, a large image) in place of the table's.
-function Cell({ col, row, full = false }: { col: ViewColumn; row: ViewRow; full?: boolean }) {
+export function Cell({ col, row, full = false }: { col: ViewColumn; row: ViewRow; full?: boolean }) {
   const { decimals } = useMoney()
   const v = row[col.key]
   if (v == null || v === '') return <Faint />

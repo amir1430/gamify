@@ -44,7 +44,7 @@ func setup(t *testing.T) env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := paymentsadmin.Register(adm, s); err != nil {
+	if err := paymentsadmin.Register(adm, s, paymentsadmin.Config{}); err != nil {
 		t.Fatal(err)
 	}
 	e := env{a: a, s: s, snd: snd, cons: admintest.Start(t, a, adm)}
@@ -292,5 +292,76 @@ func TestTreasuryOutflow(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("no outflow in %v", body)
+	}
+}
+
+func TestAlertsAndStatus(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	alerts := func(cl *admintest.Client) map[string]map[string]any {
+		t.Helper()
+		st, body := cl.Do("GET", "/api/alerts", nil)
+		if st != 200 {
+			t.Fatalf("alerts: %d %v", st, body)
+		}
+		out := map[string]map[string]any{}
+		for _, it := range body["items"].([]any) {
+			m := it.(map[string]any)
+			out[m["name"].(string)] = m
+		}
+		return out
+	}
+	e.withdraw(t, "a", 100) // requested
+	old := e.withdraw(t, "b", 100)
+	if _, err := e.a.Pool.Exec(ctx, `UPDATE pay_withdrawals SET status = 'sending', lease_until = now() + interval '1 hour',
+		created_at = now() - interval '2 hours' WHERE id = $1`, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.a.Pool.Exec(ctx, `INSERT INTO pay_deposits (method, currency, external_id, amount, status, reason)
+		VALUES ('chain', 'usdt', 'x', 5, 'unmatched', 'no such address'), ('chain', 'usdt', 'y', 5, 'unmatched', 'old')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.a.Pool.Exec(ctx, `UPDATE pay_deposits SET created_at = now() - interval '3 days' WHERE external_id = 'y'`); err != nil {
+		t.Fatal(err)
+	}
+
+	got := alerts(e.op)
+	for name, want := range map[string]float64{"pay-approve": 1, "pay-stuck": 1, "pay-unmatched": 1} {
+		if a := got[name]; a == nil || a["count"] != want {
+			t.Errorf("%s = %v, want count %v", name, a, want)
+		}
+	}
+	if a := got["pay-approve"]; a["view"] != "pay-withdrawals" || a["filters"].(map[string]any)["status"] != "requested" {
+		t.Errorf("pay-approve links to %v %v", a["view"], a["filters"])
+	}
+	if got["pay-stuck"]["tone"] != "danger" {
+		t.Errorf("pay-stuck tone %v", got["pay-stuck"]["tone"])
+	}
+	// Support can't approve: no approval alert, but it still sees what's stuck.
+	sup := alerts(e.cons.Login(admin.RoleSupport))
+	if sup["pay-approve"] != nil || sup["pay-stuck"] == nil {
+		t.Errorf("support sees %v", sup)
+	}
+
+	st, body := e.op.Do("GET", "/api/system", nil)
+	if st != 200 {
+		t.Fatalf("system: %d %v", st, body)
+	}
+	var methods map[string]any
+	for _, sec := range body["sections"].([]any) {
+		if m := sec.(map[string]any); m["name"] == "pay-methods" {
+			methods = m
+		}
+	}
+	if methods == nil {
+		t.Fatalf("no pay-methods section in %v", body["sections"])
+	}
+	rows := methods["items"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("pay-methods rows %v", rows)
+	}
+	chain := rows[0].(map[string]any)
+	if chain["method"] != "chain" || chain["kind"] != "deposit" || chain["currencies"] != "usdt" || chain["running"] != false {
+		t.Fatalf("chain = %v", chain)
 	}
 }

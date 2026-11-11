@@ -228,6 +228,9 @@ func (l *Ledger) Decimals(c Currency) uint8 { return l.cur[c].Decimals }
 // MinAmount is the smallest real-money amount a game may charge in c, 0 for an unknown currency.
 func (l *Ledger) MinAmount(c Currency) int64 { return l.cur[c].MinAmount }
 
+// Transferable reports whether users may send c to each other (CurrencyConfig.Transferable).
+func (l *Ledger) Transferable(c Currency) bool { return l.cur[c].Transferable }
+
 // Withdrawable reports whether users may cash c out (CurrencyConfig.Withdrawable).
 func (l *Ledger) Withdrawable(c Currency) bool { return l.cur[c].Withdrawable }
 

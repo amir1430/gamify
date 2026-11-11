@@ -101,13 +101,15 @@ WHERE id = sqlc.arg(id) AND status = 'sending'
 RETURNING *;
 
 -- name: ListWithdrawals :many
--- Newest first. user_id 0 and empty text filters are no filter; since is inclusive, until exclusive.
+-- Newest first. user_id 0, empty text filters and an empty statuses are no filter; since is
+-- inclusive, until exclusive.
 SELECT * FROM pay_withdrawals
 WHERE (sqlc.arg(before_id)::bigint = 0 OR id < sqlc.arg(before_id))
   AND (sqlc.arg(user_id)::bigint = 0 OR user_id = sqlc.arg(user_id))
   AND (sqlc.arg(currency)::text = '' OR currency = sqlc.arg(currency))
   AND (sqlc.arg(method)::text = '' OR method = sqlc.arg(method))
   AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status))
+  AND (cardinality(sqlc.arg(statuses)::text[]) = 0 OR status = ANY(sqlc.arg(statuses)::text[]))
   AND (sqlc.narg(since)::timestamptz IS NULL OR created_at >= sqlc.narg(since))
   AND (sqlc.narg(until)::timestamptz IS NULL OR created_at < sqlc.narg(until))
 ORDER BY id DESC LIMIT sqlc.arg(max_rows);
@@ -120,6 +122,7 @@ WHERE (sqlc.arg(before_id)::bigint = 0 OR id < sqlc.arg(before_id))
   AND (sqlc.arg(currency)::text = '' OR currency = sqlc.arg(currency))
   AND (sqlc.arg(method)::text = '' OR method = sqlc.arg(method))
   AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status))
+  AND (cardinality(sqlc.arg(statuses)::text[]) = 0 OR status = ANY(sqlc.arg(statuses)::text[]))
   AND (sqlc.narg(since)::timestamptz IS NULL OR created_at >= sqlc.narg(since))
   AND (sqlc.narg(until)::timestamptz IS NULL OR created_at < sqlc.narg(until))
 ORDER BY id DESC LIMIT sqlc.arg(max_rows);
@@ -141,3 +144,25 @@ SET status = sqlc.arg(status), decided_by = sqlc.arg(admin_id), settled = false,
 WHERE id = sqlc.arg(id) AND status = ANY(sqlc.arg(from_statuses)::text[])
   AND (NOT sqlc.arg(lease_expired)::bool OR lease_until < now())
 RETURNING *;
+
+-- name: CountWithdrawals :one
+-- As ListWithdrawals, without paging.
+SELECT count(*) FROM pay_withdrawals
+WHERE (sqlc.arg(user_id)::bigint = 0 OR user_id = sqlc.arg(user_id))
+  AND (sqlc.arg(currency)::text = '' OR currency = sqlc.arg(currency))
+  AND (sqlc.arg(method)::text = '' OR method = sqlc.arg(method))
+  AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status))
+  AND (cardinality(sqlc.arg(statuses)::text[]) = 0 OR status = ANY(sqlc.arg(statuses)::text[]))
+  AND (sqlc.narg(since)::timestamptz IS NULL OR created_at >= sqlc.narg(since))
+  AND (sqlc.narg(until)::timestamptz IS NULL OR created_at < sqlc.narg(until));
+
+-- name: CountDeposits :one
+-- As ListDeposits, without paging.
+SELECT count(*) FROM pay_deposits
+WHERE (sqlc.arg(user_id)::bigint = 0 OR user_id = sqlc.arg(user_id))
+  AND (sqlc.arg(currency)::text = '' OR currency = sqlc.arg(currency))
+  AND (sqlc.arg(method)::text = '' OR method = sqlc.arg(method))
+  AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status))
+  AND (cardinality(sqlc.arg(statuses)::text[]) = 0 OR status = ANY(sqlc.arg(statuses)::text[]))
+  AND (sqlc.narg(since)::timestamptz IS NULL OR created_at >= sqlc.narg(since))
+  AND (sqlc.narg(until)::timestamptz IS NULL OR created_at < sqlc.narg(until));

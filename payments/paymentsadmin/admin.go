@@ -22,15 +22,24 @@ var (
 	depositStatuses    = []string{"crediting", "credited", "ignored", "unmatched"}
 )
 
-// Register adds the views pay-withdrawals, pay-deposits and pay-methods.
-func Register(adm *admin.Admin, s *payments.Service) error {
+// Register adds the views pay-withdrawals, pay-deposits and pay-methods, the dashboard alerts
+// pay-approve, pay-stuck and pay-unmatched, and the system page's pay-methods status.
+func Register(adm *admin.Admin, s *payments.Service, cfg Config) error {
+	cfg = cfg.withDefaults()
 	for _, v := range []admin.View{withdrawals(s), deposits(s), methods(s)} {
 		if err := adm.View(v); err != nil {
 			return err
 		}
 	}
-	return nil
+	for _, a := range alerts(s, cfg) {
+		if err := adm.Alert(a); err != nil {
+			return err
+		}
+	}
+	return adm.Status(status(s))
 }
+
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
 func filter(q admin.Query) payments.Filter {
 	u, _ := strconv.ParseInt(q.Filters["user_id"], 10, 64) // checked by the console

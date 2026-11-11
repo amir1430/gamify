@@ -401,7 +401,7 @@ pay, err := payments.Register(ctx, a, payments.Config{})
 err = pay.Receiver("usdt", &myChain{}, payments.DepositLimits{Min: 5_000_000})
 err = pay.Sender("usdt", &myChain{}, payments.WithdrawLimits{
 	Min: 10_000_000, Fee: 1_000_000, DailyCap: 1_000_000_000, AutoApproveUpTo: 100_000_000})
-// after admin.Register: err = paymentsadmin.Register(adm, pay)
+// after admin.Register: err = paymentsadmin.Register(adm, pay, paymentsadmin.Config{})
 ```
 
 Register before `a.Run`. Limits are Go defaults the console can edit (zero is no limit, except

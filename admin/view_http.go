@@ -69,6 +69,9 @@ type viewDesc struct {
 	Actions    []actionDesc `json:"actions"`
 	Summary    []string     `json:"summary"`
 	PageActs   []actionDesc `json:"page_actions"`
+	// AuditActions are every action's audit name (view.<view>.<action>), whatever the role may run,
+	// for the audit log's filter.
+	AuditActions []string `json:"audit_actions"`
 }
 
 // viewIndex lists the views the role can see, in registration order, each with the actions the
@@ -81,7 +84,10 @@ func (adm *Admin) viewIndex(w http.ResponseWriter, r *http.Request, s *session) 
 		}
 		d := viewDesc{Name: v.Name, Title: v.Title, Group: v.Group, UserFilter: v.UserFilter,
 			Columns: v.Columns, Filters: v.Filters, HasDetail: v.Get != nil, Actions: adm.actionDescs(s.Role, v.Actions), Summary: v.Summary,
-			PageActs: adm.actionDescs(s.Role, v.PageActions)}
+			PageActs: adm.actionDescs(s.Role, v.PageActions), AuditActions: []string{}}
+		for _, a := range slices.Concat(v.Actions, v.PageActions) {
+			d.AuditActions = append(d.AuditActions, "view."+v.Name+"."+a.Name)
+		}
 		if d.Summary == nil {
 			d.Summary = []string{}
 		}

@@ -38,10 +38,11 @@ import {
 import { setAccent, setTheme, useTheme, type Theme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 import { groupViews } from '@/lib/views'
+import { useAlerts, viewBadges } from './components/alerts'
 import { useViews } from './pages/views'
 import { useMe, usePaged, usePerm } from './ui'
 
-type Item = { to: string; label: string; icon: typeof Users; perm: string; count?: number; tone?: 'danger' | 'ok' }
+type Item = { to: string; label: string; icon: typeof Users; perm: string; count?: number; tone?: 'danger' | 'warn' | 'ok' }
 
 // The platform's pages; the brand's views (GET /api/views) come between Operations and Admin, a
 // section per Group.
@@ -103,12 +104,12 @@ function NavItem({ to, label, icon: Icon, count, tone = 'danger', collapsed }: I
           {!collapsed && <span className="truncate">{label}</span>}
           {!!count &&
             (collapsed ? (
-              <span className={cn('absolute top-1 right-1 size-2 rounded-full', tone === 'ok' ? 'bg-ok' : 'bg-danger')} />
+              <span className={cn('absolute top-1 right-1 size-2 rounded-full', tone === 'ok' ? 'bg-ok' : tone === 'warn' ? 'bg-warn' : 'bg-danger')} />
             ) : (
               <span
                 className={cn(
                   'ml-auto rounded-full px-1.5 text-[11px] font-medium tabular-nums',
-                  tone === 'ok' ? 'bg-ok/15 text-ok' : 'bg-danger/15 text-danger',
+                  tone === 'ok' ? 'bg-ok/15 text-ok' : tone === 'warn' ? 'bg-warn/15 text-warn' : 'bg-danger/15 text-danger',
                 )}
               >
                 {count.toLocaleString()}
@@ -202,7 +203,8 @@ function useOnlineTotal(enabled: boolean) {
   return query.data?.data.total
 }
 
-// The nav items this admin may open, with a count of adjustments waiting for an approver.
+// The nav items this admin may open, with a count of adjustments waiting for an approver and the
+// modules' alerts on their views.
 function useGroups(online?: number) {
   const can = { view: usePerm('view'), admins: usePerm('admins') } as Record<string, boolean>
   const approver = usePerm('approve')
@@ -210,9 +212,10 @@ function useGroups(online?: number) {
   const waiting = usePaged<{ requested_by: number }>('adjustments', { status: 'pending_approval' }, { enabled: approver, quiet: true })
   const count = waiting.rows?.filter((a) => a.requested_by !== me?.user.id).length
   // The API lists only the views this admin's role may open: no perm to check here.
+  const badges = viewBadges(useAlerts())
   const brand = groupViews(useViews() ?? []).map((g) => ({
     label: g.label,
-    items: g.views.map((v): Item => ({ to: `/views/${v.name}`, label: v.title, icon: LayoutList, perm: '' })),
+    items: g.views.map((v): Item => ({ to: `/views/${v.name}`, label: v.title, icon: LayoutList, perm: '', ...badges[v.name] })),
   }))
   return [...GROUPS.slice(0, 2), ...brand, ...GROUPS.slice(2)]
     .map((g) => ({

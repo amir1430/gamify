@@ -24,14 +24,22 @@ var (
 	ErrSendInProgress = fmt.Errorf("%w: a send is in progress", ErrWrongStatus)
 )
 
-// Filter selects rows for Withdrawals and Deposits; zero fields are no filter. Since is inclusive,
-// Until exclusive, both on the creation time.
+// Filter selects rows for the lists and counts; zero fields are no filter. Statuses is any of
+// them (with Status, both must match). Since is inclusive, Until exclusive, both on the creation time.
 type Filter struct {
 	UserID       int64
 	Currency     ledger.Currency
 	Method       string
 	Status       string
+	Statuses     []string
 	Since, Until time.Time
+}
+
+func (f Filter) statuses() []string {
+	if f.Statuses == nil {
+		return []string{}
+	}
+	return f.Statuses
 }
 
 func ts(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: !t.IsZero()} }
@@ -39,7 +47,7 @@ func ts(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Val
 // Withdrawals lists withdrawals newest first: before 0 is the first page, else only IDs below it.
 func (s *Service) Withdrawals(ctx context.Context, f Filter, before int64, limit int32) ([]Withdrawal, error) {
 	rows, err := s.q.ListWithdrawals(ctx, store.ListWithdrawalsParams{BeforeID: before, UserID: f.UserID,
-		Currency: string(f.Currency), Method: f.Method, Status: f.Status, Since: ts(f.Since), Until: ts(f.Until), MaxRows: limit})
+		Currency: string(f.Currency), Method: f.Method, Status: f.Status, Statuses: f.statuses(), Since: ts(f.Since), Until: ts(f.Until), MaxRows: limit})
 	out := make([]Withdrawal, len(rows))
 	for i, r := range rows {
 		out[i] = toWithdrawal(r)
@@ -47,10 +55,22 @@ func (s *Service) Withdrawals(ctx context.Context, f Filter, before int64, limit
 	return out, err
 }
 
+// CountWithdrawals counts the withdrawals f selects.
+func (s *Service) CountWithdrawals(ctx context.Context, f Filter) (int64, error) {
+	return s.q.CountWithdrawals(ctx, store.CountWithdrawalsParams{UserID: f.UserID, Currency: string(f.Currency),
+		Method: f.Method, Status: f.Status, Statuses: f.statuses(), Since: ts(f.Since), Until: ts(f.Until)})
+}
+
+// CountDeposits counts the deposits f selects.
+func (s *Service) CountDeposits(ctx context.Context, f Filter) (int64, error) {
+	return s.q.CountDeposits(ctx, store.CountDepositsParams{UserID: f.UserID, Currency: string(f.Currency),
+		Method: f.Method, Status: f.Status, Statuses: f.statuses(), Since: ts(f.Since), Until: ts(f.Until)})
+}
+
 // Deposits lists deposits newest first, as Withdrawals does.
 func (s *Service) Deposits(ctx context.Context, f Filter, before int64, limit int32) ([]Deposit, error) {
 	rows, err := s.q.ListDeposits(ctx, store.ListDepositsParams{BeforeID: before, UserID: f.UserID,
-		Currency: string(f.Currency), Method: f.Method, Status: f.Status, Since: ts(f.Since), Until: ts(f.Until), MaxRows: limit})
+		Currency: string(f.Currency), Method: f.Method, Status: f.Status, Statuses: f.statuses(), Since: ts(f.Since), Until: ts(f.Until), MaxRows: limit})
 	out := make([]Deposit, len(rows))
 	for i, r := range rows {
 		out[i] = toDeposit(r)

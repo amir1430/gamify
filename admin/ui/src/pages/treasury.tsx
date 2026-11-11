@@ -44,11 +44,12 @@ export function TreasuryPage() {
           </>
         }
       />
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
         <Kpi label={`Players hold · ${cur.toUpperCase()}`} icon={Users} tone="brand" loading={loading} value={c ? m(c.players_posted) : '—'} hint="Posted balances of every player" />
         <Kpi label="In play" icon={Hourglass} tone="warn" loading={loading} value={c ? m(c.held) : '—'} hint="On hold in open games and pots" />
         <Kpi label="House net" icon={Landmark} tone={net('house') < 0 ? 'danger' : 'ok'} loading={loading} value={c ? m(net('house')) : '—'} hint="Won from games, all time" />
         <Kpi label="Deposits in" icon={ArrowDownLeft} tone="ok" loading={loading} value={c ? m(-net('inflow')) : '—'} hint="Confirmed deposits, all time" />
+        <Kpi label="Withdrawals out" icon={ArrowUpRight} tone="neutral" loading={loading} value={c ? m(net('outflow')) : '—'} hint="Paid out after fees, all time" />
         <Kpi label="Rewards paid" icon={ArrowUpRight} tone="neutral" loading={loading} value={c ? m(c.rewards_paid) : '—'} hint="Promotions and prizes, net" />
         <Kpi label="Sales" icon={Coins} tone="neutral" loading={loading} value={c ? m(net('sales')) : '—'} hint="Spent in the shop" />
       </div>

@@ -45,6 +45,7 @@ export type ViewDesc = {
   actions: ViewAction[]
   summary: string[]
   page_actions: ViewAction[]
+  audit_actions: string[] // every action's audit name, whatever this admin may run
 }
 export type ViewRow = Record<string, unknown> & { id: number | string; _actions?: Record<string, ActionState> }
 
