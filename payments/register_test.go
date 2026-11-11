@@ -96,3 +96,25 @@ func TestZeroConfigDefaultsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOffOverride(t *testing.T) {
+	ctx := context.Background()
+	s, a := setup(t)
+	if err := s.Receiver("usdt", &paymentstest.Receiver{Method: "r"}, payments.DepositLimits{}); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := a.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if err := s.SetLimits(ctx, tx, "usdt", "r", &payments.DepositLimits{Off: true}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if d, _, err := s.Limits(ctx, "usdt", "r"); err != nil || !d.Off {
+		t.Fatalf("%v %v", d, err)
+	}
+}

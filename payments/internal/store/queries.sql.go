@@ -46,7 +46,8 @@ func (q *Queries) CreditingDeposits(ctx context.Context) ([]PayDeposit, error) {
 
 const findTarget = `-- name: FindTarget :one
 SELECT id, method, currency, user_id, address, invoice_id, amount, created_at FROM pay_targets
-WHERE method = $1 AND ((address <> '' AND address = $2) OR (invoice_id <> '' AND invoice_id = $3))
+WHERE method = $1 AND ((invoice_id <> '' AND invoice_id = $3) OR (invoice_id = '' AND address <> '' AND address = $2))
+ORDER BY invoice_id DESC
 LIMIT 1
 `
 
@@ -227,17 +228,16 @@ func (q *Queries) MarkCredited(ctx context.Context, id int64) (PayDeposit, error
 }
 
 const openTarget = `-- name: OpenTarget :one
-SELECT id, method, currency, user_id, address, invoice_id, amount, created_at FROM pay_targets WHERE method = $1 AND currency = $2 AND user_id = $3 AND amount = 0
+SELECT id, method, currency, user_id, address, invoice_id, amount, created_at FROM pay_targets WHERE method = $1 AND user_id = $2 AND invoice_id = ''
 `
 
 type OpenTargetParams struct {
-	Method   string
-	Currency string
-	UserID   int64
+	Method string
+	UserID int64
 }
 
 func (q *Queries) OpenTarget(ctx context.Context, arg OpenTargetParams) (PayTarget, error) {
-	row := q.db.QueryRow(ctx, openTarget, arg.Method, arg.Currency, arg.UserID)
+	row := q.db.QueryRow(ctx, openTarget, arg.Method, arg.UserID)
 	var i PayTarget
 	err := row.Scan(
 		&i.ID,

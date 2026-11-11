@@ -10,7 +10,7 @@ INSERT INTO pay_limits (currency, method, withdraw) VALUES ($1, $2, $3)
 ON CONFLICT (currency, method) DO UPDATE SET withdraw = excluded.withdraw, updated_at = now();
 
 -- name: OpenTarget :one
-SELECT * FROM pay_targets WHERE method = $1 AND currency = $2 AND user_id = $3 AND amount = 0;
+SELECT * FROM pay_targets WHERE method = $1 AND user_id = $2 AND invoice_id = '';
 
 -- name: InsertTarget :one
 INSERT INTO pay_targets (method, currency, user_id, address, invoice_id, amount)
@@ -20,7 +20,8 @@ RETURNING *;
 
 -- name: FindTarget :one
 SELECT * FROM pay_targets
-WHERE method = $1 AND ((address <> '' AND address = $2) OR (invoice_id <> '' AND invoice_id = $3))
+WHERE method = $1 AND ((invoice_id <> '' AND invoice_id = $3) OR (invoice_id = '' AND address <> '' AND address = $2))
+ORDER BY invoice_id DESC
 LIMIT 1;
 
 -- name: InsertDeposit :one

@@ -15,3 +15,9 @@ func LeaveCrediting(ctx context.Context, s *Service, method, ext string, user in
 		UserID: user, Amount: amount, Status: "crediting"})
 	return err
 }
+
+// LeaveTarget stores an open address target for the user.
+func LeaveTarget(ctx context.Context, s *Service, method string, user int64, cur, addr string) error {
+	_, err := s.q.InsertTarget(ctx, store.InsertTargetParams{Method: method, Currency: cur, UserID: user, Address: addr})
+	return err
+}

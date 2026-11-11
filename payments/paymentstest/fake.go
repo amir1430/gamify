@@ -10,10 +10,12 @@ import (
 	"github.com/amir1430/gamify/payments"
 )
 
-// Receiver records Deposit calls and answers address "addr-<user>". Call Pay to simulate an
+// Receiver records Deposit calls and answers address "addr-<user>"; with Invoices set, a request
+// for an amount gets an invoice "inv-<user>-<amount>" too. Call Pay to simulate an
 // incoming payment once Run has started.
 type Receiver struct {
-	Method string
+	Method   string
+	Invoices bool // set before use
 
 	mu    sync.Mutex
 	Calls []payments.DepositRequest
@@ -40,7 +42,11 @@ func (r *Receiver) Deposit(_ context.Context, req payments.DepositRequest) (paym
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.Calls = append(r.Calls, req)
-	return payments.DepositInfo{Address: fmt.Sprintf("addr-%d", req.UserID), Amount: req.Amount}, nil
+	info := payments.DepositInfo{Address: fmt.Sprintf("addr-%d", req.UserID), Amount: req.Amount}
+	if r.Invoices && req.Amount > 0 {
+		info.InvoiceID = fmt.Sprintf("inv-%d-%d", req.UserID, req.Amount)
+	}
+	return info, nil
 }
 
 func (r *Receiver) Run(ctx context.Context, h *payments.Host) error {

@@ -87,11 +87,19 @@ type Host struct {
 	s      *Service
 }
 
-// DepositLimits: zero is no limit.
-type DepositLimits struct{ Min int64 }
+// DepositLimits: zero is no limit. Off stops new deposit requests (money already on its way is
+// still credited).
+type DepositLimits struct {
+	Min int64
+	Off bool
+}
 
 // WithdrawLimits: zero means no limit / none, except AutoApproveUpTo, where 0 is always manual.
-type WithdrawLimits struct{ Min, Max, DailyCap, Fee, AutoApproveUpTo, SecondApprovalAbove int64 }
+// Off stops new withdrawal requests.
+type WithdrawLimits struct {
+	Min, Max, DailyCap, Fee, AutoApproveUpTo, SecondApprovalAbove int64
+	Off                                                           bool
+}
 
 // Config: zero fields take the defaults (Tick 2 s, Lease 1 min).
 type Config struct{ Tick, Lease time.Duration }

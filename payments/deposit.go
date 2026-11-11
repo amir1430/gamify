@@ -51,12 +51,21 @@ func (s *Service) depositRPC(ctx context.Context, user int64, req depositReq) (D
 	if req.Amount < 0 {
 		return DepositInfo{}, &realtime.ClientError{Code: realtime.CodeBadPayload, Message: "bad amount"}
 	}
-	if req.Amount == 0 {
-		t, err := s.q.OpenTarget(ctx, store.OpenTargetParams{Method: req.Method, Currency: string(req.Currency), UserID: user})
-		if err == nil {
-			return DepositInfo{Address: t.Address}, nil
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
+	d, _, err := s.Limits(ctx, req.Currency, req.Method)
+	if err != nil {
+		return DepositInfo{}, err
+	}
+	if d.Off {
+		return DepositInfo{}, ErrDepositsOff
+	}
+	open := func() (DepositInfo, error) {
+		t, err := s.q.OpenTarget(ctx, store.OpenTargetParams{Method: req.Method, UserID: user})
+		return DepositInfo{Address: t.Address}, err
+	}
+	if req.Amount == 0 { // an existing address is returned without asking the receiver
+		if info, err := open(); err == nil {
+			return info, nil
+		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return DepositInfo{}, err
 		}
 	}
@@ -69,9 +78,14 @@ func (s *Service) depositRPC(ctx context.Context, user int64, req depositReq) (D
 	}
 	_, err = s.q.InsertTarget(ctx, store.InsertTargetParams{Method: req.Method, Currency: string(req.Currency),
 		UserID: user, Address: info.Address, InvoiceID: info.InvoiceID, Amount: req.Amount})
-	if errors.Is(err, pgx.ErrNoRows) && req.Amount == 0 { // a concurrent call stored its address first
-		t, err := s.q.OpenTarget(ctx, store.OpenTargetParams{Method: req.Method, Currency: string(req.Currency), UserID: user})
-		return DepositInfo{Address: t.Address}, err
+	if errors.Is(err, pgx.ErrNoRows) { // already stored: the user's address, or this invoice
+		if info.InvoiceID != "" {
+			return DepositInfo{}, errors.New("payments: receiver reused an invoice ID")
+		}
+		if o, err := open(); err != nil || o.Address == info.Address {
+			return info, err
+		}
+		return DepositInfo{}, errors.New("payments: receiver answered a different address than the one stored for the user")
 	}
 	return info, err
 }
@@ -83,12 +97,11 @@ func (h *Host) Received(ctx context.Context, in Incoming) error {
 	if in.ExternalID == "" || in.Amount <= 0 {
 		return errors.New("payments: Received needs an ExternalID and a positive Amount")
 	}
-	if s.receiver(in.Currency, h.Method) == nil {
-		return ErrUnknownMethod
-	}
 	row := store.InsertDepositParams{Method: h.Method, Currency: string(in.Currency), ExternalID: in.ExternalID, Amount: in.Amount}
 	t, err := s.q.FindTarget(ctx, store.FindTargetParams{Method: h.Method, Address: in.Address, InvoiceID: in.InvoiceID})
 	switch {
+	case s.receiver(in.Currency, h.Method) == nil:
+		row.Status, row.Reason = "unmatched", "method not registered for this currency"
 	case errors.Is(err, pgx.ErrNoRows):
 		row.Status, row.Reason = "unmatched", "no such address or invoice"
 	case err != nil:
@@ -99,10 +112,11 @@ func (h *Host) Received(ctx context.Context, in Incoming) error {
 		if err != nil {
 			return err
 		}
+		invoice := t.InvoiceID != ""
 		switch {
-		case t.Currency != string(in.Currency):
-			row.Status, row.Reason = "unmatched", "currency differs from the target's"
-		case t.Amount != 0 && t.Amount != in.Amount:
+		case invoice && t.Currency != string(in.Currency):
+			row.Status, row.Reason = "unmatched", "currency differs from the invoice's"
+		case invoice && t.Amount != 0 && t.Amount != in.Amount:
 			row.Status, row.Reason = "unmatched", "amount differs from the invoice"
 		case in.Amount < d.Min:
 			row.Status, row.Reason = "ignored", "below the minimum"

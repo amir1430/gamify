@@ -9,7 +9,8 @@ CREATE TABLE pay_limits (
     PRIMARY KEY (currency, method)
 );
 
--- Where a user pays: an open address (amount 0) or a one-off invoice.
+-- Where a user pays: one open address per (method, user), whatever the currency or amount, or a
+-- one-off invoice (it has an invoice_id; the currency and amount checks apply to invoices only).
 CREATE TABLE pay_targets (
     id         bigserial PRIMARY KEY,
     method     text        NOT NULL,
@@ -20,8 +21,8 @@ CREATE TABLE pay_targets (
     amount     bigint      NOT NULL DEFAULT 0 CHECK (amount >= 0),
     created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX pay_targets_open ON pay_targets (method, currency, user_id) WHERE amount = 0;
-CREATE UNIQUE INDEX pay_targets_address ON pay_targets (method, address) WHERE address <> '';
+CREATE UNIQUE INDEX pay_targets_open ON pay_targets (method, user_id) WHERE invoice_id = '';
+CREATE UNIQUE INDEX pay_targets_address ON pay_targets (method, address) WHERE invoice_id = '' AND address <> '';
 CREATE UNIQUE INDEX pay_targets_invoice ON pay_targets (method, invoice_id) WHERE invoice_id <> '';
 
 CREATE TABLE pay_deposits (
