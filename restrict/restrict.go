@@ -99,7 +99,11 @@ func parseEntry(e string) (method string, r rule, ok bool) {
 	return method, r, true
 }
 
-// matches reports whether data's top-level field equals the rule's value.
+// matches reports whether data's top-level field equals the rule's value. The field's name is
+// matched case-insensitively, as encoding/json does when a handler decodes the payload into a
+// struct: {"Game":"chess"} reaches a handler's Game field like {"game":"chess"} does. When several
+// spellings are present ({"game":"dice","GAME":"chess"}) any one matching blocks the call, since
+// which one the handler keeps depends on their order.
 func (r rule) matches(data []byte) bool {
 	if r.field == "" {
 		return true
@@ -108,15 +112,20 @@ func (r rule) matches(data []byte) bool {
 	if json.Unmarshal(data, &m) != nil {
 		return false
 	}
-	raw, ok := m[r.field]
-	if !ok {
-		return false
+	for k, raw := range m {
+		if strings.EqualFold(k, r.field) && valueIs(raw, r.value) {
+			return true
+		}
 	}
+	return false
+}
+
+func valueIs(raw json.RawMessage, value string) bool {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return s == r.value
+		return s == value
 	}
-	return string(raw) == r.value // a number or bool as written
+	return string(raw) == value // a number or bool as written
 }
 
 type Service struct {
