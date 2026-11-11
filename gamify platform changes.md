@@ -113,6 +113,9 @@ The ledger stays core: games without real money still use it for virtual currenc
 
 ## 3. Payments provider
 
+> **Superseded (Nov 11, 2026):** payments is v1.2, designed in
+> `docs/superpowers/specs/2026-11-11-payments-design.md` (brand `Receiver`/`Sender`, withdrawals).
+
 A new `payments` module turns provider events into ledger deposits; each provider is a driver in `payments/<name>`. The ledger already does the money side, so a provider only verifies and reports.
 
 ```go
