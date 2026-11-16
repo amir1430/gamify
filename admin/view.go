@@ -94,6 +94,9 @@ type Field struct {
 	// List or Get) holding them as []Option. It replaces Options, and the console can't check the
 	// value against a row, so the action must.
 	OptionsFrom string `json:"options_from,omitempty"`
+	// Hidden fields aren't shown: the form sends the row's value at the same key as it was when the
+	// form opened (a version an action checks, say). Row actions only; the action must still check it.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // Row is one record of a view, keyed by column key, encoded with encoding/json. An int, int64 or

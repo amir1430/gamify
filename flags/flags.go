@@ -7,6 +7,9 @@ import (
 	"log/slog"
 	"regexp"
 	"slices"
+	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,12 +21,14 @@ import (
 )
 
 var (
-	ErrBadKey        = errors.New("flags: key must match ^[a-z0-9][a-z0-9_.-]{0,63}$")
+	ErrBadKey        = errors.New("flags: key must be 1 to 64 lowercase letters, digits, _ . or -, starting with a letter or digit")
 	ErrExists        = errors.New("flags: a flag with this key exists")
 	ErrNotFound      = errors.New("flags: no such flag")
 	ErrBadPercent    = errors.New("flags: percent must be 0..100")
 	ErrBadType       = errors.New("flags: type must be bool")
-	ErrUnknownPlayer = errors.New("flags: unknown player")
+	ErrUnknownPlayer = errors.New("flags: unknown player") // wrapped with the IDs that aren't players
+	// ErrStale: the write names the version it was read at, and the flag has changed since.
+	ErrStale = errors.New("flags: changed by someone else since it was read; reload and try again")
 )
 
 var keyRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,63}$`)
@@ -55,6 +60,12 @@ type Service struct {
 	pool *pgxpool.Pool
 	cfg  Config
 	snap atomic.Pointer[map[string]entry]
+
+	// Each read takes the next generation before it starts; install keeps only a newer one, so a
+	// reload that read before a write can't land after the write's Applied.
+	gen       atomic.Uint64
+	mu        sync.Mutex
+	installed uint64 // generation of snap, under mu
 }
 
 // New checks cfg and returns the service with nothing loaded; Register is the usual way in.
@@ -72,14 +83,30 @@ func New(pool *pgxpool.Pool, cfg Config) (*Service, error) {
 
 // Load reads every flag and its testers into the in-memory copy.
 func (s *Service) Load(ctx context.Context) error {
-	q := store.New(s.pool)
-	rows, err := q.ListFlags(ctx)
+	m, gen, err := s.read(ctx)
 	if err != nil {
 		return err
 	}
+	s.install(m, gen)
+	return nil
+}
+
+// read reads every flag and its testers, as of one moment, and the read's generation.
+func (s *Service) read(ctx context.Context) (map[string]entry, uint64, error) {
+	gen := s.gen.Add(1)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, 0, err
+	}
+	defer tx.Rollback(ctx)
+	q := store.New(tx)
+	rows, err := q.ListFlags(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
 	testers, err := q.ListTesters(ctx)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	byID := make(map[int64]map[int64]struct{})
 	for _, t := range testers {
@@ -92,8 +119,18 @@ func (s *Service) Load(ctx context.Context) error {
 	for _, r := range rows {
 		m[r.Key] = entry{id: r.ID, key: r.Key, enabled: r.Enabled, percent: int(r.Percent), testers: byID[r.ID]}
 	}
+	return m, gen, nil
+}
+
+// install makes m the in-memory copy, unless a later read is already installed.
+func (s *Service) install(m map[string]entry, gen uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen <= s.installed {
+		return
+	}
+	s.installed = gen
 	s.snap.Store(&m)
-	return nil
 }
 
 // reload is Load for the loop: a failure is logged and the last copy stays.
@@ -196,8 +233,19 @@ func setTesters(ctx context.Context, q *store.Queries, id int64, userIDs []int64
 	if len(userIDs) == 0 {
 		return nil
 	}
-	err := q.InsertTesters(ctx, store.InsertTestersParams{FlagID: id, UserIds: userIDs})
-	if pgCode(err) == "23503" /* foreign_key_violation: users */ {
+	missing, err := q.MissingUsers(ctx, userIDs)
+	if err != nil {
+		return err
+	}
+	if len(missing) > 0 {
+		ids := make([]string, len(missing))
+		for i, u := range missing {
+			ids[i] = strconv.FormatInt(u, 10)
+		}
+		return fmt.Errorf("%w: %s", ErrUnknownPlayer, strings.Join(ids, ", "))
+	}
+	err = q.InsertTesters(ctx, store.InsertTestersParams{FlagID: id, UserIds: userIDs})
+	if pgCode(err) == "23503" /* foreign_key_violation: a player deleted since MissingUsers */ {
 		return ErrUnknownPlayer
 	}
 	return err
@@ -233,8 +281,8 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, f Flag) (Flag, error) {
 	return get(ctx, q, r.ID, false)
 }
 
-// Update changes f.ID's description, switch and percent in the console's tx; the rest of f is
-// ignored.
+// Update changes f.ID's description, switch and percent in the console's tx. A non-zero f.Version
+// must be the flag's current version (ErrStale otherwise); the rest of f is ignored.
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, f Flag) (before, after Flag, err error) {
 	if f.Percent < 0 || f.Percent > 100 {
 		return before, after, ErrBadPercent
@@ -242,6 +290,9 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, f Flag) (before, after 
 	q := store.New(tx)
 	if before, err = get(ctx, q, f.ID, true); err != nil {
 		return before, after, err
+	}
+	if f.Version != 0 && f.Version != before.Version {
+		return before, after, ErrStale
 	}
 	if _, err = q.UpdateFlag(ctx, store.UpdateFlagParams{ID: f.ID, Description: f.Description,
 		Enabled: f.Enabled, Percent: int16(f.Percent)}); err != nil {
@@ -253,9 +304,18 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, f Flag) (before, after 
 
 // SetTesters replaces flag id's testers in the console's tx (duplicates are stored once).
 func (s *Service) SetTesters(ctx context.Context, tx pgx.Tx, id int64, userIDs []int64) (before, after Flag, err error) {
+	return s.SetTestersAt(ctx, tx, id, 0, userIDs)
+}
+
+// SetTestersAt is SetTesters for a flag read at version: ErrStale when it has changed since
+// (version 0: no check).
+func (s *Service) SetTestersAt(ctx context.Context, tx pgx.Tx, id, version int64, userIDs []int64) (before, after Flag, err error) {
 	q := store.New(tx)
 	if before, err = get(ctx, q, id, true); err != nil {
 		return before, after, err
+	}
+	if version != 0 && version != before.Version {
+		return before, after, ErrStale
 	}
 	ids := slices.Clone(userIDs)
 	slices.Sort(ids)

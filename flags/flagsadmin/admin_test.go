@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/amir1430/gamify/admin"
@@ -42,8 +43,16 @@ func TestFlagsConsole(t *testing.T) {
 	if st, _ := viewer.Do("POST", "/api/views/flags/actions/new", in(map[string]any{"key": "new_lobby"})); st != 403 {
 		t.Fatalf("viewer new: %d", st)
 	}
-	if st, b := op.Do("POST", "/api/views/flags/actions/new", in(map[string]any{"key": "New Lobby"})); st != 400 {
-		t.Fatalf("bad key: %d %v", st, b)
+	for _, key := range []any{"New Lobby", "", "   ", nil} {
+		if st, b := op.Do("POST", "/api/views/flags/actions/new", in(map[string]any{"key": key})); st != 400 {
+			t.Fatalf("key %q: %d %v", key, st, b)
+		}
+	}
+	if st, b := op.Do("POST", "/api/views/flags/actions/new", in(map[string]any{"key": "New Lobby"})); st != 400 || strings.Contains(fmt.Sprint(b["message"]), "^") || strings.HasPrefix(fmt.Sprint(b["message"]), "flags:") {
+		t.Fatalf("bad key message: %d %v", st, b)
+	}
+	if st, _ := viewer.Do("GET", "/api/views/flags", nil); st != 200 || len(mustItems(t, viewer)) != 0 {
+		t.Fatal("a refused key was stored")
 	}
 	if st, b := op.Do("POST", "/api/views/flags/actions/new", in(map[string]any{"key": "new_lobby", "enabled": true, "percent": 10})); st != 204 {
 		t.Fatalf("new: %d %v", st, b)
@@ -71,9 +80,32 @@ func TestFlagsConsole(t *testing.T) {
 		t.Fatalf("tester: %s", got)
 	}
 	for _, bad := range []string{"abc", "999999"} {
-		if st, b := op.Do("POST", path+"testers", in(map[string]any{"tester_ids": []any{bad}})); st != 400 {
+		if st, b := op.Do("POST", path+"testers", in(map[string]any{"tester_ids": []any{bad}})); st != 400 || !strings.Contains(fmt.Sprint(b["message"]), bad) {
 			t.Fatalf("tester %q: %d %v", bad, st, b)
 		}
+	}
+	// Forms carry the version they were opened at: a save over someone else's change is refused.
+	st, body = viewer.Do("GET", "/api/views/flags/"+id, nil)
+	version := body["version"]
+	if st != 200 || version == nil {
+		t.Fatalf("detail has no version: %d %v", st, body)
+	}
+	if st, b := op.Do("POST", path+"edit", in(map[string]any{"enabled": true, "percent": 10, "version": version})); st != 204 {
+		t.Fatalf("edit at version: %d %v", st, b)
+	}
+	if st, b := op.Do("POST", path+"edit", in(map[string]any{"enabled": true, "percent": 99, "version": version})); st != 409 {
+		t.Fatalf("stale edit: %d %v", st, b)
+	}
+	if st, b := op.Do("POST", path+"testers", in(map[string]any{"tester_ids": []any{}, "version": version})); st != 409 {
+		t.Fatalf("stale testers: %d %v", st, b)
+	}
+	if f, err := s.Get(ctx, int64(row["id"].(float64))); err != nil || f.Percent != 10 || len(f.Testers) != 1 {
+		t.Fatalf("stale saves changed the flag: %+v %v", f, err)
+	}
+	// The version rides in the forms but isn't shown.
+	st, body = op.Do("GET", "/api/views", nil)
+	if !strings.Contains(fmt.Sprint(body), "map[hidden:true key:version") {
+		t.Fatalf("version field not hidden: %v", body)
 	}
 	st, body = viewer.Do("GET", "/api/views/flags/"+id, nil)
 	if st != 200 || fmt.Sprint(body["tester_ids"]) != "["+aliceID+"]" || body["testers"] != float64(1) {
@@ -125,4 +157,11 @@ func TestFlagsConsole(t *testing.T) {
 	if err := a.Pool.QueryRow(ctx, `SELECT before->>'key', target FROM admin_audit WHERE action = 'view.flags.delete'`).Scan(&key, &target); err != nil || key != "new_lobby" || target != "flags:"+id {
 		t.Fatalf("delete audit: %q %q %v", key, target, err)
 	}
+}
+
+func mustItems(t *testing.T, c *admintest.Client) []any {
+	t.Helper()
+	_, body := c.Do("GET", "/api/views/flags", nil)
+	items, _ := body["items"].([]any)
+	return items
 }

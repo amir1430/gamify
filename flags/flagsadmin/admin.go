@@ -8,6 +8,7 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/amir1430/gamify/admin"
@@ -22,7 +23,7 @@ func row(f flags.Flag) admin.Row {
 		ids[i] = strconv.FormatInt(u, 10)
 	}
 	return admin.Row{"id": f.ID, "key": f.Key, "description": f.Description, "enabled": f.Enabled,
-		"percent": f.Percent, "testers": len(f.Testers), "tester_ids": ids,
+		"percent": f.Percent, "testers": len(f.Testers), "tester_ids": ids, "version": f.Version,
 		"updated_at": f.UpdatedAt.Format(time.RFC3339)}
 }
 
@@ -31,16 +32,30 @@ func consoleErr(err error) error {
 	switch {
 	case errors.Is(err, flags.ErrBadKey), errors.Is(err, flags.ErrExists), errors.Is(err, flags.ErrBadPercent),
 		errors.Is(err, flags.ErrBadType), errors.Is(err, flags.ErrUnknownPlayer):
-		return admin.BadInput(err.Error())
+		return admin.BadInput(message(err))
+	case errors.Is(err, flags.ErrStale):
+		return admin.Conflict("someone changed this flag since you opened it: reopen it and try again")
 	case errors.Is(err, flags.ErrNotFound):
 		return admin.Conflict("the flag was deleted")
 	}
 	return err
 }
 
+// message is err's text for an operator, without the package prefix.
+func message(err error) string {
+	m := strings.TrimPrefix(err.Error(), "flags: ")
+	return strings.ToUpper(m[:1]) + m[1:]
+}
+
 func percent(c admin.Call) int {
 	n, _ := c.Input["percent"].(int64)
 	return int(n)
+}
+
+// version is the flag's version when the form opened (0 from a caller that doesn't send it: no check).
+func version(c admin.Call) int64 {
+	n, _ := c.Input["version"].(int64)
+	return n
 }
 
 // Register adds the view flags.
@@ -52,7 +67,9 @@ func Register(adm *admin.Admin, s *flags.Service) error {
 			Help: "0 to 100: the share of players who get it while on. Raising it only adds players."},
 	}
 	// Edit saves every setting, so a blank one is refused rather than read as off or 0%.
-	editFields := slices.Clone(settings)
+	// Both forms send the version they were opened at, so a save over someone else's change is refused.
+	versionField := admin.Field{Key: "version", Type: admin.Int, Hidden: true}
+	editFields := append(slices.Clone(settings), versionField)
 	editFields[1].Required, editFields[2].Required = true, true
 	applied := func(ctx context.Context, _ admin.Call, _, _ any) { s.Applied(ctx) }
 	return adm.View(admin.View{
@@ -97,7 +114,7 @@ func Register(adm *admin.Admin, s *flags.Service) error {
 				Run: func(ctx context.Context, tx pgx.Tx, c admin.Call) (any, any, error) {
 					d, _ := c.Input["description"].(string)
 					on, _ := c.Input["enabled"].(bool)
-					before, after, err := s.Update(ctx, tx, flags.Flag{ID: c.ID, Description: d, Enabled: on, Percent: percent(c)})
+					before, after, err := s.Update(ctx, tx, flags.Flag{ID: c.ID, Version: version(c), Description: d, Enabled: on, Percent: percent(c)})
 					if err != nil {
 						return nil, nil, consoleErr(err)
 					}
@@ -108,7 +125,7 @@ func Register(adm *admin.Admin, s *flags.Service) error {
 			{
 				Name: "testers", Title: "Testers", Perm: admin.PermFlags,
 				Fields: []admin.Field{{Key: "tester_ids", Label: "Testers", Type: admin.Strings,
-					Help: "Player IDs who see this flag whenever it is on, even at 0%."}},
+					Help: "Player IDs who see this flag whenever it is on, even at 0%."}, versionField},
 				Run: func(ctx context.Context, tx pgx.Tx, c admin.Call) (any, any, error) {
 					in, _ := c.Input["tester_ids"].([]string)
 					ids := make([]int64, 0, len(in))
@@ -119,7 +136,7 @@ func Register(adm *admin.Admin, s *flags.Service) error {
 						}
 						ids = append(ids, n)
 					}
-					before, after, err := s.SetTesters(ctx, tx, c.ID, ids)
+					before, after, err := s.SetTestersAt(ctx, tx, c.ID, version(c), ids)
 					if err != nil {
 						return nil, nil, consoleErr(err)
 					}
