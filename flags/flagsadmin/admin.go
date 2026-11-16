@@ -6,6 +6,7 @@ package flagsadmin
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"time"
 
@@ -50,6 +51,9 @@ func Register(adm *admin.Admin, s *flags.Service) error {
 		{Key: "percent", Label: "Rollout %", Type: admin.Int,
 			Help: "0 to 100: the share of players who get it while on. Raising it only adds players."},
 	}
+	// Edit saves every setting, so a blank one is refused rather than read as off or 0%.
+	editFields := slices.Clone(settings)
+	editFields[1].Required, editFields[2].Required = true, true
 	applied := func(ctx context.Context, _ admin.Call, _, _ any) { s.Applied(ctx) }
 	return adm.View(admin.View{
 		Name: "flags", Title: "Feature flags", Group: "Games", Perm: admin.PermView,
@@ -89,7 +93,7 @@ func Register(adm *admin.Admin, s *flags.Service) error {
 		},
 		Actions: []admin.Action{
 			{
-				Name: "edit", Title: "Edit", Perm: admin.PermFlags, Fields: settings,
+				Name: "edit", Title: "Edit", Perm: admin.PermFlags, Fields: editFields,
 				Run: func(ctx context.Context, tx pgx.Tx, c admin.Call) (any, any, error) {
 					d, _ := c.Input["description"].(string)
 					on, _ := c.Input["enabled"].(bool)

@@ -89,6 +89,18 @@ func TestFlagsConsole(t *testing.T) {
 	if st, b := op.Do("POST", path+"edit", in(map[string]any{"enabled": true, "percent": 101})); st != 400 {
 		t.Fatalf("percent 101: %d %v", st, b)
 	}
+	// A blanked percent or a missing switch is refused, never read as 0% or off.
+	for name, input := range map[string]map[string]any{
+		"blank percent":   {"enabled": true, "percent": ""},
+		"missing enabled": {"percent": 50},
+	} {
+		if st, b := op.Do("POST", path+"edit", in(input)); st != 400 {
+			t.Fatalf("%s: %d %v", name, st, b)
+		}
+	}
+	if f, err := s.Get(ctx, int64(row["id"].(float64))); err != nil || f.Percent != 10 {
+		t.Fatalf("refused edit changed the flag: %+v %v", f, err)
+	}
 
 	if st, b := op.Do("POST", path+"delete", nil); st != 204 {
 		t.Fatalf("delete: %d %v", st, b)
