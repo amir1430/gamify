@@ -13,6 +13,8 @@ currencies and registers its own games. The platform does the parts every game n
   currencies each game accepts.
 - **Admin console**: dashboard, online players, players, balances, adjustments with approval, game
   limits, audit log, system status, command palette, CSV export, 2FA.
+- **Feature flags**: on/off flags created in the console, with a sticky percentage rollout and
+  per-flag testers; clients read theirs with `flags.get`.
 - **Ops**: health checks, Prometheus metrics, a reconcile loop for operations a crash left pending.
 
 It holds no game logic: each game brings its own rules and decides what random numbers mean.
@@ -28,6 +30,7 @@ module github.com/amir1430/gamify
 - [Layout](#layout)
 - [Money](#money)
 - [Configuration](#configuration)
+- [Feature flags](#feature-flags)
 - [Admin console](#admin-console)
 - [Development](#development)
 - [Versioning](#versioning)
@@ -165,6 +168,7 @@ published port (`127.0.0.1:10000`) and `centrifugo.proxy_endpoint` at
 | `restrict/` | Opt-in module (goose table `goose_restrict`): per-player restrictions set by operators. Suspended: no login (`App.LoginCheck`, 403) and every RPC refused; blocks: groups of RPC methods the brand names (`Config.Blocks`; an entry `method?field=value` matches only calls whose payload has that top-level field value, e.g. one game of a shared `duel.create`); each until lifted or a time. Checked in memory (`Router.CheckData`), reloaded every 5 s; a suspension drops the player's connections. `restrict/restrictadmin` is its console page (`PermRestrict`) |
 | `payments/` | Opt-in module (goose table `goose_payments`): deposits and withdrawals through brand-supplied `Receiver`/`Sender` drivers per method, limits, approvals, background sending; `payments/paymentstest` has fakes, `payments/paymentsadmin` is its console views. See `docs/writing-a-game.md` |
 | `matchmaking/` | Opt-in module (goose table `goose_matchmaking`, needs `party`): queues with parties, ratings (OpenSkill), staked matches (`HoldPot`/`SettlePot`), direct matches (`Create`), `Finish`/`Cancel`, timeouts; `matchmaking/matchmakingadmin` is its console views |
+| `flags/` | Opt-in module (goose table `goose_flags`): on/off feature flags operators create in the console, with a sticky percentage rollout and per-flag testers; RPC `flags.get`, `Service.Bool` in Go. Read in memory, reloaded every 5 s. `flags/flagsadmin` is its console page (`PermFlags`) |
 | `gameconfig/` | Admin-set limits per game × currency × variant (code defaults are hard caps) |
 | `metrics/` | Prometheus metrics and request logs |
 | `db/` | Platform migrations + `Migrate` (each module migrates with its own goose table) |
@@ -278,6 +282,41 @@ Env read by the sample `main` (see `.env.example`):
 | `CURRENCIES` | `code:ledger:minamount[:welcome[:decimals[:flags]]]`, comma-separated, e.g. `usd:1:1:0:2,coins:2:1:1000:0:t,usdt:3:1:0:6:w` (`decimals` display only, ≤ 18; `flags`: `t` transferable, `w` withdrawable, combined as `tw`, or omitted) |
 | `DEV_FAUCET` | `true` adds `wallet.faucet` (free test money) and a fake payment method `dev` that moves no real money: withdrawals of withdrawable currencies work end to end (every one auto-approved and paid at once); deposits only return an address, nothing ever pays it, so they are never credited. Never with real money |
 | `ADMIN_*` | the console, below |
+
+## Feature flags
+
+Operators create flags in the console (**Games → Feature flags**), with no deploy: a key such as
+`new_lobby`, an on/off switch, a rollout percent and a list of testers. Game code only names the key
+and a fallback.
+
+```go
+fl, err := flags.Register(ctx, a, flags.Config{})  // before a.Run
+// with the console on:
+flagsadmin.Register(adm, fl)
+
+if fl.Bool(userID, "new_lobby", false) { … }       // server-side, from memory
+```
+
+Clients call `flags.get` (no payload) at start and get every flag for the connected player:
+`{"flags": {"new_lobby": true, "shop_button": false}}`.
+
+A player's value, in this order: no flag with that key → the reader's fallback; the flag is off →
+`false`, testers included; a tester → `true`; else `true` for the flag's percent of players.
+
+- **Sticky rollout.** Who is in the percent comes from a fixed hash of the key and the player's ID:
+  going from 10% to 50% to 100% only adds players, and each flag picks its own players. The hash
+  never changes.
+- **Testers** see the flag while it is on, even at 0%: try it with your team at 0%, then roll out.
+- **Always read with a fallback.** A deleted flag disappears from `flags.get`, and `Bool` returns the
+  fallback.
+- **Keys are public.** Every logged-in player sees every key, so don't put a secret in one.
+- **When changes land.** A player sees a change on their next `flags.get`; other instances pick it
+  up within `Config.ReloadEvery` (5 s). Nothing is pushed to connected players yet.
+- Every change is in the audit log. Editing needs the `flags.edit` permission (owner and operator by
+  default).
+
+Not yet: values other than on/off, pushing changes live, targeting by player attributes, per-game
+scope (use a prefix: `crash.new_lobby`).
 
 ## Admin console
 

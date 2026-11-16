@@ -420,6 +420,20 @@ background) and assert `a.Balance` and the withdrawal's status. The sample's `DE
 auto-approved and paid; its deposits only return an address and are never credited. Never with
 real money.
 
+## Feature flags
+
+Wrap a new screen or button in a flag, so operators can roll it out and switch it off from the
+console without a new build (README, "Feature flags"). On the client, call `flags.get` once at
+start, keep the map, and read every flag with a default:
+
+```js
+const { flags } = await rpc("flags.get", {});
+if (flags.new_lobby ?? false) showNewLobby();
+```
+
+In Go, with the `*flags.Service` from `flags.Register`: `fl.Bool(userID, "new_lobby", false)`.
+Pick the default the game should have if the flag is deleted.
+
 ## Checklist
 
 - [ ] One game ID per table of operation IDs, in `FirstBrandGame..MaxGame`, registered with

@@ -25,6 +25,8 @@ import (
 	"github.com/amir1430/gamify/config"
 	"github.com/amir1430/gamify/config/drivers"
 	"github.com/amir1430/gamify/fairness"
+	"github.com/amir1430/gamify/flags"
+	"github.com/amir1430/gamify/flags/flagsadmin"
 	"github.com/amir1430/gamify/ledger"
 	"github.com/amir1430/gamify/matchmaking"
 	"github.com/amir1430/gamify/matchmaking/matchmakingadmin"
@@ -113,6 +115,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	fl, err := flags.Register(ctx, a, flags.Config{})
+	if err != nil {
+		return err
+	}
 	if ac.DevFaucet {
 		if err := devPayments(pay, currencies); err != nil {
 			return err
@@ -128,7 +134,8 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		if err := errors.Join(partyadmin.Register(adm, parties), matchmakingadmin.Register(adm, mm), paymentsadmin.Register(adm, pay, paymentsadmin.Config{})); err != nil {
+		if err := errors.Join(partyadmin.Register(adm, parties), matchmakingadmin.Register(adm, mm), paymentsadmin.Register(adm, pay, paymentsadmin.Config{}),
+			flagsadmin.Register(adm, fl)); err != nil {
 			return err
 		}
 	}
