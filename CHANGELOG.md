@@ -5,6 +5,8 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.3.0] - 2026-11-16
+
 ### Added
 - `flags` module: on/off feature flags operators create in the console, with a sticky percentage rollout (raising it only adds players; each flag picks its own) and per-flag testers (they get it while it is on, even at 0%; off beats testers). `flags.Register`, `Config.ReloadEvery` (default 5 s), `Service.Bool(userID, key, fallback)`, `For`, `List`, `Get`, `Create`, `Update`, `SetTesters`, `Delete`, `Applied`, `Load`, `New`; `Flag`, `GetResponse`, `TypeBool`; errors `ErrBadKey`, `ErrExists`, `ErrNotFound`, `ErrBadPercent`, `ErrBadType`, `ErrUnknownPlayer`.
 - RPC `flags.get` (no payload) returns `{flags: {key: bool}}` for the connected player, every flag listed. Keys are visible to every logged-in player.
