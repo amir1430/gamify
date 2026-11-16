@@ -234,3 +234,65 @@ func TestReloadAcrossInstances(t *testing.T) {
 		t.Fatal("a failed reload dropped the flags")
 	}
 }
+
+func TestStaleWritesRefused(t *testing.T) {
+	a, s := setup(t)
+	ctx := context.Background()
+	alice := a.User("alice")
+	f := create(t, a, s, flags.Flag{Key: "new_lobby"})
+	update := func(version int64, percent int) error {
+		return write(t, a, s, func(tx pgx.Tx) error {
+			_, _, err := s.Update(ctx, tx, flags.Flag{ID: f.ID, Version: version, Enabled: true, Percent: percent})
+			return err
+		})
+	}
+	testers := func(version int64) error {
+		return write(t, a, s, func(tx pgx.Tx) error {
+			_, _, err := s.SetTestersAt(ctx, tx, f.ID, version, []int64{alice})
+			return err
+		})
+	}
+	if err := update(1, 10); err != nil { // the version it was read at: saved, now 2
+		t.Fatal(err)
+	}
+	if err := update(1, 20); !errors.Is(err, flags.ErrStale) {
+		t.Fatalf("stale update: %v", err)
+	}
+	if err := testers(1); !errors.Is(err, flags.ErrStale) {
+		t.Fatalf("stale testers: %v", err)
+	}
+	if err := testers(2); err != nil { // now 3
+		t.Fatal(err)
+	}
+	if err := update(0, 30); err != nil { // 0: no check
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, f.ID)
+	if err != nil || got.Percent != 30 || got.Version != 4 || !slices.Equal(got.Testers, []int64{alice}) {
+		t.Fatalf("got %+v %v", got, err)
+	}
+}
+
+func TestErrorsNameTheProblem(t *testing.T) {
+	a, s := setup(t)
+	ctx := context.Background()
+	alice := a.User("alice")
+	f := create(t, a, s, flags.Flag{Key: "new_lobby"})
+	err := write(t, a, s, func(tx pgx.Tx) error {
+		_, _, err := s.SetTesters(ctx, tx, f.ID, []int64{alice, 999998, 999999})
+		return err
+	})
+	if !errors.Is(err, flags.ErrUnknownPlayer) || !strings.Contains(err.Error(), "999998, 999999") {
+		t.Fatalf("unknown testers: %v", err)
+	}
+	err = write(t, a, s, func(tx pgx.Tx) error {
+		_, err := s.Create(ctx, tx, flags.Flag{Key: "x", Testers: []int64{999997}})
+		return err
+	})
+	if !errors.Is(err, flags.ErrUnknownPlayer) || !strings.Contains(err.Error(), "999997") {
+		t.Fatalf("unknown tester on create: %v", err)
+	}
+	if strings.Contains(flags.ErrBadKey.Error(), "^") {
+		t.Fatalf("ErrBadKey shows a regex: %v", flags.ErrBadKey)
+	}
+}

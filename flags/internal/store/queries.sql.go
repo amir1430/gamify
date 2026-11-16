@@ -193,6 +193,33 @@ func (q *Queries) ListTesters(ctx context.Context) ([]FlagTester, error) {
 	return items, nil
 }
 
+const missingUsers = `-- name: MissingUsers :many
+SELECT x.id::bigint AS id FROM unnest($1::bigint[]) AS x(id)
+WHERE NOT EXISTS (SELECT 1 FROM users WHERE users.id = x.id)
+ORDER BY x.id
+`
+
+// The given IDs that aren't players, for a readable error.
+func (q *Queries) MissingUsers(ctx context.Context, ids []int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, missingUsers, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const testersOf = `-- name: TestersOf :many
 SELECT user_id FROM flag_testers WHERE flag_id = $1 ORDER BY user_id
 `

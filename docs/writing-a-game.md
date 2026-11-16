@@ -187,6 +187,9 @@ return adm.View(admin.View{
   that replaces stored data needs that data in the row. `Help` is a line under an input,
   `Placeholder` what an empty one shows, `Group` a section heading, `OptionHelp` a line next to an
   option. `View.Summary` lists columns shown atop the form.
+- A `Hidden` field isn't shown: the form sends the row's value as it was when the form opened. Put
+  a version in the row and a hidden `version` field on the action, then refuse in `Run` when the
+  row has changed since (`admin.Conflict`), so two admins can't silently overwrite each other.
 - `OptionLabels` (on a `Field`, `Column` or `Filter`) names `Enum` and `Strings` values.
 - `Action.State` says how an action stands on a row, from its values: `Unavailable` greys it out
   with the reason, `Impact` is a warning in its form. It runs for every row listed and is only what

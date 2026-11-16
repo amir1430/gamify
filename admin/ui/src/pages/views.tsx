@@ -383,7 +383,8 @@ function ActionForm({ view, action, row, onClose }: { view: ViewDesc; action: Vi
   const results = new Map(action.fields.map((f) => [f.key, inputValue(f, values[f.key] ?? '', dec(f))]))
   const invalid = [...results.values()].some((p) => p.error)
   const set = (k: string, v: FormValue) => setValues((x) => ({ ...x, [k]: v }))
-  const large = action.fields.length >= 4 || action.fields.some((f) => usesPickList(f) || f.type === 'strings')
+  const shown = action.fields.filter((f) => !f.hidden) // hidden ones still send the row's value
+  const large = shown.length >= 4 || shown.some((f) => usesPickList(f) || f.type === 'strings')
   const { impact } = actionState(row, action.name)
   const path = row ? `${encodeURIComponent(String(row.id))}/actions` : 'actions'
 
@@ -421,7 +422,7 @@ function ActionForm({ view, action, row, onClose }: { view: ViewDesc; action: Vi
           {impact}
         </p>
       )}
-      {fieldSections(action.fields).map((s, i) => (
+      {fieldSections(shown).map((s, i) => (
         <section key={`${s.group}.${i}`} className="grid gap-3">
           {s.group && <h3 className="text-sm font-medium">{s.group}</h3>}
           <div className={large ? 'grid gap-4 md:grid-cols-2' : 'grid gap-4'}>

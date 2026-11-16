@@ -37,3 +37,9 @@ ON CONFLICT DO NOTHING;
 
 -- name: DeleteFlag :one
 DELETE FROM flags WHERE id = $1 RETURNING *;
+
+-- The given IDs that aren't players, for a readable error.
+-- name: MissingUsers :many
+SELECT x.id::bigint AS id FROM unnest(sqlc.arg(ids)::bigint[]) AS x(id)
+WHERE NOT EXISTS (SELECT 1 FROM users WHERE users.id = x.id)
+ORDER BY x.id;

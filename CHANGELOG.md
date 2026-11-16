@@ -5,6 +5,20 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.3.1] - 2026-11-16
+
+### Fixed
+- `flags`: a background reload that read before a console change but finished after it could put the old flags back on that instance until the next reload (up to `ReloadEvery`). Reloads now only replace a newer read, and each reads flags and testers as of one moment.
+- `flagsadmin`: two operators editing the same flag silently overwrote each other. The edit and testers forms carry the version they were opened at; a save over a newer change is refused (409) and the operator reopens it.
+- `flags`: readable errors. `ErrBadKey` says what a key may contain instead of showing a pattern; `ErrUnknownPlayer` names the IDs that aren't players (still matched with `errors.Is`). The console shows them without the `flags:` prefix.
+
+### Added
+- `flags.ErrStale`; `Service.Update` checks a non-zero `Flag.Version` against the stored one; `Service.SetTestersAt(ctx, tx, id, version, userIDs)` (`SetTesters` is `SetTestersAt` with version 0: no check).
+- `admin.Field.Hidden`: a row action's field the form sends with the row's value but doesn't show (for a version check). The console UI is rebuilt.
+
+### Upgrade notes
+- No migration and no breaking change. A caller passing a `Flag` with a stale `Version` to `Update` now gets `ErrStale`; pass 0 to skip the check.
+
 ## [1.3.0] - 2026-11-16
 
 ### Added

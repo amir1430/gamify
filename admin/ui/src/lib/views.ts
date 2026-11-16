@@ -31,6 +31,7 @@ export type ViewField = {
   option_help?: Record<string, string>
   option_labels?: Record<string, string>
   options_from?: string
+  hidden?: boolean
 }
 export type ViewAction = { name: string; title: string; confirm: string; type_confirm?: string; reason: boolean; fields: ViewField[] }
 export type ActionState = { unavailable?: string; impact?: string }
