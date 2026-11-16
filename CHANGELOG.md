@@ -5,6 +5,19 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+### Added
+- `flags` module: on/off feature flags operators create in the console, with a sticky percentage rollout (raising it only adds players; each flag picks its own) and per-flag testers (they get it while it is on, even at 0%; off beats testers). `flags.Register`, `Config.ReloadEvery` (default 5 s), `Service.Bool(userID, key, fallback)`, `For`, `List`, `Get`, `Create`, `Update`, `SetTesters`, `Delete`, `Applied`, `Load`, `New`; `Flag`, `GetResponse`, `TypeBool`; errors `ErrBadKey`, `ErrExists`, `ErrNotFound`, `ErrBadPercent`, `ErrBadType`, `ErrUnknownPlayer`.
+- RPC `flags.get` (no payload) returns `{flags: {key: bool}}` for the connected player, every flag listed. Keys are visible to every logged-in player.
+- `flags/flagsadmin`: console page "Feature flags" (new, edit, testers, delete; all audited).
+- `admin.PermFlags` (`flags.edit`): owner and operator by default.
+
+### Changed
+- `cmd/gamify` registers `flags` and, with the console on, `flagsadmin`.
+
+### Upgrade notes
+- New migration, goose table `goose_flags` (tables `flags`, `flag_testers`), run by `flags.Register`. Nothing changes for brands that don't register it.
+- A brand's custom roles need `flags.edit` added to change flags.
+
 ## [1.2.0] - 2026-11-11
 
 ### Added

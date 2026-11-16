@@ -73,6 +73,15 @@ sql:
         sql_package: pgx/v5
         emit_pointers_for_null_types: true
   - engine: postgresql
+    schema: [db/migrations, flags/migrations]
+    queries: flags/queries.sql
+    gen:
+      go:
+        package: store
+        out: flags/internal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+  - engine: postgresql
     schema: [db/migrations, payments/migrations]
     queries: payments/queries.sql
     gen:

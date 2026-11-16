@@ -77,11 +77,12 @@ const (
 	PermPayApprove   Perm = "payments.approve"   // paymentsadmin: approve or reject a withdrawal
 	PermPayResolve   Perm = "payments.resolve"   // paymentsadmin: settle a stuck withdrawal by hand
 	PermPayLimits    Perm = "payments.limits"    // paymentsadmin: edit a method's limits
+	PermFlags        Perm = "flags.edit"         // flagsadmin: create, edit and delete feature flags
 )
 
 var rolePerms = map[Role][]Perm{
-	RoleOwner:    {PermView, PermIdentity, PermLimits, PermAdjust, PermApprove, PermAdmins, PermMatchCancel, PermMatchReport, PermPartyDisband, PermRestrict, PermPayApprove, PermPayResolve, PermPayLimits},
-	RoleOperator: {PermView, PermIdentity, PermLimits, PermAdjust, PermMatchCancel, PermMatchReport, PermPartyDisband, PermRestrict, PermPayApprove},
+	RoleOwner:    {PermView, PermIdentity, PermLimits, PermAdjust, PermApprove, PermAdmins, PermMatchCancel, PermMatchReport, PermPartyDisband, PermRestrict, PermPayApprove, PermPayResolve, PermPayLimits, PermFlags},
+	RoleOperator: {PermView, PermIdentity, PermLimits, PermAdjust, PermMatchCancel, PermMatchReport, PermPartyDisband, PermRestrict, PermPayApprove, PermFlags},
 	RoleSupport:  {PermView, PermIdentity, PermRestrict},
 	RoleViewer:   {PermView},
 }
