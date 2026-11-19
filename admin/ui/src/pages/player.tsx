@@ -351,6 +351,7 @@ function ActivityTable({ id, game }: { id: number; game: string }) {
         onRowClick={setOpen}
         columns={[
           { key: 'when', title: 'When', render: (b) => <When at={b.at} /> },
+          { key: 'game', title: 'Game', render: (b) => b.game || <Faint /> },
           { key: 'id', title: 'ID', render: (b) => <Mono>#{b.id}</Mono> },
           { key: 'amount', title: 'Amount', align: 'right', render: (b) => <span className="num">{money(b.amount, b.currency)}</span> },
           { key: 'payout', title: 'Payout', align: 'right', render: (b) => <span className="num">{money(b.payout, b.currency)}</span> },
@@ -372,6 +373,7 @@ function ActivityTable({ id, game }: { id: number; game: string }) {
               ['Amount', money(open.amount, open.currency)],
               ['Payout', money(open.payout, open.currency)],
               ['Result', <Signed amount={open.payout - open.amount}>{money(open.payout - open.amount, open.currency)}</Signed>],
+              ['Game', open.game || <Faint />],
               ['Status', <Pill tone={open.status === 'settled' ? 'ok' : 'neutral'}>{open.status}</Pill>],
               ['When', dateTime(open.at)],
               ['ID', <Copyable value={open.id} />],

@@ -5,6 +5,14 @@ versions: [semver](https://semver.org). Upgrade notes call out migrations and AP
 
 ## Unreleased
 
+## [1.3.2] - 2026-11-19
+
+### Fixed
+- Console: a player's Activity table didn't show which game each row is from. It now has a Game column (and a Game fact in the row's dialog), from `app.Activity.Game`, so a source that reports several games (one feed for every game) reads right. The console UI is rebuilt.
+
+### Upgrade notes
+- No migration and no API change.
+
 ## [1.3.1] - 2026-11-16
 
 ### Fixed
